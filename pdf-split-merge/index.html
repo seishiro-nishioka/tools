@@ -568,7 +568,8 @@ button:disabled{opacity:.45; cursor:not-allowed}
       let libDoc = libDocCache.get(entry.mediaId);
       if (!libDoc){
         const media = mediaById(entry.mediaId);
-        libDoc = await PDFLib.PDFDocument.load(media.arrayBuffer);
+        // 印刷・編集制限のみ(閲覧パスワードなし)で暗号化されたPDFも多いため、その場合は無視して読み込む
+        libDoc = await PDFLib.PDFDocument.load(media.arrayBuffer, { ignoreEncryption: true });
         libDocCache.set(entry.mediaId, libDoc);
       }
       const [copied] = await outDoc.copyPages(libDoc, [entry.pageIndex]);
@@ -616,7 +617,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
       else await exportImages(exportFormat);
     }catch(err){
       console.error(err);
-      setStatus('書き出し中にエラーが発生しました。');
+      setStatus(`書き出し中にエラーが発生しました: ${err && err.message ? err.message : err}`);
     }finally{
       progEl.style.display = 'none';
       updateExportEnabled();
