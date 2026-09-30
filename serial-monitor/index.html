@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>シリアル通信モニター</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EEF1F4; --panel:#FFFFFF; --ink:#1B2733; --sub:#5A6878; --line:#CBD4DE;
+  --red:#E0301E; --blue:#2B5C8A; --blue-ink:#FFFFFF; --green:#2E9B4F; --amber:#C9820A;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141A21; --panel:#1C242D; --ink:#E6ECF2; --sub:#9AA8B6; --line:#33404D;
+    --red:#FF5040; --blue:#5B93C9; --blue-ink:#0E1620; --green:#49C273; --amber:#E0A335;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#141A21; --panel:#1C242D; --ink:#E6ECF2; --sub:#9AA8B6; --line:#33404D;
+  --red:#FF5040; --blue:#5B93C9; --blue-ink:#0E1620; --green:#49C273; --amber:#E0A335;
+}
+*,*::before,*::after{box-sizing:inherit}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  font-size:15px; line-height:1.6;
+}
+header{
+  display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+  padding:18px 22px 10px;
+}
+h1{
+  margin:0; font-size:22px; font-weight:700; letter-spacing:.02em;
+  display:flex; align-items:center; gap:10px;
+}
+h1 .mark{
+  width:22px; height:16px; border:2.5px solid var(--red); position:relative; display:inline-block;
+}
+h1 .mark::after{
+  content:""; position:absolute; right:-12px; top:-9px; width:12px; height:9px;
+  border:2px solid var(--red); background:var(--bg);
+}
+header p{margin:0; color:var(--sub); font-size:13.5px}
+
+main{
+  display:flex; flex-direction:column; gap:16px;
+  max-width:980px; margin:0 auto; padding:6px 22px 32px;
+}
+
+.box{
+  background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:14px 16px;
+  display:flex; flex-direction:column; gap:12px;
+}
+h2{font-size:14.5px; margin:0; font-weight:700}
+
+.warn{
+  background:color-mix(in srgb, var(--amber) 16%, var(--panel)); border:1px solid var(--amber);
+  color:var(--ink); border-radius:5px; padding:8px 12px; font-size:13px;
+}
+
+/* ---------- 接続パネル ---------- */
+.conn-row{display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap}
+.status{display:flex; align-items:center; gap:7px; font-size:13px; color:var(--sub)}
+.dot{width:9px; height:9px; border-radius:50%; background:var(--sub); flex:none}
+.dot.on{background:var(--green)}
+.dot.err{background:var(--red)}
+
+.conn-grid{display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start}
+.field{display:flex; flex-direction:column; gap:5px; font-size:13px}
+.field label{color:var(--sub)}
+.baud-row{display:flex; gap:6px}
+select,input[type=text],input[type=number]{
+  font:inherit; font-size:14px; color:var(--ink); background:var(--panel);
+  border:1px solid var(--line); border-radius:5px; padding:6px 9px;
+}
+select:focus-visible,input:focus-visible{outline:2px solid var(--blue); outline-offset:1px}
+#customBaud{width:110px}
+
+details.adv{font-size:13px}
+details.adv summary{cursor:pointer; color:var(--sub); user-select:none}
+details.adv summary:hover{color:var(--ink)}
+.adv-grid{display:flex; flex-wrap:wrap; gap:12px 18px; margin-top:8px}
+.adv-grid label{display:flex; flex-direction:column; gap:4px; color:var(--sub)}
+
+.port-list{display:flex; flex-wrap:wrap; gap:8px}
+.port-list .hint{font-size:12.5px; color:var(--sub)}
+.port-btn{
+  display:flex; align-items:center; gap:7px; font-size:13px; padding:6px 10px;
+}
+.port-btn .chip{
+  font-variant-numeric:tabular-nums; font-size:11.5px; color:var(--sub);
+  background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:1px 5px;
+}
+
+.conn-actions{display:flex; gap:10px; flex-wrap:wrap}
+
+button,.btn{
+  font:inherit; font-size:14px; border-radius:5px; cursor:pointer;
+  border:1px solid var(--line); background:var(--panel); color:var(--ink);
+  padding:7px 12px; line-height:1.3;
+}
+button:hover{border-color:var(--sub)}
+button:focus-visible{outline:2px solid var(--blue); outline-offset:2px}
+button:disabled{opacity:.45; cursor:not-allowed}
+.primary{background:var(--blue); color:var(--blue-ink); border-color:var(--blue); font-weight:700}
+.primary:hover{filter:brightness(1.08); border-color:var(--blue)}
+.ghost-btn{background:transparent}
+
+/* ---------- ターミナル ---------- */
+.term-toolbar{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
+.seg{display:flex; border:1px solid var(--line); border-radius:5px; overflow:hidden}
+.seg button{border:0; border-radius:0; padding:6px 14px; font-size:13px}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--red); color:#fff; font-weight:700}
+.chk{display:flex; align-items:center; gap:5px; font-size:13px; color:var(--sub); cursor:pointer}
+.term-toolbar .spacer{flex:1}
+
+.term-output{
+  margin:0; height:420px; resize:vertical; overflow:auto;
+  background:#0B0F14; color:#D9E6D3;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  font-size:13px; line-height:1.55; white-space:pre-wrap; word-break:break-all;
+  border:1px solid var(--line); border-radius:5px; padding:10px 12px;
+}
+.term-output:empty::before{content:"データを待っています…"; color:#5A6B5C}
+
+/* ---------- 送信 ---------- */
+.send-row{display:flex; gap:8px; flex-wrap:wrap}
+#sendInput{flex:1; min-width:180px}
+
+footer{max-width:980px; margin:0 auto; padding:0 22px 40px; color:var(--sub); font-size:12.5px}
+footer a{color:inherit}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="mark" aria-hidden="true"></span>シリアル通信モニター</h1>
+  <p>マイコンなどのシリアル通信をブラウザで読み書きします。ポート・ボーレートを指定して接続してください。Web Serial APIに対応するChrome / Edge(PC版)の最新版が必要です。通信内容はサーバーに送信されず、すべて端末内で処理されます。</p>
+</header>
+
+<main>
+  <section class="box conn" id="connBox">
+    <div class="conn-row">
+      <h2>接続</h2>
+      <span class="status"><span class="dot" id="statusDot"></span><span id="statusText">未接続</span></span>
+    </div>
+
+    <div class="warn" id="unsupportedWarning" hidden>
+      このブラウザはWeb Serial APIに対応していません。Chrome または Edge の最新版(PC)で開いてください。
+    </div>
+
+    <div class="conn-grid">
+      <div class="field">
+        <label for="baudSelect">ボーレート</label>
+        <div class="baud-row">
+          <select id="baudSelect">
+            <option value="300">300</option>
+            <option value="1200">1200</option>
+            <option value="2400">2400</option>
+            <option value="4800">4800</option>
+            <option value="9600">9600</option>
+            <option value="19200">19200</option>
+            <option value="38400">38400</option>
+            <option value="57600">57600</option>
+            <option value="74880">74880</option>
+            <option value="115200" selected>115200</option>
+            <option value="230400">230400</option>
+            <option value="250000">250000</option>
+            <option value="460800">460800</option>
+            <option value="500000">500000</option>
+            <option value="921600">921600</option>
+            <option value="1000000">1000000</option>
+            <option value="2000000">2000000</option>
+            <option value="custom">カスタム…</option>
+          </select>
+          <input type="number" id="customBaud" min="1" placeholder="例: 12345" hidden>
+        </div>
+      </div>
+
+      <details class="field adv">
+        <summary>詳細設定(データビット・パリティなど)</summary>
+        <div class="adv-grid">
+          <label>データビット
+            <select id="dataBits"><option value="8" selected>8</option><option value="7">7</option></select>
+          </label>
+          <label>ストップビット
+            <select id="stopBits"><option value="1" selected>1</option><option value="2">2</option></select>
+          </label>
+          <label>パリティ
+            <select id="parity">
+              <option value="none" selected>なし</option>
+              <option value="even">偶数</option>
+              <option value="odd">奇数</option>
+            </select>
+          </label>
+          <label>フロー制御
+            <select id="flowControl">
+              <option value="none" selected>なし</option>
+              <option value="hardware">ハードウェア(RTS/CTS)</option>
+            </select>
+          </label>
+        </div>
+      </details>
+    </div>
+
+    <div class="port-list" id="portList"></div>
+
+    <div class="conn-actions">
+      <button id="pickPortBtn" class="primary">ポートを選択して接続</button>
+      <button id="disconnectBtn" disabled>切断</button>
+    </div>
+  </section>
+
+  <section class="box term">
+    <div class="term-toolbar">
+      <h2>受信ログ</h2>
+      <div class="seg" id="modeSeg" role="group" aria-label="表示形式">
+        <button data-mode="text" aria-pressed="true">テキスト</button>
+        <button data-mode="hex" aria-pressed="false">HEX</button>
+      </div>
+      <label class="chk"><input type="checkbox" id="tsChk">タイムスタンプ</label>
+      <label class="chk"><input type="checkbox" id="scrollChk" checked>自動スクロール</label>
+      <span class="spacer"></span>
+      <button id="clearBtn" class="ghost-btn">クリア</button>
+      <button id="downloadBtn" class="ghost-btn">ダウンロード</button>
+    </div>
+    <pre class="term-output" id="termOutput"></pre>
+  </section>
+
+  <section class="box send">
+    <h2>送信</h2>
+    <div class="send-row">
+      <input type="text" id="sendInput" placeholder="送信するテキスト" disabled>
+      <select id="lineEnding" disabled>
+        <option value="none">改行なし</option>
+        <option value="lf" selected>LF (\n)</option>
+        <option value="cr">CR (\r)</option>
+        <option value="crlf">CRLF (\r\n)</option>
+      </select>
+      <button id="sendBtn" class="primary" disabled>送信</button>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <a href="https://github.com/seishiro-nishioka/tools">GitHubリポジトリ</a>
+</footer>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const serialSupported = 'serial' in navigator;
+
+  const statusDot = $('statusDot'), statusText = $('statusText');
+  const baudSelect = $('baudSelect'), customBaud = $('customBaud');
+  const dataBitsSel = $('dataBits'), stopBitsSel = $('stopBits'), paritySel = $('parity'), flowSel = $('flowControl');
+  const portListEl = $('portList');
+  const pickPortBtn = $('pickPortBtn'), disconnectBtn = $('disconnectBtn');
+  const modeSeg = $('modeSeg'), tsChk = $('tsChk'), scrollChk = $('scrollChk');
+  const clearBtn = $('clearBtn'), downloadBtn = $('downloadBtn');
+  const termOutput = $('termOutput');
+  const sendInput = $('sendInput'), lineEndingSel = $('lineEnding'), sendBtn = $('sendBtn');
+
+  let port = null, reader = null, writer = null, keepReading = false;
+  let currentBaud = null;
+  let mode = 'text';
+  /** @type {{bytes:Uint8Array, ts:number}[]} 受信データ全履歴。表示形式切替時の再描画に使う */
+  const chunks = [];
+
+  const LINE_ENDINGS = { none: '', lf: '\n', cr: '\r', crlf: '\r\n' };
+
+  function setStatus(text){ statusText.textContent = text; }
+
+  function hex4(n){ return '0x' + n.toString(16).padStart(4, '0').toUpperCase(); }
+  function bytesToHex(bytes){
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+  }
+  function tsLabel(ms){
+    const d = new Date(ms);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    const ms3 = String(d.getMilliseconds()).padStart(3, '0');
+    return `[${hh}:${mm}:${ss}.${ms3}] `;
+  }
+  function formatChunk(c){
+    const body = mode === 'text' ? new TextDecoder().decode(c.bytes) : bytesToHex(c.bytes) + '\n';
+    return (tsChk.checked ? tsLabel(c.ts) : '') + body;
+  }
+
+  function appendLive(bytes){
+    const c = { bytes, ts: Date.now() };
+    chunks.push(c);
+    termOutput.textContent += formatChunk(c);
+    if (scrollChk.checked) termOutput.scrollTop = termOutput.scrollHeight;
+  }
+  function fullRerender(){
+    termOutput.textContent = chunks.map(formatChunk).join('');
+    if (scrollChk.checked) termOutput.scrollTop = termOutput.scrollHeight;
+  }
+
+  modeSeg.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-mode]');
+    if (!btn) return;
+    mode = btn.dataset.mode;
+    modeSeg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'));
+    fullRerender();
+  });
+  tsChk.addEventListener('change', fullRerender);
+  clearBtn.addEventListener('click', () => { chunks.length = 0; termOutput.textContent = ''; });
+  downloadBtn.addEventListener('click', () => {
+    const text = chunks.map(formatChunk).join('');
+    const blob = new Blob([text], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const d = new Date();
+    const stamp = d.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.download = `serial_log_${stamp}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  });
+
+  // ---------- 接続UI ----------
+  baudSelect.addEventListener('change', () => {
+    customBaud.hidden = baudSelect.value !== 'custom';
+    if (baudSelect.value === 'custom') customBaud.focus();
+  });
+
+  function currentBaudValue(){
+    return parseInt(baudSelect.value === 'custom' ? customBaud.value : baudSelect.value, 10);
+  }
+
+  function setConnectedUI(connected){
+    statusDot.className = 'dot' + (connected ? ' on' : '');
+    setStatus(connected ? `接続中(${currentBaud} bps)` : '未接続');
+    [baudSelect, customBaud, dataBitsSel, stopBitsSel, paritySel, flowSel, pickPortBtn]
+      .forEach(el => { el.disabled = connected; });
+    portListEl.querySelectorAll('button').forEach(b => { b.disabled = connected; });
+    disconnectBtn.disabled = !connected;
+    sendInput.disabled = !connected;
+    lineEndingSel.disabled = !connected;
+    sendBtn.disabled = !connected;
+  }
+
+  async function refreshPortList(){
+    if (!serialSupported) return;
+    const ports = await navigator.serial.getPorts();
+    portListEl.innerHTML = '';
+    if (!ports.length){
+      const hint = document.createElement('span');
+      hint.className = 'hint';
+      hint.textContent = '許可済みのポートはありません。「ポートを選択して接続」から追加してください。';
+      portListEl.appendChild(hint);
+      return;
+    }
+    ports.forEach(p => {
+      const info = (p.getInfo && p.getInfo()) || {};
+      const btn = document.createElement('button');
+      btn.className = 'port-btn';
+      btn.type = 'button';
+      const label = document.createElement('span');
+      label.textContent = '🔌 許可済みポートに接続';
+      btn.appendChild(label);
+      if (info.usbVendorId != null){
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = `VID:${hex4(info.usbVendorId)} PID:${hex4(info.usbProductId)}`;
+        btn.appendChild(chip);
+      }
+      btn.addEventListener('click', () => connectToPort(p));
+      if (port) btn.disabled = true;
+      portListEl.appendChild(btn);
+    });
+  }
+
+  async function connectToPort(p){
+    if (port) await disconnect();
+    const baud = currentBaudValue();
+    if (!baud || baud < 1){ setStatus('ボーレートを正しく指定してください。'); return; }
+    try{
+      await p.open({
+        baudRate: baud,
+        dataBits: parseInt(dataBitsSel.value, 10),
+        stopBits: parseInt(stopBitsSel.value, 10),
+        parity: paritySel.value,
+        flowControl: flowSel.value,
+      });
+    }catch(err){
+      statusDot.className = 'dot err';
+      setStatus(`接続に失敗しました: ${err.message}`);
+      return;
+    }
+    port = p;
+    currentBaud = baud;
+    writer = port.writable.getWriter();
+    keepReading = true;
+    setConnectedUI(true);
+    readLoop();
+  }
+
+  async function readLoop(){
+    while (port && keepReading){
+      try{
+        reader = port.readable.getReader();
+      }catch(err){
+        break;
+      }
+      try{
+        while (keepReading){
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (value && value.length) appendLive(value);
+        }
+      }catch(err){
+        if (keepReading){
+          statusDot.className = 'dot err';
+          setStatus(`読み取りエラー(デバイスが切断された可能性があります): ${err.message}`);
+        }
+        break;
+      }finally{
+        try{ reader.releaseLock(); }catch(e){}
+      }
+    }
+    if (keepReading) await handleUnexpectedDisconnect();
+  }
+
+  async function handleUnexpectedDisconnect(){
+    keepReading = false;
+    try{ if (writer) await writer.close(); }catch(e){}
+    writer = null;
+    try{ if (port) await port.close(); }catch(e){}
+    port = null;
+    setConnectedUI(false);
+    refreshPortList();
+  }
+
+  async function disconnect(){
+    keepReading = false;
+    try{ if (reader) await reader.cancel(); }catch(e){}
+    try{ if (writer) await writer.close(); }catch(e){}
+    writer = null;
+    try{ if (port) await port.close(); }catch(e){}
+    port = null;
+    setConnectedUI(false);
+    setStatus('切断しました。');
+    refreshPortList();
+  }
+
+  pickPortBtn.addEventListener('click', async () => {
+    if (!serialSupported) return;
+    try{
+      const p = await navigator.serial.requestPort();
+      await refreshPortList();
+      await connectToPort(p);
+    }catch(err){
+      if (err.name !== 'NotFoundError') setStatus(`ポート選択でエラー: ${err.message}`);
+    }
+  });
+  disconnectBtn.addEventListener('click', disconnect);
+
+  // ---------- 送信 ----------
+  async function sendCurrentInput(){
+    if (!port || !writer) return;
+    const text = sendInput.value;
+    if (!text) return;
+    const withEnding = text + LINE_ENDINGS[lineEndingSel.value];
+    try{
+      await writer.write(new TextEncoder().encode(withEnding));
+      sendInput.value = '';
+    }catch(err){
+      setStatus(`送信エラー: ${err.message}`);
+    }
+  }
+  sendBtn.addEventListener('click', sendCurrentInput);
+  sendInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendCurrentInput(); });
+
+  // ---------- 初期化 ----------
+  if (!serialSupported){
+    $('unsupportedWarning').hidden = false;
+    pickPortBtn.disabled = true;
+  } else {
+    navigator.serial.addEventListener('connect', refreshPortList);
+    navigator.serial.addEventListener('disconnect', refreshPortList);
+    refreshPortList();
+  }
+})();
+</script>
+</body>
+</html>
