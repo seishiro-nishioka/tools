@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ツール一覧</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EEF1F4; --panel:#FFFFFF; --ink:#1B2733; --sub:#5A6878; --line:#CBD4DE;
+  --red:#E0301E; --blue:#2B5C8A;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141A21; --panel:#1C242D; --ink:#E6ECF2; --sub:#9AA8B6; --line:#33404D;
+    --red:#FF5040; --blue:#5B93C9;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#141A21; --panel:#1C242D; --ink:#E6ECF2; --sub:#9AA8B6; --line:#33404D;
+  --red:#FF5040; --blue:#5B93C9;
+}
+*,*::before,*::after{box-sizing:inherit}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  font-size:15px; line-height:1.6;
+}
+header{
+  padding:36px 22px 18px; max-width:760px; margin:0 auto;
+}
+h1{
+  margin:0 0 8px; font-size:26px; font-weight:700; letter-spacing:.02em;
+  display:flex; align-items:center; gap:12px;
+}
+h1 .mark{
+  width:24px; height:18px; border:3px solid var(--red); position:relative; display:inline-block; flex:none;
+}
+h1 .mark::after{
+  content:""; position:absolute; right:-13px; top:-10px; width:13px; height:10px;
+  border:2px solid var(--red); background:var(--bg);
+}
+header p{margin:0; color:var(--sub); font-size:14px}
+
+main{max-width:760px; margin:0 auto; padding:0 22px 40px}
+ul.tools{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px}
+li.tool a{
+  display:flex; align-items:center; gap:16px; text-decoration:none; color:inherit;
+  background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px 18px;
+  transition:border-color .15s ease;
+}
+li.tool a:hover{border-color:var(--blue)}
+li.tool a:focus-visible{outline:2px solid var(--blue); outline-offset:2px}
+.tool-icon{
+  flex:none; width:44px; height:44px; border-radius:8px; background:var(--bg);
+  border:1px solid var(--line); display:flex; align-items:center; justify-content:center;
+  font-size:20px;
+}
+.tool-body{flex:1; min-width:0}
+.tool-name{font-weight:700; font-size:16px; margin:0 0 2px}
+.tool-desc{margin:0; font-size:13.5px; color:var(--sub)}
+.tool-arrow{flex:none; color:var(--sub); font-size:18px}
+
+footer{max-width:760px; margin:0 auto; padding:0 22px 40px; color:var(--sub); font-size:12.5px}
+footer a{color:inherit}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="mark" aria-hidden="true"></span>ツール一覧</h1>
+  <p>ブラウザだけで動く、ちょっとしたツール置き場です。インストール不要、データは端末内で処理されます。</p>
+</header>
+
+<main>
+  <ul class="tools">
+    <li class="tool">
+      <a href="zoom-pip/">
+        <span class="tool-icon" aria-hidden="true">🔍</span>
+        <span class="tool-body">
+          <p class="tool-name">ズームPiPメーカー</p>
+          <p class="tool-desc">動画の一部を枠で囲み、拡大映像をピクチャインピクチャで重ねて書き出す</p>
+        </span>
+        <span class="tool-arrow" aria-hidden="true">›</span>
+      </a>
+    </li>
+  </ul>
+</main>
+
+<footer>
+  <a href="https://github.com/seishiro-nishioka/tools">GitHubリポジトリ</a>
+</footer>
+</body>
+</html>

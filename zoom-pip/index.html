@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ズームPiPメーカー</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EEF1F4; --panel:#FFFFFF; --ink:#1B2733; --sub:#5A6878; --line:#CBD4DE;
+  --red:#E0301E; --blue:#2B5C8A; --blue-ink:#FFFFFF; --stage:#26303B;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141A21; --panel:#1C242D; --ink:#E6ECF2; --sub:#9AA8B6; --line:#33404D;
+    --red:#FF5040; --blue:#5B93C9; --blue-ink:#0E1620; --stage:#0C1117;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#141A21; --panel:#1C242D; --ink:#E6ECF2; --sub:#9AA8B6; --line:#33404D;
+  --red:#FF5040; --blue:#5B93C9; --blue-ink:#0E1620; --stage:#0C1117;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  font-size:15px; line-height:1.6;
+}
+header{
+  display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+  padding:18px 22px 10px;
+}
+h1{
+  margin:0; font-size:22px; font-weight:700; letter-spacing:.02em;
+  display:flex; align-items:center; gap:10px;
+}
+h1 .mark{
+  width:22px; height:16px; border:2.5px solid var(--red); position:relative; display:inline-block;
+}
+h1 .mark::after{
+  content:""; position:absolute; right:-12px; top:-9px; width:12px; height:9px;
+  border:2px solid var(--red); background:var(--bg);
+}
+header p{margin:0; color:var(--sub); font-size:13.5px}
+main{
+  display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:18px;
+  padding:6px 22px 28px;
+}
+@media (max-width:860px){ main{grid-template-columns:1fr} }
+
+.stage-wrap{display:flex; flex-direction:column; gap:10px; min-width:0}
+.stage{
+  background:var(--stage); border-radius:6px; min-height:340px;
+  display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden;
+}
+.stage.drag-over{outline:3px dashed var(--red); outline-offset:-10px}
+#view{max-width:100%; max-height:68vh; width:auto; height:auto; display:none; touch-action:none; cursor:crosshair}
+.empty{
+  text-align:center; color:#C9D3DD; padding:40px 20px;
+}
+.empty strong{display:block; font-size:18px; margin-bottom:6px; color:#fff}
+.empty p{margin:0 0 16px; font-size:13.5px}
+
+.transport{
+  display:flex; align-items:center; gap:10px; background:var(--panel);
+  border:1px solid var(--line); border-radius:6px; padding:8px 10px;
+}
+#seek{flex:1; min-width:0; accent-color:var(--red)}
+.time{font-variant-numeric:tabular-nums; font-size:13px; color:var(--sub); white-space:nowrap}
+.hint{font-size:13px; color:var(--sub); margin:0}
+
+button,.btn{
+  font:inherit; font-size:14px; border-radius:5px; cursor:pointer;
+  border:1px solid var(--line); background:var(--panel); color:var(--ink);
+  padding:7px 12px; line-height:1.3;
+}
+button:hover{border-color:var(--sub)}
+button:focus-visible,input:focus-visible,label.btn:focus-within{outline:2px solid var(--blue); outline-offset:2px}
+button:disabled{opacity:.45; cursor:not-allowed}
+.primary{background:var(--blue); color:var(--blue-ink); border-color:var(--blue); font-weight:700}
+.primary:hover{filter:brightness(1.08); border-color:var(--blue)}
+.icon{width:38px; padding:7px 0; text-align:center}
+
+aside{display:flex; flex-direction:column; gap:14px}
+section.box{
+  background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:14px 16px;
+}
+section.box h2{font-size:14.5px; margin:0 0 10px; font-weight:700}
+.row{display:flex; align-items:center; gap:10px; margin:8px 0; font-size:14px}
+.row label{flex:1}
+.row input[type=range]{flex:1.3; accent-color:var(--red)}
+.row output{width:44px; text-align:right; font-variant-numeric:tabular-nums; color:var(--sub); font-size:13px}
+input[type=color]{width:40px; height:28px; border:1px solid var(--line); border-radius:4px; padding:2px; background:var(--panel)}
+input[type=checkbox]{accent-color:var(--red); width:16px; height:16px}
+.swatches{display:flex; gap:6px}
+.swatches button{width:24px; height:24px; padding:0; border-radius:50%; border:2px solid var(--panel); box-shadow:0 0 0 1px var(--line)}
+.range-times{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+.range-times div{font-size:13px; color:var(--sub)}
+.range-times strong{display:block; color:var(--ink); font-variant-numeric:tabular-nums; font-size:15px}
+.range-times button{width:100%; margin-top:4px; font-size:13px; padding:5px 8px}
+.progress{height:6px; background:var(--line); border-radius:3px; overflow:hidden; margin-top:10px; display:none}
+.progress > i{display:block; height:100%; width:0; background:var(--red)}
+#status{font-size:13px; color:var(--sub); margin:8px 0 0; min-height:1.4em}
+.export-btns{display:flex; gap:8px}
+.export-btns .primary{flex:1}
+.seg{display:flex; border:1px solid var(--line); border-radius:5px; overflow:hidden}
+.seg button{border:0; border-radius:0; padding:5px 14px; font-variant-numeric:tabular-nums}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--red); color:#fff; font-weight:700}
+.sr{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0)}
+#src{position:fixed; left:0; top:0; width:2px; height:2px; opacity:0; pointer-events:none}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="mark" aria-hidden="true"></span>ズームPiPメーカー</h1>
+  <p>動画の一部を赤枠で囲み、拡大映像を画面の上に重ねて書き出します。動画はサーバーに送信されず、処理はすべてお使いの端末のブラウザ内で行われます。</p>
+</header>
+
+<main>
+  <div class="stage-wrap">
+    <div class="stage" id="stage">
+      <canvas id="view" aria-label="プレビュー。ドラッグで拡大範囲と拡大画面を調整できます"></canvas>
+      <div class="empty" id="empty">
+        <strong>動画ファイルをここにドロップ</strong>
+        <p>MP4・WebM・MOV など、ブラウザで再生できる形式に対応</p>
+        <label class="btn primary">動画を選ぶ<input type="file" id="file" accept="video/*" class="sr"></label>
+      </div>
+    </div>
+    <div class="transport">
+      <button class="icon" id="play" disabled aria-label="再生">▶</button>
+      <input type="range" id="seek" min="0" max="1000" value="0" disabled aria-label="再生位置">
+      <span class="time" id="time">0:00.0 / 0:00.0</span>
+    </div>
+    <p class="hint">空いている場所をドラッグすると拡大範囲を描き直せます。枠や拡大画面はドラッグで移動、右下の角で大きさを変えられます。</p>
+  </div>
+
+  <aside>
+    <section class="box">
+      <h2>枠線</h2>
+      <div class="row">
+        <label for="color">色</label>
+        <div class="swatches">
+          <button data-c="#E0301E" style="background:#E0301E" aria-label="赤"></button>
+          <button data-c="#FFD000" style="background:#FFD000" aria-label="黄"></button>
+          <button data-c="#1FB5FF" style="background:#1FB5FF" aria-label="水色"></button>
+          <button data-c="#FFFFFF" style="background:#FFFFFF" aria-label="白"></button>
+        </div>
+        <input type="color" id="color" value="#E0301E">
+      </div>
+      <div class="row">
+        <label for="thick">太さ</label>
+        <input type="range" id="thick" min="1" max="30" value="6">
+        <output id="thickOut">6</output>
+      </div>
+      <div class="row"><input type="checkbox" id="pipBorder" checked><label for="pipBorder">拡大画面にも枠を付ける</label></div>
+      <div class="row"><input type="checkbox" id="lines"><label for="lines">元の範囲と拡大画面を線でつなぐ</label></div>
+      <div class="row"><input type="checkbox" id="shadow" checked><label for="shadow">拡大画面に影を付ける</label></div>
+    </section>
+
+    <section class="box">
+      <h2>拡大画面</h2>
+      <div class="row">
+        <label for="zoom">拡大率</label>
+        <input type="range" id="zoom" min="1" max="8" step="0.1" value="2.5">
+        <output id="zoomOut">2.5×</output>
+      </div>
+      <div class="row" style="flex-wrap:wrap;gap:6px">
+        <button data-corner="tl">左上</button><button data-corner="tr">右上</button>
+        <button data-corner="bl">左下</button><button data-corner="br">右下</button>
+      </div>
+    </section>
+
+    <section class="box">
+      <h2>書き出し</h2>
+      <div class="range-times">
+        <div>開始<strong id="inT">0:00.0</strong><button id="setIn" disabled>現在位置にする</button></div>
+        <div>終了<strong id="outT">0:00.0</strong><button id="setOut" disabled>現在位置にする</button></div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <span style="flex:1">速度</span>
+        <div class="seg" id="speed" role="group" aria-label="再生速度">
+          <button data-s="1" aria-pressed="true">1×</button><button data-s="2" aria-pressed="false">2×</button><button data-s="4" aria-pressed="false">4×</button>
+        </div>
+      </div>
+      <div class="row"><input type="checkbox" id="mute"><label for="mute">音声を入れない</label></div>
+      <div class="export-btns" style="margin-top:12px">
+        <button class="primary" id="export" disabled>動画を書き出す</button>
+        <button id="cancel" style="display:none">中止</button>
+      </div>
+      <div class="progress" id="prog"><i></i></div>
+      <p id="status">書き出しは選んだ速度で再生しながら録画します（2×なら元の半分の時間）。完了までこのタブを表示したままにしてください。</p>
+    </section>
+  </aside>
+</main>
+
+<video id="src" playsinline preload="auto"></video>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const video = $('src'), canvas = $('view'), ctx = canvas.getContext('2d');
+  const stage = $('stage');
+  let fileName = 'video';
+  let loaded = false, exporting = false, recorder = null;
+  let audioCtx = null, audioDest = null;
+  let inPoint = 0, outPoint = 0;
+
+  // 座標はすべて動画の実ピクセル基準
+  const S = { src:{x:0,y:0,w:100,h:60}, pip:{x:0,y:0,w:250} };
+  const opt = { color:'#E0301E', thick:6, pipBorder:true, lines:false, shadow:true };
+
+  const fmt = t => { if(!isFinite(t)) t=0; const m=Math.floor(t/60); const s=(t%60); return m+':'+s.toFixed(1).padStart(4,'0'); };
+  const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+  const VW = () => canvas.width, VH = () => canvas.height;
+  const pipH = () => S.pip.w * S.src.h / S.src.w;
+
+  function clampAll(){
+    const W=VW(), H=VH();
+    S.src.w = clamp(S.src.w, 8, W); S.src.h = clamp(S.src.h, 8, H);
+    S.src.x = clamp(S.src.x, 0, W - S.src.w); S.src.y = clamp(S.src.y, 0, H - S.src.h);
+    const maxW = Math.min(W, H * S.src.w / S.src.h);
+    S.pip.w = clamp(S.pip.w, 16, maxW);
+    S.pip.x = clamp(S.pip.x, 0, W - S.pip.w); S.pip.y = clamp(S.pip.y, 0, H - pipH());
+    const z = S.pip.w / S.src.w;
+    $('zoom').value = Math.min(8, Math.max(1, z)).toFixed(1);
+    $('zoomOut').textContent = z.toFixed(1) + '×';
+  }
+
+  // ---------- 読み込み ----------
+  function loadFile(f){
+    if(!f || !f.type.startsWith('video/') && !/\.(mp4|mov|webm|mkv|m4v)$/i.test(f.name)){
+      $('status').textContent = '動画ファイルを選んでください。'; return;
+    }
+    fileName = f.name.replace(/\.[^.]+$/, '');
+    if(video.src) URL.revokeObjectURL(video.src);
+    video.src = URL.createObjectURL(f);
+    video.load();
+  }
+  $('file').addEventListener('change', e => loadFile(e.target.files[0]));
+  ['dragenter','dragover'].forEach(ev => stage.addEventListener(ev, e => { e.preventDefault(); stage.classList.add('drag-over'); }));
+  ['dragleave','drop'].forEach(ev => stage.addEventListener(ev, e => { e.preventDefault(); stage.classList.remove('drag-over'); }));
+  stage.addEventListener('drop', e => loadFile(e.dataTransfer.files[0]));
+
+  video.addEventListener('loadedmetadata', () => {
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    const W=VW(), H=VH();
+    S.src = { w:Math.round(W/5), h:Math.round(H/5), x:Math.round(W*0.4), y:Math.round(H*0.45) };
+    S.pip.w = S.src.w * 2.5;
+    S.pip.x = W - S.pip.w - W*0.02; S.pip.y = H*0.03;
+    opt.thick = Math.max(3, Math.round(W/320));
+    $('thick').max = Math.max(30, opt.thick*3); $('thick').value = opt.thick; $('thickOut').textContent = opt.thick;
+    clampAll();
+    inPoint = 0; outPoint = video.duration || 0;
+    $('inT').textContent = fmt(inPoint); $('outT').textContent = fmt(outPoint);
+    $('empty').style.display = 'none'; canvas.style.display = 'block';
+    ['play','seek','export','setIn','setOut'].forEach(id => $(id).disabled = false);
+    loaded = true;
+    $('status').textContent = `${W}×${H} の動画を読み込みました。拡大したい場所をドラッグで囲んでください。`;
+  });
+  video.addEventListener('error', () => { $('status').textContent = 'この動画はブラウザで再生できない形式です。MP4(H.264) などに変換してからお試しください。'; });
+
+  // ---------- 描画 ----------
+  function draw(){
+    if(loaded && video.readyState >= 2){
+      const W=VW(), H=VH(), t=opt.thick, s=S.src, p=S.pip, ph=pipH();
+      ctx.drawImage(video, 0, 0, W, H);
+      ctx.strokeStyle = opt.color; ctx.lineWidth = t; ctx.lineJoin='miter';
+      if(opt.lines){
+        ctx.save(); ctx.lineWidth = Math.max(1, t*0.5); ctx.globalAlpha=.85;
+        const segs = connectors(s, {x:p.x,y:p.y,w:p.w,h:ph});
+        ctx.beginPath(); segs.forEach(([a,b])=>{ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);}); ctx.stroke();
+        ctx.restore();
+      }
+      ctx.strokeRect(s.x + t/2, s.y + t/2, s.w - t, s.h - t);
+      ctx.save();
+      if(opt.shadow){ ctx.shadowColor='rgba(0,0,0,.45)'; ctx.shadowBlur=Math.round(W/80); ctx.shadowOffsetY=Math.round(W/320); ctx.fillStyle='#000'; ctx.fillRect(p.x,p.y,p.w,ph); }
+      ctx.restore();
+      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(video, s.x, s.y, s.w, s.h, p.x, p.y, p.w, ph);
+      if(opt.pipBorder) ctx.strokeRect(p.x + t/2, p.y + t/2, p.w - t, ph - t);
+      if(!exporting) drawHandles(s, {x:p.x,y:p.y,w:p.w,h:ph});
+      if(!exporting && !seekDragging){
+        $('seek').value = video.duration ? (video.currentTime / video.duration * 1000) : 0;
+      }
+      $('time').textContent = fmt(video.currentTime) + ' / ' + fmt(video.duration);
+    }
+    requestAnimationFrame(draw);
+  }
+  // 2つの四角形の8つの角から外周（凸包）を求め、元範囲と拡大画面をまたぐ辺だけを線にする
+  function connectors(s, p){
+    const corners = r => [[r.x,r.y],[r.x+r.w,r.y],[r.x+r.w,r.y+r.h],[r.x,r.y+r.h]];
+    const pts = [...corners(s).map(c=>({c,k:0})), ...corners(p).map(c=>({c,k:1}))]
+      .sort((a,b) => a.c[0]-b.c[0] || a.c[1]-b.c[1]);
+    const cross = (o,a,b) => (a.c[0]-o.c[0])*(b.c[1]-o.c[1]) - (a.c[1]-o.c[1])*(b.c[0]-o.c[0]);
+    const lower=[], upper=[];
+    for(const q of pts){ while(lower.length>=2 && cross(lower[lower.length-2], lower[lower.length-1], q) <= 0) lower.pop(); lower.push(q); }
+    for(let i=pts.length-1;i>=0;i--){ const q=pts[i]; while(upper.length>=2 && cross(upper[upper.length-2], upper[upper.length-1], q) <= 0) upper.pop(); upper.push(q); }
+    const hull = lower.slice(0,-1).concat(upper.slice(0,-1));
+    const segs = [];
+    for(let i=0;i<hull.length;i++){
+      const a = hull[i], b = hull[(i+1)%hull.length];
+      if(a.k !== b.k) segs.push([a.c, b.c]);
+    }
+    return segs;
+  }
+  function hs(){ const r = canvas.getBoundingClientRect(); return 16 * canvas.width / (r.width || 1); }
+  function drawHandles(s, p){
+    const h = hs();
+    ctx.save();
+    ctx.fillStyle='#fff'; ctx.strokeStyle='rgba(0,0,0,.6)'; ctx.lineWidth=Math.max(1,h/10);
+    [[s.x+s.w, s.y+s.h],[p.x+p.w, p.y+p.h]].forEach(([x,y])=>{ ctx.fillRect(x-h/2,y-h/2,h,h); ctx.strokeRect(x-h/2,y-h/2,h,h); });
+    ctx.restore();
+  }
+  requestAnimationFrame(draw);
+
+  // ---------- マウス / タッチ操作 ----------
+  let drag = null;
+  function pt(e){ const r=canvas.getBoundingClientRect(); return { x:(e.clientX-r.left)*canvas.width/r.width, y:(e.clientY-r.top)*canvas.height/r.height }; }
+  const inRect = (q,r) => q.x>=r.x && q.x<=r.x+r.w && q.y>=r.y && q.y<=r.y+r.h;
+  const near = (q,x,y) => Math.abs(q.x-x) <= hs() && Math.abs(q.y-y) <= hs();
+  function hit(q){
+    const p = {x:S.pip.x,y:S.pip.y,w:S.pip.w,h:pipH()}, s=S.src;
+    if(near(q,p.x+p.w,p.y+p.h)) return 'pipResize';
+    if(near(q,s.x+s.w,s.y+s.h)) return 'srcResize';
+    if(inRect(q,p)) return 'pipMove';
+    if(inRect(q,s)) return 'srcMove';
+    return 'draw';
+  }
+  const cursors = { pipResize:'nwse-resize', srcResize:'nwse-resize', pipMove:'move', srcMove:'move', draw:'crosshair' };
+  canvas.addEventListener('pointerdown', e => {
+    if(!loaded || exporting) return;
+    const q = pt(e), mode = hit(q);
+    drag = { mode, q0:q, src:{...S.src}, pip:{...S.pip} };
+    canvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  canvas.addEventListener('pointermove', e => {
+    if(!loaded || exporting) return;
+    const q = pt(e);
+    if(!drag){ canvas.style.cursor = cursors[hit(q)]; return; }
+    const dx = q.x - drag.q0.x, dy = q.y - drag.q0.y;
+    const zoom = drag.pip.w / drag.src.w;
+    switch(drag.mode){
+      case 'pipMove': S.pip.x = drag.pip.x + dx; S.pip.y = drag.pip.y + dy; break;
+      case 'pipResize': S.pip.w = Math.max(16, drag.pip.w + dx); break;
+      case 'srcMove': S.src.x = drag.src.x + dx; S.src.y = drag.src.y + dy; break;
+      case 'srcResize':
+        S.src.w = Math.max(8, drag.src.w + dx); S.src.h = Math.max(8, drag.src.h + dy);
+        S.pip.w = S.src.w * zoom; break;
+      case 'draw': {
+        if(Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        S.src.x = Math.min(q.x, drag.q0.x); S.src.y = Math.min(q.y, drag.q0.y);
+        S.src.w = Math.abs(dx); S.src.h = Math.abs(dy);
+        S.pip.w = S.src.w * zoom; break;
+      }
+    }
+    clampAll();
+  });
+  const endDrag = () => { drag = null; };
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+
+  // ---------- 設定 ----------
+  function setColor(c){ opt.color = c; $('color').value = c; }
+  $('color').addEventListener('input', e => opt.color = e.target.value);
+  document.querySelectorAll('.swatches button').forEach(b => b.addEventListener('click', () => setColor(b.dataset.c)));
+  $('thick').addEventListener('input', e => { opt.thick = +e.target.value; $('thickOut').textContent = opt.thick; });
+  $('pipBorder').addEventListener('change', e => opt.pipBorder = e.target.checked);
+  $('lines').addEventListener('change', e => opt.lines = e.target.checked);
+  $('shadow').addEventListener('change', e => opt.shadow = e.target.checked);
+  $('zoom').addEventListener('input', e => {
+    if(!loaded) return;
+    const cx = S.pip.x + S.pip.w/2, cy = S.pip.y + pipH()/2;
+    S.pip.w = S.src.w * +e.target.value;
+    S.pip.x = cx - S.pip.w/2; S.pip.y = cy - pipH()/2;
+    clampAll();
+  });
+  document.querySelectorAll('[data-corner]').forEach(b => b.addEventListener('click', () => {
+    if(!loaded) return;
+    const m = VW()*0.02, c = b.dataset.corner;
+    S.pip.x = c[1]==='l' ? m : VW() - S.pip.w - m;
+    S.pip.y = c[0]==='t' ? m : VH() - pipH() - m;
+    clampAll();
+  }));
+
+  // ---------- 再生 ----------
+  function ensureAudio(){
+    if(audioCtx) { audioCtx.resume(); return; }
+    try{
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const srcNode = audioCtx.createMediaElementSource(video);
+      audioDest = audioCtx.createMediaStreamDestination();
+      srcNode.connect(audioCtx.destination); srcNode.connect(audioDest);
+    }catch(err){ audioCtx = null; audioDest = null; }
+  }
+  $('play').addEventListener('click', () => {
+    ensureAudio();
+    if(video.paused) video.play(); else video.pause();
+  });
+  video.addEventListener('play', () => { $('play').textContent='❚❚'; $('play').setAttribute('aria-label','一時停止'); });
+  video.addEventListener('pause', () => { $('play').textContent='▶'; $('play').setAttribute('aria-label','再生'); });
+  let seekDragging = false;
+  $('seek').addEventListener('pointerdown', () => seekDragging = true);
+  $('seek').addEventListener('pointerup', () => seekDragging = false);
+  $('seek').addEventListener('input', e => { if(video.duration) video.currentTime = e.target.value/1000 * video.duration; });
+  document.addEventListener('keydown', e => {
+    if(e.code === 'Space' && loaded && !exporting && e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON'){
+      e.preventDefault(); $('play').click();
+    }
+  });
+  $('setIn').addEventListener('click', () => { inPoint = video.currentTime; if(inPoint >= outPoint) outPoint = video.duration; $('inT').textContent=fmt(inPoint); $('outT').textContent=fmt(outPoint); });
+  $('setOut').addEventListener('click', () => { outPoint = video.currentTime; if(outPoint <= inPoint) inPoint = 0; $('inT').textContent=fmt(inPoint); $('outT').textContent=fmt(outPoint); });
+
+  // ---------- 速度 ----------
+  let speed = 1, muteExport = false;
+  function applySpeed(){ video.defaultPlaybackRate = speed; video.playbackRate = speed; }
+  document.querySelectorAll('#speed button').forEach(b => b.addEventListener('click', () => {
+    if(exporting) return;
+    speed = +b.dataset.s;
+    document.querySelectorAll('#speed button').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
+    applySpeed();
+  }));
+  video.addEventListener('loadeddata', applySpeed);
+  $('mute').addEventListener('change', e => muteExport = e.target.checked);
+
+  // ---------- 書き出し ----------
+  function pickMime(){
+    const list = ['video/mp4;codecs=avc1.640028,mp4a.40.2','video/mp4;codecs=avc1,mp4a','video/mp4',
+                  'video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+    return list.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
+  }
+  function setExportUI(on){
+    exporting = on;
+    $('export').disabled = on; $('cancel').style.display = on ? '' : 'none';
+    ['play','seek','setIn','setOut'].forEach(id => $(id).disabled = on);
+    document.querySelectorAll('#speed button').forEach(b => b.disabled = on);
+    $('prog').style.display = on ? 'block' : 'none';
+    canvas.style.cursor = on ? 'default' : 'crosshair';
+  }
+  let cancelled = false;
+  $('cancel').addEventListener('click', () => { cancelled = true; video.pause(); if(recorder && recorder.state !== 'inactive') recorder.stop(); });
+
+  $('export').addEventListener('click', async () => {
+    if(!loaded) return;
+    const mime = pickMime();
+    if(!window.MediaRecorder || !canvas.captureStream){ $('status').textContent='このブラウザは録画に対応していません。Chrome か Edge をお使いください。'; return; }
+    ensureAudio();
+    cancelled = false;
+    setExportUI(true);
+    video.pause();
+    applySpeed();
+    video.currentTime = inPoint;
+    await new Promise(r => video.addEventListener('seeked', r, {once:true}));
+
+    const stream = canvas.captureStream(30);
+    if(audioDest && !muteExport) audioDest.stream.getAudioTracks().forEach(tr => stream.addTrack(tr));
+    const bps = Math.round(Math.min(40e6, Math.max(4e6, VW()*VH()*30*0.15)));
+    recorder = new MediaRecorder(stream, mime ? {mimeType:mime, videoBitsPerSecond:bps} : {videoBitsPerSecond:bps});
+    const chunks = [];
+    recorder.ondataavailable = e => { if(e.data.size) chunks.push(e.data); };
+    const done = new Promise(r => recorder.onstop = r);
+
+    const span = Math.max(0.1, outPoint - inPoint);
+    const onTick = () => {
+      const f = clamp((video.currentTime - inPoint) / span, 0, 1);
+      $('prog').firstElementChild.style.width = (f*100).toFixed(1)+'%';
+      $('status').textContent = `書き出し中… ${Math.round(f*100)}%（${fmt(video.currentTime)} / ${fmt(outPoint)}）`;
+      if(video.currentTime >= outPoint - 0.02 && recorder.state === 'recording'){ video.pause(); recorder.stop(); }
+    };
+    const iv = setInterval(onTick, 100);
+    const onEnded = () => { if(recorder.state === 'recording') recorder.stop(); };
+    video.addEventListener('ended', onEnded, {once:true});
+
+    recorder.start(1000);
+    try{ await video.play(); }catch(err){}
+    await done;
+    clearInterval(iv);
+    video.removeEventListener('ended', onEnded);
+    video.pause();
+    stream.getVideoTracks().forEach(t => t.stop());
+    setExportUI(false);
+
+    if(cancelled){ $('status').textContent='書き出しを中止しました。'; return; }
+    const type = (mime || 'video/webm').split(';')[0];
+    const ext = type.includes('mp4') ? 'mp4' : 'webm';
+    const blob = new Blob(chunks, {type});
+    const name = `${fileName}_zoom${speed>1?'_x'+speed:''}.${ext}`;
+    const mb = (blob.size/1048576).toFixed(1);
+    $('status').textContent = `書き出しが終わりました（${ext.toUpperCase()}・${mb}MB）。保存の確認が表示されます。`;
+    await saveBlob(blob, name, mb, ext);
+  });
+
+  let downloads = null;
+  (async () => { try{ if(window.claude && claude.use) downloads = await claude.use('downloads'); }catch(e){} })();
+  async function saveBlob(blob, name, mb, ext){
+    if(downloads){
+      try{
+        await downloads.save({filename:name, data:blob});
+        $('status').textContent = `${name}（${mb}MB）を保存しました。`;
+      }catch(err){
+        const c = err && err.code;
+        $('status').textContent = c === 'declined' ? '保存をキャンセルしました。もう一度書き出すと保存できます。'
+          : c === 'too_large' ? 'ファイルが大きすぎて保存できませんでした。書き出し範囲を短くしてください。'
+          : '保存できませんでした（' + (c || 'unknown') + '）。';
+      }
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    $('status').textContent = `${name}（${mb}MB）を保存しました。`;
+  }
+})();
+</script>
+</body>
+</html>
