@@ -8,6 +8,9 @@ tools/
 ├─ zoom-pip/          ← ズームPiPメーカー
 │   ├─ index.html
 │   └─ README.md
+├─ pdf-split-merge/   ← PDF分割・結合ツール
+│   ├─ index.html
+│   └─ README.md
 └─ <次のツール>/
     ├─ index.html
     └─ README.md
@@ -29,3 +32,4 @@ GitHub Pagesで公開する想定(`main`ブランチのルートを配信)。
 | ツール | 内容 |
 |---|---|
 | [zoom-pip](zoom-pip/) | 動画の一部を枠で囲み、拡大映像をピクチャインピクチャで重ねて書き出すツール |
+| [pdf-split-merge](pdf-split-merge/) | PDFをページ単位に分解して並べ替え、PDF/PNG/JPGとして書き出すツール |
