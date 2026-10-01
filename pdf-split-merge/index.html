@@ -671,18 +671,38 @@ button:disabled{opacity:.45; cursor:not-allowed}
     setStatus('PDFを作成しています…');
     const outDoc = await PDFLib.PDFDocument.create();
     const libDocCache = new Map();
-    for (let i = 0; i < deck.length; i++){
-      const entry = deck[i];
-      let libDoc = libDocCache.get(entry.mediaId);
+
+    // 同じ元ファイルのページは必ずまとめて1回のcopyPages呼び出しで処理する。
+    // ページごとに個別呼び出しすると、ページ間で共有されているフォント・画像などの
+    // リソースが呼び出し回数ぶん重複コピーされ、無編集でもファイルサイズが大きく
+    // 膨らんでしまう(pdf-libの重複排除は同一copyPages呼び出し内でしか効かないため)。
+    const indicesByMedia = new Map();
+    for (const entry of deck){
+      if (!indicesByMedia.has(entry.mediaId)) indicesByMedia.set(entry.mediaId, []);
+      indicesByMedia.get(entry.mediaId).push(entry.pageIndex);
+    }
+
+    const copiedQueueByMedia = new Map();
+    let mediaDone = 0;
+    for (const [mediaId, indices] of indicesByMedia){
+      let libDoc = libDocCache.get(mediaId);
       if (!libDoc){
-        const media = mediaById(entry.mediaId);
+        const media = mediaById(mediaId);
         // 印刷・編集制限のみ(閲覧パスワードなし)で暗号化されたPDFも多いため、その場合は無視して読み込む
         libDoc = await PDFLib.PDFDocument.load(media.arrayBuffer, { ignoreEncryption: true });
-        libDocCache.set(entry.mediaId, libDoc);
+        libDocCache.set(mediaId, libDoc);
       }
-      const [copied] = await outDoc.copyPages(libDoc, [entry.pageIndex]);
-      outDoc.addPage(copied);
-      progEl.firstElementChild.style.width = `${Math.round(((i + 1) / deck.length) * 100 * 0.5)}%`;
+      copiedQueueByMedia.set(mediaId, await outDoc.copyPages(libDoc, indices));
+      mediaDone++;
+      progEl.firstElementChild.style.width = `${Math.round((mediaDone / indicesByMedia.size) * 50)}%`;
+    }
+
+    const cursors = new Map();
+    for (const entry of deck){
+      const queue = copiedQueueByMedia.get(entry.mediaId);
+      const cursor = cursors.get(entry.mediaId) || 0;
+      outDoc.addPage(queue[cursor]);
+      cursors.set(entry.mediaId, cursor + 1);
     }
 
     let compressResult = null;
