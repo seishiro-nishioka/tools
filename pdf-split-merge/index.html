@@ -603,8 +603,23 @@ button:disabled{opacity:.45; cursor:not-allowed}
     }
     return false;
   }
-  function isSafeColorSpace(cs){
-    return cs === PDFLib.PDFName.of('DeviceRGB') || cs === PDFLib.PDFName.of('DeviceGray');
+  function isSafeColorSpace(cs, context){
+    if (cs === PDFLib.PDFName.of('DeviceRGB') || cs === PDFLib.PDFName.of('DeviceGray')) return true;
+    // Adobe系ツール(Distiller/InDesign等)で書き出されたPDFはICCBased(カラープロファイル付き)が
+    // 非常に多いため、成分数(N)が1(グレー)か3(RGB)であれば安全とみなして対象に含める。
+    // N=4(CMYK)はcanvas経由の再エンコードで色が壊れる恐れがあるため対象外のまま。
+    if (cs instanceof PDFLib.PDFArray){
+      const arr = cs.asArray();
+      if (arr.length >= 2 && arr[0] === PDFLib.PDFName.of('ICCBased')){
+        try{
+          const iccStream = context.lookup(arr[1]);
+          const n = iccStream && iccStream.dict && iccStream.dict.lookup(PDFLib.PDFName.of('N'));
+          const nVal = n && n.asNumber ? n.asNumber() : null;
+          return nVal === 1 || nVal === 3;
+        }catch(e){ return false; }
+      }
+    }
+    return false;
   }
 
   async function compressPdfImages(outDoc, preset, onProgress){
@@ -628,7 +643,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
         if (xobj.dict.lookup(PDFName.of('Subtype')) !== PDFName.of('Image')) continue;
         if (!isPlainDctFilter(xobj.dict.lookup(PDFName.of('Filter')))) continue;
         if (xobj.dict.get(PDFName.of('SMask')) || xobj.dict.get(PDFName.of('Mask'))) continue; // 透過情報は再現できないため対象外
-        if (!isSafeColorSpace(xobj.dict.lookup(PDFName.of('ColorSpace')))) continue; // CMYK/ICC等は色が壊れる恐れがあるため対象外
+        if (!isSafeColorSpace(xobj.dict.lookup(PDFName.of('ColorSpace')), context)) continue; // CMYK等は色が壊れる恐れがあるため対象外(ICCBasedはN=1/3なら対象に含める)
         if (xobj.contents.length < COMPRESS_MIN_BYTES) continue;
         candidates.push({ ref, xobj });
       }
