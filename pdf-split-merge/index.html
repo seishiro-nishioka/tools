@@ -190,6 +190,16 @@ button:disabled{opacity:.45; cursor:not-allowed}
         </div>
         <button class="primary" id="exportBtn" disabled style="margin-left:auto">書き出す</button>
       </div>
+      <div class="export-bar" id="compressRow">
+        <span style="font-size:13.5px; color:var(--sub)">画像を圧縮</span>
+        <select id="compressLevel">
+          <option value="off" selected>しない(元のまま)</option>
+          <option value="light">弱め</option>
+          <option value="standard">標準(おすすめ)</option>
+          <option value="strong">強め</option>
+        </select>
+        <span style="font-size:12.5px; color:var(--sub)">PDF内の写真・スキャン画像(JPEG)を再圧縮し、見た目はほぼそのままに容量を減らします</span>
+      </div>
       <div class="progress" id="prog"><i></i></div>
       <p id="status">メディアプールのファイルを編集領域へドラッグすると、ページごとに並びます。</p>
     </div>
@@ -214,6 +224,20 @@ button:disabled{opacity:.45; cursor:not-allowed}
   const mediaListEl = $('mediaList'), mediaPoolEl = $('mediaPool');
   const deckGrid = $('deckGrid'), deckCountEl = $('deckCount'), clearDeckBtn = $('clearDeck');
   const exportBtn = $('exportBtn'), progEl = $('prog'), statusEl = $('status');
+  const compressRow = $('compressRow'), compressLevelSel = $('compressLevel');
+
+  const COMPRESS_PRESETS = {
+    light:    { quality: 0.82, maxDim: null },
+    standard: { quality: 0.70, maxDim: 2200 },
+    strong:   { quality: 0.50, maxDim: 1600 },
+  };
+  const COMPRESS_MIN_BYTES = 20 * 1024; // これより小さい画像は圧縮の対象外(効果が薄いため)
+
+  function formatBytes(n){
+    if (n < 1024) return `${n}B`;
+    if (n < 1024 * 1024) return `${Math.round(n / 1024)}KB`;
+    return `${(n / 1024 / 1024).toFixed(2)}MB`;
+  }
 
   /** @type {{id:string,name:string,arrayBuffer:ArrayBuffer,pdfjsDoc:any,pageCount:number}[]} */
   const mediaItems = [];
@@ -550,7 +574,91 @@ button:disabled{opacity:.45; cursor:not-allowed}
   document.querySelectorAll('#format button').forEach(b => b.addEventListener('click', () => {
     exportFormat = b.dataset.f;
     document.querySelectorAll('#format button').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
+    compressRow.hidden = exportFormat !== 'pdf';
   }));
+
+  // ---------- PDF内の画像圧縮(JPEG/DCTDecodeのみ、見た目が壊れる恐れのある形式は対象外) ----------
+  async function recompressJpegBytes(jpegBytes, preset){
+    const bitmap = await createImageBitmap(new Blob([jpegBytes], { type: 'image/jpeg' }));
+    let w = bitmap.width, h = bitmap.height;
+    if (preset.maxDim && Math.max(w, h) > preset.maxDim){
+      const scale = preset.maxDim / Math.max(w, h);
+      w = Math.max(1, Math.round(w * scale));
+      h = Math.max(1, Math.round(h * scale));
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close?.();
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', preset.quality));
+    return { bytes: new Uint8Array(await blob.arrayBuffer()), width: w, height: h };
+  }
+
+  function isPlainDctFilter(filter){
+    if (!filter) return false;
+    if (filter === PDFLib.PDFName.of('DCTDecode')) return true;
+    if (filter instanceof PDFLib.PDFArray && filter.asArray().length === 1){
+      return filter.asArray()[0] === PDFLib.PDFName.of('DCTDecode');
+    }
+    return false;
+  }
+  function isSafeColorSpace(cs){
+    return cs === PDFLib.PDFName.of('DeviceRGB') || cs === PDFLib.PDFName.of('DeviceGray');
+  }
+
+  async function compressPdfImages(outDoc, preset, onProgress){
+    const { PDFName, PDFDict, PDFRawStream, PDFNumber } = PDFLib;
+    const context = outDoc.context;
+    const candidates = [];
+    const seenRefs = new Set();
+    for (const page of outDoc.getPages()){
+      const resources = page.node.Resources();
+      if (!resources) continue;
+      let xobjDict;
+      try{ xobjDict = resources.lookup(PDFName.of('XObject'), PDFDict); }catch(e){ continue; }
+      if (!xobjDict) continue;
+      for (const key of xobjDict.keys()){
+        const ref = xobjDict.get(key);
+        const refKey = ref.toString();
+        if (seenRefs.has(refKey)) continue;
+        seenRefs.add(refKey);
+        const xobj = context.lookup(ref);
+        if (!(xobj instanceof PDFRawStream)) continue;
+        if (xobj.dict.lookup(PDFName.of('Subtype')) !== PDFName.of('Image')) continue;
+        if (!isPlainDctFilter(xobj.dict.lookup(PDFName.of('Filter')))) continue;
+        if (xobj.dict.get(PDFName.of('SMask')) || xobj.dict.get(PDFName.of('Mask'))) continue; // 透過情報は再現できないため対象外
+        if (!isSafeColorSpace(xobj.dict.lookup(PDFName.of('ColorSpace')))) continue; // CMYK/ICC等は色が壊れる恐れがあるため対象外
+        if (xobj.contents.length < COMPRESS_MIN_BYTES) continue;
+        candidates.push({ ref, xobj });
+      }
+    }
+
+    let imageCount = 0, savedBytes = 0;
+    for (let i = 0; i < candidates.length; i++){
+      const { ref, xobj } = candidates[i];
+      try{
+        const { bytes: newBytes, width, height } = await recompressJpegBytes(xobj.contents, preset);
+        if (newBytes.length < xobj.contents.length){
+          const newDict = xobj.dict.clone(context);
+          newDict.set(PDFName.of('Length'), PDFNumber.of(newBytes.length));
+          newDict.set(PDFName.of('Width'), PDFNumber.of(width));
+          newDict.set(PDFName.of('Height'), PDFNumber.of(height));
+          newDict.set(PDFName.of('BitsPerComponent'), PDFNumber.of(8));
+          newDict.set(PDFName.of('ColorSpace'), PDFName.of('DeviceRGB'));
+          newDict.delete(PDFName.of('DecodeParms'));
+          newDict.delete(PDFName.of('Decode'));
+          context.assign(ref, PDFRawStream.of(newDict, newBytes));
+          savedBytes += xobj.contents.length - newBytes.length;
+          imageCount++;
+        }
+      }catch(err){
+        console.warn('画像の圧縮に失敗したためスキップしました:', err);
+      }
+      if (onProgress) onProgress(i + 1, candidates.length);
+    }
+    return { imageCount, savedBytes };
+  }
 
   function singleSourceName(){
     const ids = new Set(deck.map(d => d.mediaId));
@@ -574,11 +682,29 @@ button:disabled{opacity:.45; cursor:not-allowed}
       }
       const [copied] = await outDoc.copyPages(libDoc, [entry.pageIndex]);
       outDoc.addPage(copied);
-      progEl.firstElementChild.style.width = `${Math.round(((i + 1) / deck.length) * 100)}%`;
+      progEl.firstElementChild.style.width = `${Math.round(((i + 1) / deck.length) * 100 * 0.5)}%`;
     }
+
+    let compressResult = null;
+    const level = compressLevelSel.value;
+    if (level !== 'off'){
+      setStatus('画像を圧縮しています…');
+      compressResult = await compressPdfImages(outDoc, COMPRESS_PRESETS[level], (done, total) => {
+        const pct = total ? 50 + Math.round((done / total) * 50) : 100;
+        progEl.firstElementChild.style.width = `${pct}%`;
+      });
+    }
+
     const bytes = await outDoc.save();
     downloadBlob(new Blob([bytes], { type: 'application/pdf' }), singleSourceName() || 'merged.pdf');
-    setStatus(`書き出しが完了しました(${deck.length}ページのPDF)。`);
+
+    if (compressResult && compressResult.imageCount > 0){
+      setStatus(`書き出しが完了しました(${deck.length}ページのPDF)。画像${compressResult.imageCount}枚を圧縮し、約${formatBytes(compressResult.savedBytes)}削減しました。`);
+    } else if (compressResult){
+      setStatus(`書き出しが完了しました(${deck.length}ページのPDF)。圧縮対象の画像(JPEG)は見つかりませんでした。`);
+    } else {
+      setStatus(`書き出しが完了しました(${deck.length}ページのPDF)。`);
+    }
   }
 
   async function exportImages(format){
