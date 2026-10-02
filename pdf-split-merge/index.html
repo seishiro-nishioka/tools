@@ -132,13 +132,19 @@ h2{font-size:14.5px; margin:0; font-weight:700; display:flex; align-items:center
 .deck-grid.is-empty{align-content:stretch}
 .deck-empty{
   grid-column:1/-1; display:flex; flex-direction:column; align-items:center; justify-content:center;
-  text-align:center; color:var(--sub); border:2px dashed var(--line);
+  gap:8px; text-align:center; color:var(--sub); border:2px dashed var(--line);
   border-radius:8px; padding:48px 20px; transition:background-color .1s ease;
 }
-.deck-empty strong{display:block; color:var(--ink); font-size:16px; margin-bottom:6px}
+.deck-empty-icon{width:48px; height:48px; color:var(--line); transition:transform .15s ease}
+.deck-empty strong{display:block; color:var(--ink); font-size:16px}
 .deck-empty p{margin:0; font-size:13px}
 .deck-empty.drop-target{border-color:var(--red); color:var(--red); background:color-mix(in srgb, var(--red) 8%, transparent)}
 .deck-empty.drop-target strong{color:var(--red)}
+.deck-empty.drop-target .deck-empty-icon{color:var(--red)}
+/* 横並び(①が左・②が右)のときは右向き、縦積み(①が上・②が下)のときは下向きの矢印にする */
+@media (max-width:980px){
+  .deck-empty-icon{transform:rotate(90deg)}
+}
 
 .page-card{position:relative}
 .page-thumb-wrap{
@@ -1148,7 +1154,14 @@ button:disabled{opacity:.45; cursor:not-allowed}
     if (!deck.length){
       const empty = document.createElement('div');
       empty.className = 'deck-empty';
-      empty.innerHTML = '<strong>ここにPDFをドラッグ</strong><p>①メディアプールのファイルをこの枠にドロップすると、ページごとに並びます</p>';
+      empty.innerHTML = `
+        <svg class="deck-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="5" y1="12" x2="19" y2="12"/>
+          <polyline points="12 5 19 12 12 19"/>
+        </svg>
+        <strong>メディアプールからドラッグ</strong>
+        <p>①メディアプールのファイルをこの枠にドロップすると、ページごとに並びます</p>
+      `;
       deckGrid.appendChild(empty);
     } else {
       deck.forEach((entry, i) => {
