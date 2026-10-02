@@ -254,6 +254,10 @@ button:disabled{opacity:.45; cursor:not-allowed}
 .ghost-btn{background:transparent}
 
 .export-bar{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+.export-submit{
+  width:100%; box-sizing:border-box; margin-top:auto;
+  padding:16px; font-size:17px; border-radius:8px;
+}
 .seg{display:flex; border:1px solid var(--line); border-radius:5px; overflow:hidden}
 .seg button{border:0; border-radius:0; padding:7px 16px}
 .seg button+button{border-left:1px solid var(--line)}
@@ -303,7 +307,6 @@ button:disabled{opacity:.45; cursor:not-allowed}
           <button data-f="png" aria-pressed="false">PNG</button>
           <button data-f="jpg" aria-pressed="false">JPG</button>
         </div>
-        <button class="primary" id="exportBtn" disabled style="margin-left:auto">書き出す</button>
       </div>
       <div class="export-bar" id="compressRow">
         <span style="font-size:13.5px; color:var(--sub)">画像を圧縮</span>
@@ -367,6 +370,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
 
     <div class="progress" id="prog"><i></i></div>
     <p id="status">メディアプールのファイルを編集領域へドラッグすると、ページごとに並びます。</p>
+    <button class="primary export-submit" id="exportBtn" disabled>書き出す</button>
   </section>
 </main>
 
