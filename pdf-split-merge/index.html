@@ -1063,10 +1063,13 @@ button:disabled{opacity:.45; cursor:not-allowed}
   $('pickFolder').addEventListener('change', e => { addFilesToPool(Array.from(e.target.files)); e.target.value = ''; });
 
   // OSからのドラッグ&ドロップ(ファイル・フォルダとも)
-  function readEntryFilesRecursive(entry){
+  // fallbackFile: entry.file()が失敗した場合に代わりに使うFile(file://で開いた場合、
+  // ドラッグ&ドロップされたファイルのFileSystemEntry.file()がEncodingErrorで失敗することがあるため)。
+  // ディレクトリ再帰で見つかった(ドラッグ対象そのものではない)ファイルにはfallbackFileが無い。
+  function readEntryFilesRecursive(entry, fallbackFile){
     return new Promise(resolve => {
       if (entry.isFile){
-        entry.file(file => resolve([file]), () => resolve([]));
+        entry.file(file => resolve([file]), () => resolve(fallbackFile ? [fallbackFile] : []));
       } else if (entry.isDirectory){
         const reader = entry.createReader();
         const all = [];
@@ -1087,13 +1090,13 @@ button:disabled{opacity:.45; cursor:not-allowed}
     const items = dataTransfer.items;
     if (items && items.length && items[0].webkitGetAsEntry){
       const files = [];
-      const entries = [];
+      const entries = []; // [entry, fallbackFile] のペア
       for (const item of items){
         if (item.kind !== 'file') continue;
         const entry = item.webkitGetAsEntry();
-        if (entry) entries.push(entry); else { const f = item.getAsFile(); if (f) files.push(f); }
+        if (entry) entries.push([entry, item.getAsFile()]); else { const f = item.getAsFile(); if (f) files.push(f); }
       }
-      for (const entry of entries) files.push(...await readEntryFilesRecursive(entry));
+      for (const [entry, fallbackFile] of entries) files.push(...await readEntryFilesRecursive(entry, fallbackFile));
       return files;
     }
     return Array.from(dataTransfer.files || []);
