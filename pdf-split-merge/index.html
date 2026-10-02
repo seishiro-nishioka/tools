@@ -131,16 +131,17 @@ h2{font-size:14.5px; margin:0; font-weight:700}
 .page-card.insert-before::before{left:-10px}
 .page-card.insert-after::after{right:-10px}
 
-/* ページ単位の編集ボタン(回転・クロップ)。削除ボタンと同じ円形バッジのスタイルに揃える */
-.page-rotate,.page-crop{
+/* ページ単位の編集ボタン(回転・クロップ・スタンプ)。削除ボタンと同じ円形バッジのスタイルに揃える */
+.page-rotate,.page-crop,.page-stamp{
   position:absolute; width:22px; height:22px; border-radius:50%;
   background:rgba(20,20,20,.6); color:#fff; border:none; font-size:12px; line-height:1;
   display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0;
 }
 .page-rotate{top:5px; left:5px}
+.page-stamp{top:5px; left:32px; font-size:13px}
 .page-crop{right:5px; bottom:5px; font-size:13px}
-.page-rotate:hover,.page-crop:hover{background:var(--blue)}
-.page-crop.active{background:var(--blue)}
+.page-rotate:hover,.page-crop:hover,.page-stamp:hover{background:var(--blue)}
+.page-crop.active,.page-stamp.active{background:var(--blue)}
 
 /* ---------- モーダル(クロップ編集) ---------- */
 .modal-backdrop{
@@ -165,6 +166,38 @@ h2{font-size:14.5px; margin:0; font-weight:700}
 }
 .modal-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
 .modal-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:4px}
+
+/* ---------- 署名・スタンプ ---------- */
+.stamp-lib{display:flex; gap:8px; flex-wrap:wrap}
+.stamp-lib-item{
+  position:relative; width:52px; height:52px; border:1px solid var(--line); border-radius:5px;
+  background:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:4px;
+}
+.stamp-lib-item:hover{border-color:var(--blue)}
+.stamp-lib-item img{max-width:100%; max-height:100%; object-fit:contain}
+.stamp-lib-item .stamp-lib-del{
+  position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%;
+  background:var(--red); color:#fff; border:none; font-size:11px; line-height:1; padding:0; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+}
+.stamp-lib-add{
+  width:52px; height:52px; border:1px dashed var(--line); border-radius:5px; background:transparent;
+  color:var(--sub); font-size:22px; cursor:pointer; display:flex; align-items:center; justify-content:center;
+}
+.stamp-lib-add:hover{border-color:var(--blue); color:var(--blue)}
+.stamp-placement{
+  position:absolute; border:2px solid var(--blue); box-sizing:border-box; cursor:move;
+}
+.stamp-placement img{width:100%; height:100%; object-fit:fill; pointer-events:none}
+.stamp-placement .stamp-del{
+  position:absolute; top:-11px; right:-11px; width:20px; height:20px; border-radius:50%;
+  background:var(--red); color:#fff; border:none; font-size:12px; line-height:1; padding:0; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+}
+.stamp-placement .stamp-resize{
+  position:absolute; right:-6px; bottom:-6px; width:14px; height:14px; border-radius:50%;
+  background:var(--blue); border:2px solid #fff; cursor:nwse-resize;
+}
 
 /* ---------- 詳細設定(透かし・メタデータ) ---------- */
 details.box{padding:0}
@@ -263,8 +296,15 @@ button:disabled{opacity:.45; cursor:not-allowed}
       </div>
 
       <details class="box" id="advancedBox">
-        <summary>詳細設定(透かし・PDFのプロパティ)</summary>
+        <summary>詳細設定(透かし・署名・スタンプ・PDFのプロパティ)</summary>
         <div class="details-body">
+          <div>
+            <p class="modal-hint" style="margin-bottom:8px">署名・スタンプ用の画像(PNG推奨、背景透過に対応)をここに登録しておくと、各ページの🖋ボタンから配置できます。</p>
+            <div class="stamp-lib" id="stampLib">
+              <button type="button" class="stamp-lib-add" id="stampLibAddBtn" aria-label="署名・スタンプ画像を追加" title="画像を追加">+</button>
+            </div>
+            <input type="file" id="stampLibInput" accept="image/*" multiple class="sr">
+          </div>
           <div class="modal-row">
             <label class="check-row"><input type="checkbox" id="wmEnable"> 透かしを追加する</label>
           </div>
@@ -326,6 +366,22 @@ button:disabled{opacity:.45; cursor:not-allowed}
       <button type="button" id="cropCancelBtn" class="ghost-btn">キャンセル</button>
       <button type="button" id="cropClearBtn">クロップを解除</button>
       <button type="button" id="cropApplyBtn" class="primary">適用する</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="stampModalBackdrop" style="display:none">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="stampModalTitle">
+    <h3 id="stampModalTitle">署名・スタンプの配置</h3>
+    <p class="modal-hint">下の一覧から画像を選ぶと配置されます。ドラッグで移動、右下の丸で大きさを変更できます。</p>
+    <div class="stamp-lib" id="stampModalLib"></div>
+    <div class="crop-stage" id="stampStage">
+      <canvas id="stampCanvas"></canvas>
+    </div>
+    <p class="modal-hint" id="stampRotateHint" style="display:none">※このページには回転が設定されていますが、配置はクロップと同様に回転前の向きで指定します。</p>
+    <div class="modal-actions">
+      <button type="button" id="stampCancelBtn" class="ghost-btn">キャンセル</button>
+      <button type="button" id="stampApplyBtn" class="primary">適用する</button>
     </div>
   </div>
 </div>
@@ -1041,6 +1097,15 @@ button:disabled{opacity:.45; cursor:not-allowed}
         cropBtn.addEventListener('click', e => { e.stopPropagation(); openCropModal(entry.id); });
         card.appendChild(cropBtn);
 
+        const stampBtn = document.createElement('button');
+        stampBtn.type = 'button';
+        stampBtn.className = 'page-stamp' + (entry.stamps.length ? ' active' : '');
+        stampBtn.setAttribute('aria-label', `${i + 1}ページ目に署名・スタンプを配置`);
+        stampBtn.title = entry.stamps.length ? `署名・スタンプ配置済み(${entry.stamps.length}件、クリックで編集)` : '署名・スタンプ';
+        stampBtn.textContent = '🖋';
+        stampBtn.addEventListener('click', e => { e.stopPropagation(); openStampModal(entry.id); });
+        card.appendChild(stampBtn);
+
         const del = document.createElement('button');
         del.type = 'button';
         del.className = 'page-delete';
@@ -1068,7 +1133,8 @@ button:disabled{opacity:.45; cursor:not-allowed}
     const newEntries = [];
     // rotation: ユーザーが回転ボタンで加える追加回転(度、0/90/180/270)
     // crop: {x,y,width,height}(PDFのデフォルトユーザー空間、= 回転前のMediaBox座標系でのクロップ範囲)。nullなら無指定
-    for (let i = 0; i < media.pageCount; i++) newEntries.push({ id: uid(), mediaId, pageIndex: i, rotation: 0, crop: null });
+    // stamps: [{libId,x,y,width,height}, ...](クロップと同じ回転前の座標系で配置した署名・スタンプ画像)
+    for (let i = 0; i < media.pageCount; i++) newEntries.push({ id: uid(), mediaId, pageIndex: i, rotation: 0, crop: null, stamps: [] });
     deck.splice(atIndex, 0, ...newEntries);
     renderDeck();
   }
@@ -1264,6 +1330,284 @@ button:disabled{opacity:.45; cursor:not-allowed}
       applyCropToEntry(entry, cropBox);
     }
     cropBackdrop.style.display = 'none';
+  });
+
+  // ---------- 署名・スタンプ: 画像ライブラリ ----------
+  const stampLibrary = []; // {id, name, dataUrl, img}
+  const stampLibEl = $('stampLib');
+  const stampLibAddBtn = $('stampLibAddBtn');
+  const stampLibInput = $('stampLibInput');
+
+  function dataUrlToBytes(dataUrl){
+    const binary = atob(dataUrl.slice(dataUrl.indexOf(',') + 1));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+  function loadImageEl(src){
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
+  // アップロードされた画像(PNG/JPGなど)を、透過対応のPNGへ正規化してから保持する
+  function normalizeImageToPngDataUrl(file){
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        URL.revokeObjectURL(img.src);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+  }
+  function stampLibItemById(libId){ return stampLibrary.find(s => s.id === libId); }
+
+  function renderStampLib(){
+    stampLibEl.querySelectorAll('.stamp-lib-item').forEach(el => el.remove());
+    for (const item of stampLibrary){
+      const wrap = document.createElement('div');
+      wrap.className = 'stamp-lib-item';
+      wrap.title = item.name;
+      const img = document.createElement('img');
+      img.src = item.dataUrl;
+      img.alt = item.name;
+      wrap.appendChild(img);
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'stamp-lib-del';
+      del.textContent = '×';
+      del.setAttribute('aria-label', `${item.name}をライブラリから削除`);
+      del.addEventListener('click', e => {
+        e.stopPropagation();
+        const idx = stampLibrary.findIndex(s => s.id === item.id);
+        if (idx !== -1) stampLibrary.splice(idx, 1);
+        renderStampLib();
+      });
+      wrap.appendChild(del);
+      stampLibEl.insertBefore(wrap, stampLibAddBtn);
+    }
+  }
+
+  stampLibAddBtn.addEventListener('click', () => stampLibInput.click());
+  stampLibInput.addEventListener('change', async e => {
+    const files = Array.from(e.target.files);
+    e.target.value = '';
+    for (const file of files){
+      try{
+        const dataUrl = await normalizeImageToPngDataUrl(file);
+        const img = await loadImageEl(dataUrl);
+        stampLibrary.push({ id: uid(), name: file.name, dataUrl, img });
+      }catch(err){
+        console.error('画像の読み込みに失敗しました:', file.name, err);
+      }
+    }
+    renderStampLib();
+  });
+
+  // ---------- 署名・スタンプ: 配置モーダル ----------
+  // 配置はクロップと同じ座標系(ページ本来の向き=page.rotate、entry.rotationは含めない)で保存する。
+  // PDFへの描画(page.drawImage)はCropBox同様/Rotateの影響を受けないため、これが唯一正しい基準になる。
+  const stampBackdrop = $('stampModalBackdrop');
+  const stampStage = $('stampStage');
+  const stampCanvas = $('stampCanvas');
+  const stampModalLibEl = $('stampModalLib');
+  const stampRotateHint = $('stampRotateHint');
+  // placements[i]: {libId, xRatio, yRatio, wRatio, hRatio, el} ※Ratioはキャンバスの幅/高さに対する比率
+  let stampCtx = { deckId: null, viewport: null, placements: [] };
+
+  function stampOverlayRectPx(p){
+    return {
+      left: p.xRatio * stampCanvas.width, top: p.yRatio * stampCanvas.height,
+      width: p.wRatio * stampCanvas.width, height: p.hRatio * stampCanvas.height,
+    };
+  }
+  function positionStampEl(p){
+    const scaleX = stampStage.clientWidth / stampCanvas.width;
+    const scaleY = stampStage.clientHeight / stampCanvas.height;
+    const r = stampOverlayRectPx(p);
+    p.el.style.left = (r.left * scaleX) + 'px';
+    p.el.style.top = (r.top * scaleY) + 'px';
+    p.el.style.width = (r.width * scaleX) + 'px';
+    p.el.style.height = (r.height * scaleY) + 'px';
+  }
+  function removePlacement(p){
+    const idx = stampCtx.placements.indexOf(p);
+    if (idx !== -1) stampCtx.placements.splice(idx, 1);
+    p.el.remove();
+  }
+
+  function createPlacementEl(p){
+    const el = document.createElement('div');
+    el.className = 'stamp-placement';
+    const libItem = stampLibItemById(p.libId);
+    const img = document.createElement('img');
+    img.src = libItem ? libItem.dataUrl : '';
+    img.alt = '';
+    el.appendChild(img);
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'stamp-del';
+    del.textContent = '×';
+    del.setAttribute('aria-label', '配置を削除');
+    del.addEventListener('click', e => { e.stopPropagation(); removePlacement(p); });
+    el.appendChild(del);
+    const resize = document.createElement('div');
+    resize.className = 'stamp-resize';
+    el.appendChild(resize);
+    p.el = el;
+
+    el.addEventListener('pointerdown', e => {
+      if (e.target === resize || e.target === del) return;
+      e.stopPropagation();
+      el.setPointerCapture(e.pointerId);
+      const startX = e.clientX, startY = e.clientY;
+      const start = { xRatio: p.xRatio, yRatio: p.yRatio };
+      const stageW = stampStage.clientWidth, stageH = stampStage.clientHeight;
+      const onMove = ev => {
+        const dx = (ev.clientX - startX) / stageW, dy = (ev.clientY - startY) / stageH;
+        p.xRatio = Math.min(Math.max(start.xRatio + dx, 0), 1 - p.wRatio);
+        p.yRatio = Math.min(Math.max(start.yRatio + dy, 0), 1 - p.hRatio);
+        positionStampEl(p);
+      };
+      const onUp = () => { el.removeEventListener('pointermove', onMove); el.removeEventListener('pointerup', onUp); };
+      el.addEventListener('pointermove', onMove);
+      el.addEventListener('pointerup', onUp);
+    });
+    resize.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      resize.setPointerCapture(e.pointerId);
+      const startX = e.clientX;
+      const stageW = stampStage.clientWidth;
+      const startW = p.wRatio;
+      const aspect = p.hRatio / p.wRatio; // 見た目の縦横比を維持したまま大きさだけ変える
+      const onMove = ev => {
+        const dx = (ev.clientX - startX) / stageW;
+        const newW = Math.min(Math.max(startW + dx, 0.03), 1 - p.xRatio);
+        p.wRatio = newW;
+        p.hRatio = Math.min(newW * aspect, 1 - p.yRatio);
+        positionStampEl(p);
+      };
+      const onUp = () => { resize.removeEventListener('pointermove', onMove); resize.removeEventListener('pointerup', onUp); };
+      resize.addEventListener('pointermove', onMove);
+      resize.addEventListener('pointerup', onUp);
+    });
+    return el;
+  }
+
+  function addPlacementFromLib(libItem){
+    const wRatio = 0.28;
+    const pixelAspect = libItem.img.naturalHeight / Math.max(1, libItem.img.naturalWidth);
+    const hRatio = Math.min(wRatio * (stampCanvas.width / stampCanvas.height) * pixelAspect, 1);
+    const p = {
+      libId: libItem.id,
+      xRatio: Math.max(0, (1 - wRatio) / 2), yRatio: Math.max(0, (1 - hRatio) / 2),
+      wRatio, hRatio,
+    };
+    const el = createPlacementEl(p);
+    stampStage.appendChild(el);
+    stampCtx.placements.push(p);
+    positionStampEl(p);
+  }
+
+  function renderStampModalLib(){
+    stampModalLibEl.innerHTML = '';
+    if (!stampLibrary.length){
+      const hint = document.createElement('p');
+      hint.className = 'modal-hint';
+      hint.textContent = '登録済みの画像がありません。先に「詳細設定」から署名・スタンプ画像を追加してください。';
+      stampModalLibEl.appendChild(hint);
+      return;
+    }
+    for (const item of stampLibrary){
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'stamp-lib-item';
+      btn.title = `クリックで配置: ${item.name}`;
+      const img = document.createElement('img');
+      img.src = item.dataUrl;
+      img.alt = item.name;
+      btn.appendChild(img);
+      btn.addEventListener('click', () => addPlacementFromLib(item));
+      stampModalLibEl.appendChild(btn);
+    }
+  }
+
+  async function openStampModal(deckId){
+    const entry = deck.find(d => d.id === deckId);
+    if (!entry) return;
+    const media = mediaById(entry.mediaId);
+    if (!media) return;
+    const page = await media.pdfjsDoc.getPage(entry.pageIndex + 1);
+    // モーダル描画はページ本来の向き(page.rotate)のみを使う。entry.rotation(追加回転)は含めない(クロップと同じ理由)。
+    const baseViewport = page.getViewport({ scale: 1 });
+    const STAMP_STAGE_MAX = 560;
+    const scale = Math.min(STAMP_STAGE_MAX / baseViewport.width, STAMP_STAGE_MAX / baseViewport.height, 2);
+    const viewport = page.getViewport({ scale });
+    stampCanvas.width = Math.max(1, Math.ceil(viewport.width));
+    stampCanvas.height = Math.max(1, Math.ceil(viewport.height));
+    const ctx = stampCanvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, stampCanvas.width, stampCanvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    stampStage.querySelectorAll('.stamp-placement').forEach(el => el.remove());
+    stampCtx = { deckId, viewport, placements: [] };
+
+    // 保存済みのPDF座標の配置を、このモーダル描画用のキャンバス比率へ逆変換して復元する
+    for (const s of entry.stamps){
+      if (!stampLibItemById(s.libId)) continue; // ライブラリから削除済みの画像は復元できない
+      const c0 = viewport.convertToViewportPoint(s.x, s.y);
+      const c1 = viewport.convertToViewportPoint(s.x + s.width, s.y + s.height);
+      const left = Math.min(c0[0], c1[0]), top = Math.min(c0[1], c1[1]);
+      const right = Math.max(c0[0], c1[0]), bottom = Math.max(c0[1], c1[1]);
+      const p = {
+        libId: s.libId,
+        xRatio: left / stampCanvas.width, yRatio: top / stampCanvas.height,
+        wRatio: (right - left) / stampCanvas.width, hRatio: (bottom - top) / stampCanvas.height,
+      };
+      const el = createPlacementEl(p);
+      stampStage.appendChild(el);
+      stampCtx.placements.push(p);
+    }
+
+    renderStampModalLib();
+    stampRotateHint.style.display = entry.rotation ? 'block' : 'none';
+    stampBackdrop.style.display = 'flex';
+    requestAnimationFrame(() => stampCtx.placements.forEach(positionStampEl));
+  }
+
+  $('stampCancelBtn').addEventListener('click', () => { stampBackdrop.style.display = 'none'; });
+  stampBackdrop.addEventListener('click', e => { if (e.target === stampBackdrop) stampBackdrop.style.display = 'none'; });
+
+  $('stampApplyBtn').addEventListener('click', () => {
+    const entry = deck.find(d => d.id === stampCtx.deckId);
+    if (!entry || !stampCtx.viewport) { stampBackdrop.style.display = 'none'; return; }
+    entry.stamps = stampCtx.placements.map(p => {
+      const leftPx = p.xRatio * stampCanvas.width, topPx = p.yRatio * stampCanvas.height;
+      const rightPx = leftPx + p.wRatio * stampCanvas.width, bottomPx = topPx + p.hRatio * stampCanvas.height;
+      const [px0, py0] = stampCtx.viewport.convertToPdfPoint(leftPx, topPx);
+      const [px1, py1] = stampCtx.viewport.convertToPdfPoint(rightPx, bottomPx);
+      return {
+        libId: p.libId,
+        x: Math.min(px0, px1), y: Math.min(py0, py1),
+        width: Math.abs(px1 - px0), height: Math.abs(py1 - py0),
+      };
+    });
+    const card = deckGrid.querySelector(`.page-card[data-deck-id="${CSS.escape(entry.id)}"]`);
+    const btn = card && card.querySelector('.page-stamp');
+    if (btn){
+      btn.classList.toggle('active', entry.stamps.length > 0);
+      btn.title = entry.stamps.length ? `署名・スタンプ配置済み(${entry.stamps.length}件、クリックで編集)` : '署名・スタンプ';
+    }
+    stampBackdrop.style.display = 'none';
   });
 
   // ---------- 編集領域: ドラッグ&ドロップでの挿入位置判定 ----------
@@ -1566,6 +1910,24 @@ button:disabled{opacity:.45; cursor:not-allowed}
       }
     }
 
+    // 署名・スタンプ: クロップと同じ座標系(ページ本来の向き、/Rotateの影響を受けない)にそのまま描画する
+    {
+      const stampImageCache = new Map(); // libIdごとに1回だけ埋め込む
+      for (const { page, entry } of addedPages){
+        for (const s of entry.stamps){
+          const libItem = stampLibItemById(s.libId);
+          if (!libItem) continue; // ライブラリから削除済みの画像はスキップ
+          let embedded = stampImageCache.get(s.libId);
+          if (!embedded){
+            const pngBytes = dataUrlToBytes(libItem.dataUrl);
+            embedded = await outDoc.embedPng(pngBytes);
+            stampImageCache.set(s.libId, embedded);
+          }
+          page.drawImage(embedded, { x: s.x, y: s.y, width: s.width, height: s.height });
+        }
+      }
+    }
+
     // メタデータ(空欄の項目は変更しない)
     const metaTitle = $('metaTitle').value.trim();
     const metaAuthor = $('metaAuthor').value.trim();
@@ -1615,6 +1977,18 @@ button:disabled{opacity:.45; cursor:not-allowed}
     const fullCtx = fullCanvas.getContext('2d');
     if (fillWhite){ fullCtx.fillStyle = '#fff'; fullCtx.fillRect(0, 0, fullCanvas.width, fullCanvas.height); }
     await page.render({ canvasContext: fullCtx, viewport }).promise;
+
+    // 署名・スタンプ: クロップより先に(回転込みの)フルページ座標へ描画しておくことで、
+    // クロップ処理が通常のページ内容と同様に正しく切り取ってくれる。
+    for (const s of entry.stamps){
+      const libItem = stampLibItemById(s.libId);
+      if (!libItem) continue;
+      const c0 = viewport.convertToViewportPoint(s.x, s.y);
+      const c1 = viewport.convertToViewportPoint(s.x + s.width, s.y + s.height);
+      const left = Math.min(c0[0], c1[0]), top = Math.min(c0[1], c1[1]);
+      const right = Math.max(c0[0], c1[0]), bottom = Math.max(c0[1], c1[1]);
+      fullCtx.drawImage(libItem.img, left, top, right - left, bottom - top);
+    }
 
     let outCanvas = fullCanvas;
     if (entry.crop){
