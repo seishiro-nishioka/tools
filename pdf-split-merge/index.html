@@ -87,6 +87,9 @@ h2{font-size:14.5px; margin:0; font-weight:700}
 .media-pdfmeta{
   margin:2px 0 0; font-size:11px; color:var(--sub); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
+.media-encwarn{
+  margin:2px 0 0; font-size:11px; color:var(--red); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
 
 /* ---------- 編集領域 ---------- */
 .editor{display:flex; flex-direction:column; gap:12px; min-width:0}
@@ -360,6 +363,384 @@ button:disabled{opacity:.45; cursor:not-allowed}
     return `${(n / 1024 / 1024).toFixed(2)}MB`;
   }
 
+  // ---------- 暗号化PDFの自動復号 ----------
+  // 「閲覧パスワードは不要(空)だが編集・印刷のみ制限されている」PDFを対象に、
+  // PDF標準セキュリティハンドラ(Standard Security Handler)をブラウザ内で自前実装して復号する。
+  // pdf-lib の PDFDocument.load(..., {ignoreEncryption:true}) は暗号化チェックを
+  // スキップするだけで実際には復号しないため、そのままPDF書き出しに使うとページ内容
+  // (文字・画像の描画命令)が暗号文のまま出力され、白紙ページになってしまう
+  // (サムネイル表示はpdf.js側が正しく復号するため、書き出すまで気づけない)。
+  // 本当に閲覧パスワードが必要なPDFは復号できないため、PasswordRequiredErrorを投げる。
+  class PdfPasswordRequiredError extends Error {
+    constructor(){ super('閲覧パスワードで保護されているため、ブラウザ上では自動的に解除できません。'); this.name = 'PdfPasswordRequiredError'; }
+  }
+  class PdfUnsupportedEncryptionError extends Error {
+    constructor(msg){ super(msg || 'この暗号化方式には対応していません。'); this.name = 'PdfUnsupportedEncryptionError'; }
+  }
+
+  const PdfDecryptLib = (() => {
+    // ---- AES(FIPS-197)の最小実装。128/192/256bit鍵、単一ブロックのECB暗号化/復号のみ。
+    // PDF R5/R6の鍵導出(パディングなしCBC)のためにWeb Crypto APIでは代替できない部分だけ自前で持つ。
+    // ストリーム/文字列本体のAES-CBC復号(PKCS#7パディングあり)はWeb Crypto側に任せる。
+    const Aes = (() => {
+      function gmul(a, b){
+        let p = 0;
+        for (let i = 0; i < 8; i++){
+          if (b & 1) p ^= a;
+          const hi = a & 0x80;
+          a = (a << 1) & 0xff;
+          if (hi) a ^= 0x1b;
+          b >>= 1;
+        }
+        return p;
+      }
+      // S-boxはアフィン変換+GF(2^8)の乗法逆元から演算で構築する(転記ミスを避けるため)
+      const inv = new Uint8Array(256);
+      for (let a = 1; a < 256; a++) for (let b = 1; b < 256; b++) if (gmul(a, b) === 1){ inv[a] = b; break; }
+      const SBOX = new Uint8Array(256), INV_SBOX = new Uint8Array(256);
+      for (let i = 0; i < 256; i++){
+        let x = inv[i], s = x;
+        for (let r = 0; r < 4; r++){ x = ((x << 1) | (x >> 7)) & 0xff; s ^= x; }
+        s ^= 0x63;
+        SBOX[i] = s;
+      }
+      for (let i = 0; i < 256; i++) INV_SBOX[SBOX[i]] = i;
+      const RCON = new Uint8Array(15);
+      { let c = 1; RCON[1] = 1; for (let i = 2; i < 15; i++){ c = gmul(c, 2); RCON[i] = c; } }
+
+      function keyExpansion(key){
+        const Nk = key.length / 4, Nr = Nk + 6;
+        const w = new Array(4 * (Nr + 1));
+        for (let i = 0; i < Nk; i++) w[i] = [key[4*i], key[4*i+1], key[4*i+2], key[4*i+3]];
+        for (let i = Nk; i < w.length; i++){
+          let temp = w[i-1].slice();
+          if (i % Nk === 0){
+            temp = [temp[1], temp[2], temp[3], temp[0]].map(b => SBOX[b]);
+            temp[0] ^= RCON[i / Nk];
+          } else if (Nk > 6 && i % Nk === 4){
+            temp = temp.map(b => SBOX[b]);
+          }
+          w[i] = [w[i-Nk][0]^temp[0], w[i-Nk][1]^temp[1], w[i-Nk][2]^temp[2], w[i-Nk][3]^temp[3]];
+        }
+        return { w, Nr };
+      }
+      function addRoundKey(state, w, round){ for (let c = 0; c < 4; c++){ const word = w[round*4+c]; for (let r = 0; r < 4; r++) state[r][c] ^= word[r]; } }
+      function subBytes(state, box){ for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) state[r][c] = box[state[r][c]]; }
+      function shiftRows(state){ for (let r = 1; r < 4; r++){ const row = state[r]; state[r] = row.slice(r).concat(row.slice(0, r)); } }
+      function invShiftRows(state){ for (let r = 1; r < 4; r++){ const row = state[r], n = 4 - r; state[r] = row.slice(n).concat(row.slice(0, n)); } }
+      function mixColumns(state){
+        for (let c = 0; c < 4; c++){
+          const a0=state[0][c], a1=state[1][c], a2=state[2][c], a3=state[3][c];
+          state[0][c] = gmul(a0,2)^gmul(a1,3)^a2^a3;
+          state[1][c] = a0^gmul(a1,2)^gmul(a2,3)^a3;
+          state[2][c] = a0^a1^gmul(a2,2)^gmul(a3,3);
+          state[3][c] = gmul(a0,3)^a1^a2^gmul(a3,2);
+        }
+      }
+      function invMixColumns(state){
+        for (let c = 0; c < 4; c++){
+          const a0=state[0][c], a1=state[1][c], a2=state[2][c], a3=state[3][c];
+          state[0][c] = gmul(a0,14)^gmul(a1,11)^gmul(a2,13)^gmul(a3,9);
+          state[1][c] = gmul(a0,9)^gmul(a1,14)^gmul(a2,11)^gmul(a3,13);
+          state[2][c] = gmul(a0,13)^gmul(a1,9)^gmul(a2,14)^gmul(a3,11);
+          state[3][c] = gmul(a0,11)^gmul(a1,13)^gmul(a2,9)^gmul(a3,14);
+        }
+      }
+      function toState(block){ const s=[[],[],[],[]]; for (let i=0;i<16;i++) s[i%4][(i/4)|0]=block[i]; return s; }
+      function fromState(state){ const out=new Uint8Array(16); for (let i=0;i<16;i++) out[i]=state[i%4][(i/4)|0]; return out; }
+
+      function encryptBlock(key, block){
+        const { w, Nr } = keyExpansion(key);
+        let state = toState(block);
+        addRoundKey(state, w, 0);
+        for (let round = 1; round < Nr; round++){ subBytes(state, SBOX); shiftRows(state); mixColumns(state); addRoundKey(state, w, round); }
+        subBytes(state, SBOX); shiftRows(state); addRoundKey(state, w, Nr);
+        return fromState(state);
+      }
+      function cbcEncryptNoPad(key, iv, data){
+        const out = new Uint8Array(data.length);
+        let prev = iv;
+        for (let off = 0; off < data.length; off += 16){
+          const block = new Uint8Array(16);
+          for (let i = 0; i < 16; i++) block[i] = data[off+i] ^ prev[i];
+          const enc = encryptBlock(key, block);
+          out.set(enc, off);
+          prev = enc;
+        }
+        return out;
+      }
+      function decryptBlock(key, block){
+        const { w, Nr } = keyExpansion(key);
+        let state = toState(block);
+        addRoundKey(state, w, Nr);
+        for (let round = Nr - 1; round >= 1; round--){ invShiftRows(state); subBytes(state, INV_SBOX); addRoundKey(state, w, round); invMixColumns(state); }
+        invShiftRows(state); subBytes(state, INV_SBOX); addRoundKey(state, w, 0);
+        return fromState(state);
+      }
+      function cbcDecryptNoPad(key, iv, data){
+        const out = new Uint8Array(data.length);
+        let prev = iv;
+        for (let off = 0; off < data.length; off += 16){
+          const block = data.subarray(off, off+16);
+          const dec = decryptBlock(key, block);
+          for (let i = 0; i < 16; i++) out[off+i] = dec[i] ^ prev[i];
+          prev = block;
+        }
+        return out;
+      }
+      return { cbcEncryptNoPad, cbcDecryptNoPad };
+    })();
+
+    // ---- MD5(RFC 1321)の最小実装。Web Crypto APIには無いためPDF暗号(V<=4)の鍵導出に必要 ----
+    function md5(bytes){
+      function rotl(x, c){ return (x << c) | (x >>> (32 - c)); }
+      const S = [7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22, 5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
+                 4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23, 6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21];
+      const K = new Int32Array(64);
+      for (let i = 0; i < 64; i++) K[i] = (Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296)) | 0;
+      const padLen = ((56 - (bytes.length + 1) % 64) + 64) % 64;
+      const total = bytes.length + 1 + padLen + 8;
+      const buf = new Uint8Array(total);
+      buf.set(bytes, 0);
+      buf[bytes.length] = 0x80;
+      const msgLenBits = bytes.length * 8;
+      const dv = new DataView(buf.buffer);
+      dv.setUint32(total - 8, msgLenBits >>> 0, true);
+      dv.setUint32(total - 4, Math.floor(msgLenBits / 4294967296) >>> 0, true);
+      let a0=0x67452301, b0=0xefcdab89, c0=0x98badcfe, d0=0x10325476;
+      for (let chunk = 0; chunk < total; chunk += 64){
+        const M = new Int32Array(16);
+        for (let i = 0; i < 16; i++) M[i] = dv.getInt32(chunk + i * 4, true);
+        let A=a0, B=b0, C=c0, D=d0;
+        for (let i = 0; i < 64; i++){
+          let F, g;
+          if (i < 16){ F = (B & C) | (~B & D); g = i; }
+          else if (i < 32){ F = (D & B) | (~D & C); g = (5*i+1)%16; }
+          else if (i < 48){ F = B ^ C ^ D; g = (3*i+5)%16; }
+          else { F = C ^ (B | ~D); g = (7*i)%16; }
+          F = (F + A + K[i] + M[g]) | 0;
+          A = D; D = C; C = B;
+          B = (B + rotl(F, S[i])) | 0;
+        }
+        a0=(a0+A)|0; b0=(b0+B)|0; c0=(c0+C)|0; d0=(d0+D)|0;
+      }
+      const out = new Uint8Array(16);
+      const outDv = new DataView(out.buffer);
+      outDv.setInt32(0, a0, true); outDv.setInt32(4, b0, true); outDv.setInt32(8, c0, true); outDv.setInt32(12, d0, true);
+      return out;
+    }
+
+    // ---- RC4 ----
+    function rc4(key, data){
+      const S = new Uint8Array(256);
+      for (let i = 0; i < 256; i++) S[i] = i;
+      let j = 0;
+      for (let i = 0; i < 256; i++){ j = (j + S[i] + key[i % key.length]) & 0xff; const t = S[i]; S[i] = S[j]; S[j] = t; }
+      const out = new Uint8Array(data.length);
+      let i = 0; j = 0;
+      for (let n = 0; n < data.length; n++){
+        i = (i + 1) & 0xff; j = (j + S[i]) & 0xff;
+        const t = S[i]; S[i] = S[j]; S[j] = t;
+        out[n] = data[n] ^ S[(S[i] + S[j]) & 0xff];
+      }
+      return out;
+    }
+
+    const PAD = new Uint8Array([
+      0x28,0xBF,0x4E,0x5E,0x4E,0x75,0x8A,0x41,0x64,0x00,0x4E,0x56,0xFF,0xFA,0x01,0x08,
+      0x2E,0x2E,0x00,0xB6,0xD0,0x68,0x3E,0x80,0x2F,0x0C,0xA9,0xFE,0x64,0x53,0x69,0x7A,
+    ]);
+    function concatBytes(...arrs){
+      const out = new Uint8Array(arrs.reduce((n, a) => n + a.length, 0));
+      let off = 0;
+      for (const a of arrs){ out.set(a, off); off += a.length; }
+      return out;
+    }
+    function int32LE(n){ const b = new Uint8Array(4); new DataView(b.buffer).setInt32(0, n, true); return b; }
+    function bytesEqual(a, b){ if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
+
+    // Algorithm 2: 暗号化キーの計算(V<=4、パスワードは空文字列前提)
+    function computeKeyV1_4(O, P, idBytes, R, keyLenBytes, encryptMetadata){
+      let input = concatBytes(PAD, O.slice(0, 32), int32LE(P), idBytes);
+      if (R >= 4 && !encryptMetadata) input = concatBytes(input, new Uint8Array([0xff,0xff,0xff,0xff]));
+      let hash = md5(input);
+      if (R >= 3) for (let i = 0; i < 50; i++) hash = md5(hash.slice(0, keyLenBytes));
+      return hash.slice(0, keyLenBytes);
+    }
+    // Algorithm 4/5: 空パスワードが正しいことの検証(でなければ本当にパスワードが必要なPDF)
+    function validateUserPasswordV1_4(fileKey, U, idBytes, R){
+      if (R === 2) return bytesEqual(rc4(fileKey, PAD), U.slice(0, 32));
+      let val = md5(concatBytes(PAD, idBytes));
+      val = rc4(fileKey, val);
+      for (let i = 1; i <= 19; i++) val = rc4(fileKey.map(b => b ^ i), val);
+      return bytesEqual(val, U.slice(0, 16));
+    }
+    // Algorithm 1: オブジェクトごとの鍵(V<=4のみ。V5はファイル鍵をそのまま使う)
+    function objectKey(fileKey, objNum, genNum, isAES){
+      const extra = new Uint8Array([objNum & 0xff, (objNum>>8)&0xff, (objNum>>16)&0xff, genNum & 0xff, (genNum>>8)&0xff]);
+      let input = concatBytes(fileKey, extra);
+      if (isAES) input = concatBytes(input, new Uint8Array([0x73,0x41,0x6c,0x54])); // "sAlT"
+      return md5(input).slice(0, Math.min(fileKey.length + 5, 16));
+    }
+    async function sha(algo, data){ return new Uint8Array(await crypto.subtle.digest(algo, data)); }
+    // Algorithm 2.B: R6で使う拡張ハッシュ
+    async function hash2B(password, salt, udata){
+      let K = await sha('SHA-256', concatBytes(password, salt, udata));
+      let round = 0, E;
+      while (true){
+        const k1Block = concatBytes(password, K, udata);
+        const K1 = new Uint8Array(k1Block.length * 64);
+        for (let i = 0; i < 64; i++) K1.set(k1Block, i * k1Block.length);
+        E = Aes.cbcEncryptNoPad(K.slice(0, 16), K.slice(16, 32), K1);
+        let sum = 0; for (let i = 0; i < 16; i++) sum += E[i];
+        const mod = sum % 3;
+        K = mod === 0 ? await sha('SHA-256', E) : mod === 1 ? await sha('SHA-384', E) : await sha('SHA-512', E);
+        round++;
+        if (round >= 64 && E[E.length - 1] <= round - 32) break;
+      }
+      return K.slice(0, 32);
+    }
+    // V5(R5/R6, AES-256)の鍵導出。空パスワードのユーザー経路のみ対応
+    async function computeKeyV5(U, UE, R){
+      const uHash = U.slice(0, 32), validationSalt = U.slice(32, 40), keySalt = U.slice(40, 48);
+      const empty = new Uint8Array(0);
+      const testHash = R >= 6 ? await hash2B(empty, validationSalt, empty) : await sha('SHA-256', concatBytes(empty, validationSalt));
+      if (!bytesEqual(testHash, uHash)) return null;
+      const intermediateKey = R >= 6 ? await hash2B(empty, keySalt, empty) : await sha('SHA-256', concatBytes(empty, keySalt));
+      return Aes.cbcDecryptNoPad(intermediateKey, new Uint8Array(16), UE);
+    }
+
+    const aesKeyCache = new Map();
+    async function getAesCryptoKey(rawKey){
+      const cacheKey = Array.from(rawKey).join(',');
+      let ck = aesKeyCache.get(cacheKey);
+      if (!ck){ ck = await crypto.subtle.importKey('raw', rawKey, 'AES-CBC', false, ['decrypt']); aesKeyCache.set(cacheKey, ck); }
+      return ck;
+    }
+    async function decryptBytes(bytes, key, cipher){
+      if (cipher === 'NONE' || bytes.length === 0) return bytes;
+      if (cipher === 'RC4') return rc4(key, bytes);
+      // AESV2/AESV3: 先頭16byteがIV、残りがPKCS#7パディング付きCBC暗号文(Web Crypto側で復号)
+      if (bytes.length < 16) return bytes;
+      const iv = bytes.slice(0, 16);
+      const ciphertext = bytes.slice(16);
+      if (ciphertext.length === 0) return new Uint8Array(0);
+      if (ciphertext.length % 16 !== 0) return bytes;
+      try{
+        const cryptoKey = await getAesCryptoKey(key);
+        return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, cryptoKey, ciphertext));
+      }catch(err){
+        return bytes; // パディング不正等で復号に失敗した場合は元データのまま返す
+      }
+    }
+
+    // PDF文書全体(pdf-libがすでに読み込んだオブジェクトグラフ)を、その場で復号する。
+    // 復号後はpdf-libの通常のcopyPages等がそのまま正しく動く(暗号化されていないPDFと同様に扱える)。
+    async function decryptPdfLibDocument(libDoc){
+      if (!libDoc.isEncrypted) return;
+      const context = libDoc.context;
+      const { PDFName, PDFDict, PDFArray, PDFString, PDFHexString, PDFRawStream, PDFNumber } = PDFLib;
+
+      const encryptRef = context.trailerInfo.Encrypt;
+      const encryptDict = context.lookup(encryptRef, PDFDict);
+
+      const filterObj = encryptDict.lookup(PDFName.of('Filter'));
+      if (filterObj && filterObj.asString && filterObj.asString() !== '/Standard'){
+        throw new PdfUnsupportedEncryptionError('標準(Standard)以外のセキュリティハンドラには対応していません。');
+      }
+
+      const V = encryptDict.has(PDFName.of('V')) ? encryptDict.lookup(PDFName.of('V')).asNumber() : 1;
+      const R = encryptDict.lookup(PDFName.of('R')).asNumber();
+      const O = encryptDict.lookup(PDFName.of('O')).asBytes();
+      const U = encryptDict.lookup(PDFName.of('U')).asBytes();
+      const P = encryptDict.lookup(PDFName.of('P')).asNumber();
+      const lengthBits = encryptDict.has(PDFName.of('Length')) ? encryptDict.lookup(PDFName.of('Length')).asNumber() : 40;
+      const emObj = encryptDict.lookup(PDFName.of('EncryptMetadata'));
+      const encryptMetadata = emObj ? emObj.value !== false : true;
+
+      const idArr = context.trailerInfo.ID;
+      let idBytes = new Uint8Array(0);
+      if (idArr){
+        const resolved = context.lookup(idArr, PDFArray);
+        if (resolved && resolved.size() > 0) idBytes = resolved.get(0).asBytes();
+      }
+
+      let fileKey, stmCipher, strCipher, isV5 = false;
+      function cfmToCipher(cfm){ if (cfm === 'V2') return 'RC4'; if (cfm === 'AESV2') return 'AESV2'; if (cfm === 'AESV3') return 'AESV3'; return 'NONE'; }
+
+      if (V === 1 || V === 2){
+        const keyLenBytes = V === 1 ? 5 : Math.floor(lengthBits / 8);
+        fileKey = computeKeyV1_4(O, P, idBytes, R, keyLenBytes, encryptMetadata);
+        if (!validateUserPasswordV1_4(fileKey, U, idBytes, R)) throw new PdfPasswordRequiredError();
+        stmCipher = strCipher = 'RC4';
+      } else if (V === 4){
+        const keyLenBytes = Math.floor(lengthBits / 8);
+        fileKey = computeKeyV1_4(O, P, idBytes, R, keyLenBytes, encryptMetadata);
+        if (!validateUserPasswordV1_4(fileKey, U, idBytes, R)) throw new PdfPasswordRequiredError();
+        const CF = encryptDict.lookupMaybe(PDFName.of('CF'), PDFDict);
+        const stmFName = encryptDict.has(PDFName.of('StmF')) ? encryptDict.lookup(PDFName.of('StmF')).asString().slice(1) : 'Identity';
+        const strFName = encryptDict.has(PDFName.of('StrF')) ? encryptDict.lookup(PDFName.of('StrF')).asString().slice(1) : 'Identity';
+        const cfmFor = (name) => {
+          if (name === 'Identity' || !CF) return 'NONE';
+          const cfDict = CF.lookupMaybe(PDFName.of(name), PDFDict);
+          if (!cfDict) return 'NONE';
+          return cfmToCipher(cfDict.lookup(PDFName.of('CFM')).asString().slice(1));
+        };
+        stmCipher = cfmFor(stmFName);
+        strCipher = cfmFor(strFName);
+      } else if (V === 5){
+        isV5 = true;
+        const UE = encryptDict.lookup(PDFName.of('UE')).asBytes();
+        fileKey = await computeKeyV5(U, UE, R);
+        if (!fileKey) throw new PdfPasswordRequiredError();
+        stmCipher = strCipher = 'AESV3';
+      } else {
+        throw new PdfUnsupportedEncryptionError(`未対応の暗号化バージョンです(V=${V})。`);
+      }
+
+      const objKeyForUse = (objNum, genNum, cipher) => isV5 ? fileKey : objectKey(fileKey, objNum, genNum, cipher === 'AESV2');
+
+      async function decryptNode(node, key, cipher, visited){
+        if (!node || cipher === 'NONE') return;
+        if (node instanceof PDFDict || node instanceof PDFArray){
+          if (visited.has(node)) return;
+          visited.add(node);
+          const isDict = node instanceof PDFDict;
+          const items = isDict ? node.entries() : Array.from({ length: node.size() }, (_, i) => [i, node.get(i)]);
+          for (const [, v] of items){
+            if (v instanceof PDFString || v instanceof PDFHexString){
+              const plain = await decryptBytes(v.asBytes(), key, cipher);
+              v.value = Array.from(plain, b => String.fromCharCode(b)).join('');
+            } else if (v instanceof PDFDict || v instanceof PDFArray){
+              await decryptNode(v, key, cipher, visited);
+            }
+          }
+        }
+      }
+
+      const visited = new WeakSet();
+      for (const [ref, obj] of context.enumerateIndirectObjects()){
+        if (ref === encryptRef) continue;
+        if (obj instanceof PDFRawStream){
+          const typeObj = obj.dict.lookup(PDFName.of('Type'));
+          const isXRefStream = typeObj && typeObj.asString && typeObj.asString() === '/XRef';
+          await decryptNode(obj.dict, objKeyForUse(ref.objectNumber, ref.generationNumber, strCipher), strCipher, visited);
+          if (!isXRefStream){
+            const stmKey = objKeyForUse(ref.objectNumber, ref.generationNumber, stmCipher);
+            const plain = await decryptBytes(obj.contents, stmKey, stmCipher);
+            const newDict = obj.dict.clone(context);
+            newDict.set(PDFName.of('Length'), PDFNumber.of(plain.length));
+            context.assign(ref, PDFRawStream.of(newDict, plain));
+          }
+        } else if (obj instanceof PDFDict || obj instanceof PDFArray){
+          await decryptNode(obj, objKeyForUse(ref.objectNumber, ref.generationNumber, strCipher), strCipher, visited);
+        }
+      }
+    }
+
+    return { decryptPdfLibDocument };
+  })();
+
   /** @type {{id:string,name:string,arrayBuffer:ArrayBuffer,pdfjsDoc:any,pageCount:number}[]} */
   const mediaItems = [];
   /** @type {{id:string,mediaId:string,pageIndex:number}[]} 編集領域に並んでいるページの並び順そのもの */
@@ -426,7 +807,8 @@ button:disabled{opacity:.45; cursor:not-allowed}
           standardFontDataUrl: PDFJS_FONTS_URL,
         }).promise;
         const pdfMeta = await readPdfMetadata(doc);
-        const mediaItem = { id: uid(), name: file.name, arrayBuffer: buf, pdfjsDoc: doc, pageCount: doc.numPages, pdfMeta };
+        const encStatus = await probeEncryption(buf);
+        const mediaItem = { id: uid(), name: file.name, arrayBuffer: buf, pdfjsDoc: doc, pageCount: doc.numPages, pdfMeta, encStatus };
         mediaItems.push(mediaItem);
         okCount++;
         renderMediaPool();
@@ -454,6 +836,24 @@ button:disabled{opacity:.45; cursor:not-allowed}
     }catch(err){
       console.warn('PDFメタデータの読み取りに失敗しました:', err);
       return { title: '', author: '', subject: '', keywords: '' };
+    }
+  }
+
+  // このPDFが暗号化されているかどうかを事前に判定する。
+  // 'none': 暗号化なし / 'auto': 制限のみ(閲覧パスワード空)のため書き出し時に自動解除できる
+  // 'password': 本当に閲覧パスワードが必要なため非対応 / 'unsupported': 未対応の暗号化方式
+  async function probeEncryption(arrayBuffer){
+    try{
+      const probeDoc = await PDFLib.PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+      if (!probeDoc.isEncrypted) return 'none';
+      try{
+        await PdfDecryptLib.decryptPdfLibDocument(probeDoc);
+        return 'auto';
+      }catch(err){
+        return (err instanceof PdfPasswordRequiredError) ? 'password' : 'unsupported';
+      }
+    }catch(err){
+      return 'none'; // pdf-lib側の読み込みに失敗した場合は判定不能として無視(書き出し時に改めてエラーになる)
     }
   }
 
@@ -509,6 +909,18 @@ button:disabled{opacity:.45; cursor:not-allowed}
           pmEl.title = parts.join('\n'); // 1行に省略表示される分、ホバーで全文を見られるようにする
           info.appendChild(pmEl);
         }
+      }
+      if (media.encStatus && media.encStatus !== 'none'){
+        const encEl = document.createElement('p');
+        encEl.className = media.encStatus === 'auto' ? 'media-pdfmeta' : 'media-encwarn';
+        if (media.encStatus === 'auto'){
+          encEl.textContent = '🔓 編集・印刷が制限されたPDFです(書き出し時に自動で解除します)';
+        } else if (media.encStatus === 'password'){
+          encEl.textContent = '🔒 閲覧パスワードが必要なPDFのため、書き出しに失敗します';
+        } else {
+          encEl.textContent = '🔒 この暗号化方式には対応していないため、書き出しに失敗する場合があります';
+        }
+        info.appendChild(encEl);
       }
       el.appendChild(info);
 
@@ -1080,6 +1492,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
     }
 
     const copiedQueueByMedia = new Map();
+    const autoDecryptedNames = [];
     let mediaDone = 0;
     for (const [mediaId, indices] of indicesByMedia){
       let libDoc = libDocCache.get(mediaId);
@@ -1087,6 +1500,17 @@ button:disabled{opacity:.45; cursor:not-allowed}
         const media = mediaById(mediaId);
         // 印刷・編集制限のみ(閲覧パスワードなし)で暗号化されたPDFも多いため、その場合は無視して読み込む
         libDoc = await PDFLib.PDFDocument.load(media.arrayBuffer, { ignoreEncryption: true });
+        if (libDoc.isEncrypted){
+          // ignoreEncryptionはチェックを素通りさせるだけで実際には復号しないため、
+          // そのままだとページ内容が暗号文のままコピーされ白紙になる。ここで明示的に復号する。
+          try{
+            await PdfDecryptLib.decryptPdfLibDocument(libDoc);
+            autoDecryptedNames.push(media.name);
+          }catch(err){
+            const reason = (err instanceof PdfPasswordRequiredError) ? '閲覧パスワードで保護されている' : 'この暗号化方式に対応していない';
+            throw new Error(`"${media.name}" は${reason}ため、PDFとして書き出せません。`);
+          }
+        }
         libDocCache.set(mediaId, libDoc);
       }
       copiedQueueByMedia.set(mediaId, await outDoc.copyPages(libDoc, indices));
@@ -1165,13 +1589,16 @@ button:disabled{opacity:.45; cursor:not-allowed}
     const bytes = await outDoc.save();
     downloadBlob(new Blob([bytes], { type: 'application/pdf' }), singleSourceName() || 'merged.pdf');
 
+    let msg = `書き出しが完了しました(${deck.length}ページのPDF)。`;
     if (compressResult && compressResult.imageCount > 0){
-      setStatus(`書き出しが完了しました(${deck.length}ページのPDF)。画像${compressResult.imageCount}枚を圧縮し、約${formatBytes(compressResult.savedBytes)}削減しました。`);
+      msg += `画像${compressResult.imageCount}枚を圧縮し、約${formatBytes(compressResult.savedBytes)}削減しました。`;
     } else if (compressResult){
-      setStatus(`書き出しが完了しました(${deck.length}ページのPDF)。圧縮対象の画像(JPEG)は見つかりませんでした。`);
-    } else {
-      setStatus(`書き出しが完了しました(${deck.length}ページのPDF)。`);
+      msg += '圧縮対象の画像(JPEG)は見つかりませんでした。';
     }
+    if (autoDecryptedNames.length){
+      msg += `編集・印刷が制限されていたPDF(${autoDecryptedNames.join('、')})の制限を解除しました。`;
+    }
+    setStatus(msg);
   }
 
   // 1ページぶんを、回転・クロップ・透かしをすべて反映した最終的なcanvasとして描画する。
