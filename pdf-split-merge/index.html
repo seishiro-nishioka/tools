@@ -36,6 +36,7 @@ header{
   display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; flex:none;
   padding:18px 22px 10px;
 }
+.header-action{margin-left:auto; align-self:center; font-size:13px; white-space:nowrap}
 h1{
   margin:0; font-size:22px; font-weight:700; letter-spacing:.02em;
   display:flex; align-items:center; gap:10px;
@@ -81,7 +82,7 @@ h2{font-size:14.5px; margin:0; font-weight:700; display:flex; align-items:center
   transition:background-color .1s ease;
 }
 .pool-list:hover{background:var(--bg)}
-.pool-list.drag-over{outline:2px dashed var(--red); outline-offset:-6px; background:var(--bg)}
+.pool-list.drag-over{border-color:var(--red); background:color-mix(in srgb, var(--red) 8%, transparent)}
 .pool-empty{margin:14px 6px; font-size:13px; color:var(--sub); text-align:center}
 .media-item{
   position:relative; display:flex; align-items:center; gap:10px; padding:6px 28px 6px 6px; border-radius:5px; cursor:grab;
@@ -273,6 +274,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
 <header>
   <h1><span class="mark" aria-hidden="true"></span>PDF分割・結合ツール</h1>
   <p>PDFをページ単位に分解して並べ替え、PDF・PNG・JPGとして書き出します。ファイルはサーバーに送信されず、処理はすべてお使いの端末のブラウザ内で行われます。</p>
+  <button id="downloadToolBtn" class="ghost-btn header-action">⬇ ローカルにダウンロードする</button>
 </header>
 
 <main>
@@ -843,6 +845,21 @@ button:disabled{opacity:.45; cursor:not-allowed}
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
   }
+
+  // 現在表示中のこのツール自身(index.html)を1枚のHTMLファイルとしてダウンロードする。
+  // ライブDOM(サムネイルのdata URL等が混ざった状態)ではなく、サーバー上の素のファイルを
+  // 取得して保存することで、常に同じクリーンな内容がダウンロードされるようにする。
+  $('downloadToolBtn').addEventListener('click', async () => {
+    try{
+      const resp = await fetch(location.href, { cache: 'no-store' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const html = await resp.text();
+      downloadBlob(new Blob([html], { type: 'text/html' }), 'pdf-split-merge.html');
+    }catch(err){
+      console.error('ツールのダウンロードに失敗しました:', err);
+      setStatus('ツールのダウンロードに失敗しました。ネットワーク接続を確認してください。');
+    }
+  });
 
   // ---------- サムネイル描画 ----------
   // rotationExtra: ユーザーが回転ボタンで加えた追加回転(0/90/180/270)。
