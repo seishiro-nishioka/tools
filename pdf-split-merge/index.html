@@ -2081,9 +2081,23 @@ button:disabled{opacity:.45; cursor:not-allowed}
   }
 
   async function exportImages(format){
-    const zip = new JSZip();
     const ext = format === 'png' ? 'png' : 'jpg';
     const mime = format === 'png' ? 'image/png' : 'image/jpeg';
+
+    // ページが1枚だけのときはZIPにまとめず、画像ファイルを直接ダウンロードする
+    if (deck.length === 1){
+      const entry = deck[0];
+      const media = mediaById(entry.mediaId);
+      setStatus('画像を作成しています…');
+      const canvas = await renderEditedPageCanvas(media, entry, EXPORT_SCALE, format === 'jpg');
+      const blob = await new Promise(res => canvas.toBlob(res, mime, format === 'jpg' ? 0.92 : undefined));
+      const baseName = media ? media.name.replace(/\.pdf$/i, '') : 'page';
+      downloadBlob(blob, `${baseName}_p${entry.pageIndex + 1}.${ext}`);
+      setStatus(`書き出しが完了しました(${format.toUpperCase()}画像を1枚ダウンロードしました)。`);
+      return;
+    }
+
+    const zip = new JSZip();
     for (let i = 0; i < deck.length; i++){
       const entry = deck[i];
       const media = mediaById(entry.mediaId);
