@@ -160,8 +160,8 @@ h2{font-size:14.5px; margin:0; font-weight:700; display:flex; align-items:center
   display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0;
 }
 .page-rotate{top:5px; left:5px}
-.page-stamp{top:5px; left:32px; font-size:13px}
-.page-crop{right:5px; bottom:5px; font-size:13px}
+.page-stamp{top:5px; left:32px; font-size:13px; display:none} /* 署名・スタンプ機能: 一時的に無効化中 */
+.page-crop{right:5px; bottom:5px; font-size:13px; display:none} /* クロップ機能: 一時的に無効化中 */
 .page-rotate:hover,.page-crop:hover,.page-stamp:hover{background:var(--blue)}
 .page-crop.active,.page-stamp.active{background:var(--blue)}
 
@@ -291,7 +291,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
       <p class="hint" id="deckCount"></p>
       <button id="clearDeck" class="ghost-btn" disabled>編集領域を空にする</button>
     </div>
-    <p class="icon-legend">各ページのボタン: <b>↻</b>回転 / <b>✂</b>クロップ / <b>🖋</b>署名・スタンプ / <b>×</b>削除</p>
+    <p class="icon-legend">各ページのボタン: <b>↻</b>回転 / <b>×</b>削除</p>
     <div class="deck-grid" id="deckGrid"></div>
   </section>
 
@@ -317,16 +317,18 @@ button:disabled{opacity:.45; cursor:not-allowed}
       </div>
 
       <details class="box" id="advancedBox">
-        <summary>詳細設定(透かし・署名・スタンプ・PDFのプロパティ)</summary>
+        <summary>詳細設定(PDFのプロパティ)</summary>
         <div class="details-body">
-          <div>
+          <!-- 署名・スタンプ機能: 一時的に無効化中。再適用する場合はこのdisplay:noneを外す -->
+          <div style="display:none">
             <p class="modal-hint" style="margin-bottom:8px">署名・スタンプ用の画像(PNG推奨、背景透過に対応)をここに登録しておくと、各ページの🖋ボタンから配置できます。</p>
             <div class="stamp-lib" id="stampLib">
               <button type="button" class="stamp-lib-add" id="stampLibAddBtn" aria-label="署名・スタンプ画像を追加" title="画像を追加">+</button>
             </div>
             <input type="file" id="stampLibInput" accept="image/*" multiple class="sr">
           </div>
-          <div class="modal-row">
+          <!-- 透かし機能: 一時的に無効化中。再適用する場合はこのdisplay:noneを外す -->
+          <div class="modal-row" style="display:none">
             <label class="check-row"><input type="checkbox" id="wmEnable"> 透かしを追加する</label>
           </div>
           <div class="field-grid" id="wmFields" style="display:none">
