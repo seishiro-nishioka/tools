@@ -30,9 +30,10 @@ body{
   margin:0; background:var(--bg); color:var(--ink);
   font-family:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif;
   font-size:15px; line-height:1.6;
+  display:flex; flex-direction:column; height:100vh;
 }
 header{
-  display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+  display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; flex:none;
   padding:18px 22px 10px;
 }
 h1{
@@ -50,9 +51,14 @@ header p{margin:0; color:var(--sub); font-size:13.5px}
 
 main{
   display:grid; grid-template-columns:1fr 2fr 1fr; gap:18px;
-  padding:6px 22px 28px; align-items:start;
+  padding:6px 22px 28px; align-items:stretch;
+  flex:1; min-height:0;
 }
-@media (max-width:980px){ main{grid-template-columns:1fr} }
+main > section.box{min-height:0; overflow-y:auto}
+@media (max-width:980px){
+  main{grid-template-columns:1fr; flex:none}
+  main > section.box{overflow-y:visible}
+}
 
 section.box{
   background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:14px 16px;
@@ -62,10 +68,6 @@ h2{font-size:14.5px; margin:0; font-weight:700; display:flex; align-items:center
   flex:none; width:20px; height:20px; border-radius:50%; background:var(--red); color:#fff;
   font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center;
 }
-.pool-hint{
-  margin:2px 2px 0; font-size:12.5px; color:var(--sub); display:flex; align-items:flex-start; gap:6px;
-}
-.pool-hint .arrow{flex:none; font-size:15px; line-height:1.3; color:var(--red)}
 .icon-legend{margin:0; font-size:12px; color:var(--sub)}
 .icon-legend b{font-weight:700; color:var(--ink)}
 
@@ -80,9 +82,15 @@ h2{font-size:14.5px; margin:0; font-weight:700; display:flex; align-items:center
 .pool-list.drag-over{outline:2px dashed var(--red); outline-offset:-6px}
 .pool-empty{margin:14px 6px; font-size:13px; color:var(--sub); text-align:center}
 .media-item{
-  display:flex; align-items:center; gap:10px; padding:6px; border-radius:5px; cursor:grab;
+  position:relative; display:flex; align-items:center; gap:10px; padding:6px 28px 6px 6px; border-radius:5px; cursor:grab;
   border:1px solid transparent;
 }
+.media-delete{
+  position:absolute; top:4px; right:4px; width:20px; height:20px; border-radius:50%;
+  background:rgba(20,20,20,.55); color:#fff; border:none; font-size:13px; line-height:1;
+  display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0;
+}
+.media-delete:hover{background:var(--red)}
 .media-item:hover{background:var(--bg); border-color:var(--line)}
 .media-thumb{
   flex:none; width:40px; height:56px; object-fit:contain; background:#fff;
@@ -264,7 +272,6 @@ button:disabled{opacity:.45; cursor:not-allowed}
     <div class="pool-header">
       <h2><span class="step-badge">1</span>メディアプール</h2>
     </div>
-    <p class="pool-hint"><span class="arrow">↓</span>編集したいPDFをドラッグ&amp;ドロップで、下の②編集領域の枠に入れてください。</p>
     <div class="pool-actions">
       <button id="pickFilesBtn">ファイルを選択</button>
       <button id="pickFolderBtn">フォルダを選択</button>
@@ -922,6 +929,22 @@ button:disabled{opacity:.45; cursor:not-allowed}
     }
   }
 
+  // メディアプールからPDFを削除する。編集領域で使用中の場合は、該当ページも一緒に削除されることを確認する。
+  function deleteMediaItem(mediaId){
+    const inUse = deck.some(d => d.mediaId === mediaId);
+    if (inUse && !confirm('このPDFは編集領域でも使われています。メディアプールから削除すると、編集領域の該当ページも削除されます。よろしいですか?')) return;
+    for (let i = deck.length - 1; i >= 0; i--){
+      if (deck[i].mediaId === mediaId) deck.splice(i, 1);
+    }
+    const idx = mediaItems.findIndex(m => m.id === mediaId);
+    if (idx !== -1) mediaItems.splice(idx, 1);
+    for (const key of [...thumbCache.keys()]){
+      if (key.startsWith(mediaId + ':')) thumbCache.delete(key);
+    }
+    renderMediaPool();
+    if (inUse) renderDeck();
+  }
+
   function buildMediaEmptyState(){
     const p = document.createElement('p');
     p.className = 'pool-empty';
@@ -988,6 +1011,15 @@ button:disabled{opacity:.45; cursor:not-allowed}
         info.appendChild(encEl);
       }
       el.appendChild(info);
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'media-delete';
+      del.setAttribute('aria-label', `${media.name}をメディアプールから削除`);
+      del.title = 'メディアプールから削除';
+      del.textContent = '×';
+      del.addEventListener('click', e => { e.stopPropagation(); deleteMediaItem(media.id); });
+      el.appendChild(del);
 
       el.addEventListener('dragstart', e => {
         e.dataTransfer.setData('text/x-media-id', media.id);
