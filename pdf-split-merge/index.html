@@ -864,8 +864,9 @@ button:disabled{opacity:.45; cursor:not-allowed}
   // ---------- サムネイル描画 ----------
   // rotationExtra: ユーザーが回転ボタンで加えた追加回転(0/90/180/270)。
   // ページ本来の向き(page.rotate)に加算して描画するため、キャッシュキーにも含める。
+  const thumbCacheKey = (mediaId, pageIndex, rotationExtra = 0) => `${mediaId}:${pageIndex}:${rotationExtra}`;
   async function ensureThumb(mediaId, pageIndex, rotationExtra = 0){
-    const key = `${mediaId}:${pageIndex}:${rotationExtra}`;
+    const key = thumbCacheKey(mediaId, pageIndex, rotationExtra);
     if (thumbCache.has(key)) return thumbCache.get(key);
     const media = mediaById(mediaId);
     if (!media) return null;
@@ -995,7 +996,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
       const thumb = document.createElement('img');
       thumb.className = 'media-thumb';
       thumb.alt = '';
-      const cached = thumbCache.get(media.id + ':0');
+      const cached = thumbCache.get(thumbCacheKey(media.id, 0));
       if (cached) thumb.src = cached;
       el.appendChild(thumb);
 
@@ -1226,7 +1227,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
 
   // カード1枚ぶんのサムネイルを現在のrotationで(再)描画する。全体再描画(renderDeck)より軽い。
   function refreshCardThumb(entry, imgEl){
-    const cached = thumbCache.get(`${entry.mediaId}:${entry.pageIndex}:${entry.rotation}`);
+    const cached = thumbCache.get(thumbCacheKey(entry.mediaId, entry.pageIndex, entry.rotation));
     if (cached) imgEl.src = cached;
     ensureThumb(entry.mediaId, entry.pageIndex, entry.rotation).then(url => { if (url) imgEl.src = url; });
   }
