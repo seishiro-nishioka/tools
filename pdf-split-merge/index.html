@@ -84,6 +84,9 @@ h2{font-size:14.5px; margin:0; font-weight:700}
   margin:0; font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
 .media-meta{margin:2px 0 0; font-size:12px; color:var(--sub)}
+.media-pdfmeta{
+  margin:2px 0 0; font-size:11px; color:var(--sub); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
 
 /* ---------- 編集領域 ---------- */
 .editor{display:flex; flex-direction:column; gap:12px; min-width:0}
@@ -422,7 +425,8 @@ button:disabled{opacity:.45; cursor:not-allowed}
           cMapPacked: true,
           standardFontDataUrl: PDFJS_FONTS_URL,
         }).promise;
-        const mediaItem = { id: uid(), name: file.name, arrayBuffer: buf, pdfjsDoc: doc, pageCount: doc.numPages };
+        const pdfMeta = await readPdfMetadata(doc);
+        const mediaItem = { id: uid(), name: file.name, arrayBuffer: buf, pdfjsDoc: doc, pageCount: doc.numPages, pdfMeta };
         mediaItems.push(mediaItem);
         okCount++;
         renderMediaPool();
@@ -433,6 +437,24 @@ button:disabled{opacity:.45; cursor:not-allowed}
       }
     }
     if (okCount) setStatus(`${okCount}件のPDFを読み込みました。ドラッグして編集領域へ追加できます。`);
+  }
+
+  // PDFの既存プロパティ(Info辞書: Title/Author/Subject/Keywords)を読み取る。
+  // メディアプールでの一覧表示と、書き出し設定(メタデータ編集欄)の初期値補完の両方で使う。
+  async function readPdfMetadata(pdfjsDoc){
+    try{
+      const { info } = await pdfjsDoc.getMetadata();
+      const pick = v => (typeof v === 'string' && v.trim()) ? v.trim() : '';
+      return {
+        title: pick(info?.Title),
+        author: pick(info?.Author),
+        subject: pick(info?.Subject),
+        keywords: pick(info?.Keywords),
+      };
+    }catch(err){
+      console.warn('PDFメタデータの読み取りに失敗しました:', err);
+      return { title: '', author: '', subject: '', keywords: '' };
+    }
   }
 
   function buildMediaEmptyState(){
@@ -471,6 +493,23 @@ button:disabled{opacity:.45; cursor:not-allowed}
       meta.className = 'media-meta';
       meta.textContent = `PDF・${media.pageCount}ページ`;
       info.append(name, meta);
+
+      // このPDFが元々持っているプロパティ(タイトル等)。値がある項目だけ表示する。
+      const pm = media.pdfMeta;
+      if (pm){
+        const parts = [];
+        if (pm.title) parts.push(`タイトル: ${pm.title}`);
+        if (pm.author) parts.push(`作成者: ${pm.author}`);
+        if (pm.subject) parts.push(`件名: ${pm.subject}`);
+        if (pm.keywords) parts.push(`キーワード: ${pm.keywords}`);
+        if (parts.length){
+          const pmEl = document.createElement('p');
+          pmEl.className = 'media-pdfmeta';
+          pmEl.textContent = parts.join(' / ');
+          pmEl.title = parts.join('\n'); // 1行に省略表示される分、ホバーで全文を見られるようにする
+          info.appendChild(pmEl);
+        }
+      }
       el.appendChild(info);
 
       el.addEventListener('dragstart', e => {
