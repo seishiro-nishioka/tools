@@ -76,10 +76,12 @@ h2{font-size:14.5px; margin:0; font-weight:700; display:flex; align-items:center
 .pool-header{display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap}
 .pool-actions{display:flex; gap:6px; flex-wrap:wrap}
 .pool-list{
-  display:flex; flex-direction:column; gap:8px; max-height:64vh; overflow:auto;
-  border:1px solid var(--line); border-radius:6px; padding:8px; background:var(--panel);
+  display:flex; flex-direction:column; gap:8px; flex:1; min-height:160px; overflow:auto;
+  border:2px dashed var(--line); border-radius:6px; padding:8px; background:var(--panel);
+  transition:background-color .1s ease;
 }
-.pool-list.drag-over{outline:2px dashed var(--red); outline-offset:-6px}
+.pool-list:hover{background:var(--bg)}
+.pool-list.drag-over{outline:2px dashed var(--red); outline-offset:-6px; background:var(--bg)}
 .pool-empty{margin:14px 6px; font-size:13px; color:var(--sub); text-align:center}
 .media-item{
   position:relative; display:flex; align-items:center; gap:10px; padding:6px 28px 6px 6px; border-radius:5px; cursor:grab;
@@ -116,15 +118,17 @@ h2{font-size:14.5px; margin:0; font-weight:700; display:flex; align-items:center
 
 .deck-grid{
   display:grid; grid-template-columns:repeat(auto-fill,minmax(118px,1fr)); gap:16px 18px;
-  align-content:start; min-height:240px; padding:4px;
+  align-content:start; min-height:240px; padding:4px; flex:1;
 }
+.deck-grid.is-empty{align-content:stretch}
 .deck-empty{
-  grid-column:1/-1; text-align:center; color:var(--sub); border:2px dashed var(--line);
-  border-radius:8px; padding:48px 20px;
+  grid-column:1/-1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  text-align:center; color:var(--sub); border:2px dashed var(--line);
+  border-radius:8px; padding:48px 20px; transition:background-color .1s ease;
 }
 .deck-empty strong{display:block; color:var(--ink); font-size:16px; margin-bottom:6px}
 .deck-empty p{margin:0; font-size:13px}
-.deck-empty.drop-target{border-color:var(--red); color:var(--red)}
+.deck-empty.drop-target{border-color:var(--red); color:var(--red); background:color-mix(in srgb, var(--red) 8%, transparent)}
 .deck-empty.drop-target strong{color:var(--red)}
 
 .page-card{position:relative}
@@ -1096,6 +1100,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
 
   function renderDeck(){
     deckGrid.innerHTML = '';
+    deckGrid.classList.toggle('is-empty', !deck.length);
     if (!deck.length){
       const empty = document.createElement('div');
       empty.className = 'deck-empty';
