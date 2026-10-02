@@ -125,6 +125,61 @@ h2{font-size:14.5px; margin:0; font-weight:700}
 .page-card.insert-before::before{left:-10px}
 .page-card.insert-after::after{right:-10px}
 
+/* ページ単位の編集ボタン(回転・クロップ)。削除ボタンと同じ円形バッジのスタイルに揃える */
+.page-rotate,.page-crop{
+  position:absolute; width:22px; height:22px; border-radius:50%;
+  background:rgba(20,20,20,.6); color:#fff; border:none; font-size:12px; line-height:1;
+  display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0;
+}
+.page-rotate{top:5px; left:5px}
+.page-crop{right:5px; bottom:5px; font-size:13px}
+.page-rotate:hover,.page-crop:hover{background:var(--blue)}
+.page-crop.active{background:var(--blue)}
+
+/* ---------- モーダル(クロップ編集) ---------- */
+.modal-backdrop{
+  position:fixed; inset:0; background:rgba(10,14,18,.55); display:flex; align-items:center; justify-content:center;
+  padding:20px; z-index:50;
+}
+.modal{
+  background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:18px;
+  max-width:min(640px,94vw); width:100%; max-height:92vh; overflow:auto;
+  display:flex; flex-direction:column; gap:12px;
+}
+.modal h3{margin:0; font-size:16px}
+.modal p.modal-hint{margin:0; font-size:12.5px; color:var(--sub)}
+.crop-stage{
+  position:relative; align-self:center; background:#333; border-radius:4px; overflow:hidden;
+  touch-action:none; cursor:crosshair; line-height:0;
+}
+.crop-stage canvas{display:block; max-width:100%; height:auto}
+.crop-rect{
+  position:absolute; border:2px solid var(--red); background:rgba(224,48,30,.12); box-sizing:border-box;
+  pointer-events:none;
+}
+.modal-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+.modal-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:4px}
+
+/* ---------- 詳細設定(透かし・メタデータ) ---------- */
+details.box{padding:0}
+details.box > summary{
+  padding:10px 16px; cursor:pointer; font-size:13.5px; font-weight:700; list-style:none;
+  display:flex; align-items:center; gap:6px; user-select:none;
+}
+details.box > summary::-webkit-details-marker{display:none}
+details.box > summary::before{content:"▸"; font-size:11px; color:var(--sub); transition:transform .15s}
+details.box[open] > summary::before{transform:rotate(90deg)}
+.details-body{padding:4px 16px 14px; display:flex; flex-direction:column; gap:12px}
+.field-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:8px 12px}
+.field{display:flex; flex-direction:column; gap:3px}
+.field label{font-size:12px; color:var(--sub)}
+.field input[type="text"],.field select{
+  font:inherit; font-size:13.5px; padding:6px 8px; border-radius:5px; border:1px solid var(--line);
+  background:var(--panel); color:var(--ink);
+}
+.check-row{display:flex; align-items:center; gap:7px; font-size:13.5px}
+.check-row input{width:16px; height:16px}
+
 button,.btn{
   font:inherit; font-size:14px; border-radius:5px; cursor:pointer;
   border:1px solid var(--line); background:var(--panel); color:var(--ink);
@@ -200,11 +255,74 @@ button:disabled{opacity:.45; cursor:not-allowed}
         </select>
         <span style="font-size:12.5px; color:var(--sub)">PDF内の写真・スキャン画像(JPEG)を再圧縮し、見た目はほぼそのままに容量を減らします</span>
       </div>
+
+      <details class="box" id="advancedBox">
+        <summary>詳細設定(透かし・PDFのプロパティ)</summary>
+        <div class="details-body">
+          <div class="modal-row">
+            <label class="check-row"><input type="checkbox" id="wmEnable"> 透かしを追加する</label>
+          </div>
+          <div class="field-grid" id="wmFields" style="display:none">
+            <div class="field">
+              <label for="wmText">透かしの文字</label>
+              <input type="text" id="wmText" placeholder="例: DRAFT、社外秘など" maxlength="40">
+            </div>
+            <div class="field">
+              <label for="wmSize">大きさ</label>
+              <select id="wmSize">
+                <option value="small">小さめ</option>
+                <option value="medium" selected>標準</option>
+                <option value="large">大きめ</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="wmOpacity">濃さ</label>
+              <select id="wmOpacity">
+                <option value="0.12">うすめ</option>
+                <option value="0.2" selected>標準</option>
+                <option value="0.35">こいめ</option>
+              </select>
+            </div>
+          </div>
+          <div id="metaFields">
+            <p class="modal-hint" style="margin-bottom:8px">PDFのプロパティ(ファイル情報)。空欄の項目は変更しません。PDF書き出し時のみ有効です。</p>
+            <div class="field-grid">
+              <div class="field"><label for="metaTitle">タイトル</label><input type="text" id="metaTitle"></div>
+              <div class="field"><label for="metaAuthor">作成者</label><input type="text" id="metaAuthor"></div>
+              <div class="field"><label for="metaSubject">件名</label><input type="text" id="metaSubject"></div>
+              <div class="field"><label for="metaKeywords">キーワード(カンマ区切り)</label><input type="text" id="metaKeywords"></div>
+            </div>
+          </div>
+        </div>
+      </details>
+
       <div class="progress" id="prog"><i></i></div>
       <p id="status">メディアプールのファイルを編集領域へドラッグすると、ページごとに並びます。</p>
     </div>
   </section>
 </main>
+
+<div class="modal-backdrop" id="cropModalBackdrop" style="display:none">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="cropModalTitle">
+    <h3 id="cropModalTitle">クロップ(余白の切り取り)</h3>
+    <p class="modal-hint">画像上をドラッグして、残したい範囲を選んでください。</p>
+    <div class="crop-stage" id="cropStage">
+      <canvas id="cropCanvas"></canvas>
+      <div class="crop-rect" id="cropRectEl"></div>
+    </div>
+    <p class="modal-hint" id="cropRotateHint" style="display:none">※このページには回転が設定されていますが、クロップ範囲は回転前の向きで指定します(書き出し時に回転と組み合わせて正しく適用されます)。</p>
+    <div class="modal-row">
+      <button type="button" id="cropResetBtn" class="ghost-btn">選択範囲をリセット</button>
+      <span style="flex:1"></span>
+      <label class="check-row"><input type="checkbox" id="cropApplyAll">編集領域の全ページに同じ比率で適用する</label>
+    </div>
+    <div class="modal-actions">
+      <button type="button" id="cropCancelBtn" class="ghost-btn">キャンセル</button>
+      <button type="button" id="cropClearBtn">クロップを解除</button>
+      <button type="button" id="cropApplyBtn" class="primary">適用する</button>
+    </div>
+  </div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
@@ -261,15 +379,18 @@ button:disabled{opacity:.45; cursor:not-allowed}
   }
 
   // ---------- サムネイル描画 ----------
-  async function ensureThumb(mediaId, pageIndex){
-    const key = mediaId + ':' + pageIndex;
+  // rotationExtra: ユーザーが回転ボタンで加えた追加回転(0/90/180/270)。
+  // ページ本来の向き(page.rotate)に加算して描画するため、キャッシュキーにも含める。
+  async function ensureThumb(mediaId, pageIndex, rotationExtra = 0){
+    const key = `${mediaId}:${pageIndex}:${rotationExtra}`;
     if (thumbCache.has(key)) return thumbCache.get(key);
     const media = mediaById(mediaId);
     if (!media) return null;
     const page = await media.pdfjsDoc.getPage(pageIndex + 1); // pdf.jsは1始まり
-    const baseViewport = page.getViewport({ scale: 1 });
+    const totalRotation = ((page.rotate || 0) + rotationExtra) % 360;
+    const baseViewport = page.getViewport({ scale: 1, rotation: totalRotation });
     const scale = THUMB_WIDTH / baseViewport.width;
-    const viewport = page.getViewport({ scale });
+    const viewport = page.getViewport({ scale, rotation: totalRotation });
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.ceil(viewport.width));
     canvas.height = Math.max(1, Math.ceil(viewport.height));
@@ -451,6 +572,24 @@ button:disabled{opacity:.45; cursor:not-allowed}
         num.textContent = String(i + 1);
         card.appendChild(num);
 
+        const rotateBtn = document.createElement('button');
+        rotateBtn.type = 'button';
+        rotateBtn.className = 'page-rotate';
+        rotateBtn.setAttribute('aria-label', `${i + 1}ページ目を回転`);
+        rotateBtn.title = '90°回転';
+        rotateBtn.textContent = '↻';
+        rotateBtn.addEventListener('click', e => { e.stopPropagation(); rotateDeckEntry(entry.id); });
+        card.appendChild(rotateBtn);
+
+        const cropBtn = document.createElement('button');
+        cropBtn.type = 'button';
+        cropBtn.className = 'page-crop' + (entry.crop ? ' active' : '');
+        cropBtn.setAttribute('aria-label', `${i + 1}ページ目をクロップ`);
+        cropBtn.title = entry.crop ? 'クロップ設定済み(クリックで編集)' : 'クロップ';
+        cropBtn.textContent = '✂';
+        cropBtn.addEventListener('click', e => { e.stopPropagation(); openCropModal(entry.id); });
+        card.appendChild(cropBtn);
+
         const del = document.createElement('button');
         del.type = 'button';
         del.className = 'page-delete';
@@ -465,10 +604,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
         });
 
         deckGrid.appendChild(card);
-
-        const cached = thumbCache.get(entry.mediaId + ':' + entry.pageIndex);
-        if (cached) img.src = cached;
-        else ensureThumb(entry.mediaId, entry.pageIndex).then(url => { if (url) img.src = url; });
+        refreshCardThumb(entry, img);
       });
     }
     deckCountEl.textContent = deck.length ? `${deck.length}ページ` : '';
@@ -479,7 +615,9 @@ button:disabled{opacity:.45; cursor:not-allowed}
     const media = mediaById(mediaId);
     if (!media) return;
     const newEntries = [];
-    for (let i = 0; i < media.pageCount; i++) newEntries.push({ id: uid(), mediaId, pageIndex: i });
+    // rotation: ユーザーが回転ボタンで加える追加回転(度、0/90/180/270)
+    // crop: {x,y,width,height}(PDFのデフォルトユーザー空間、= 回転前のMediaBox座標系でのクロップ範囲)。nullなら無指定
+    for (let i = 0; i < media.pageCount; i++) newEntries.push({ id: uid(), mediaId, pageIndex: i, rotation: 0, crop: null });
     deck.splice(atIndex, 0, ...newEntries);
     renderDeck();
   }
@@ -498,12 +636,183 @@ button:disabled{opacity:.45; cursor:not-allowed}
     renderDeck();
   }
 
+  // カード1枚ぶんのサムネイルを現在のrotationで(再)描画する。全体再描画(renderDeck)より軽い。
+  function refreshCardThumb(entry, imgEl){
+    const cached = thumbCache.get(`${entry.mediaId}:${entry.pageIndex}:${entry.rotation}`);
+    if (cached) imgEl.src = cached;
+    ensureThumb(entry.mediaId, entry.pageIndex, entry.rotation).then(url => { if (url) imgEl.src = url; });
+  }
+
+  function rotateDeckEntry(deckId){
+    const entry = deck.find(d => d.id === deckId);
+    if (!entry) return;
+    entry.rotation = (entry.rotation + 90) % 360;
+    const card = deckGrid.querySelector(`.page-card[data-deck-id="${CSS.escape(deckId)}"]`);
+    const img = card && card.querySelector('.page-thumb-wrap img');
+    if (img) refreshCardThumb(entry, img);
+  }
+
   clearDeckBtn.addEventListener('click', () => {
     if (!deck.length) return;
     if (confirm('編集領域のページをすべて削除しますか?(メディアプールのファイルは残ります)')){
       deck.length = 0;
       renderDeck();
     }
+  });
+
+  // ---------- クロップモーダル ----------
+  // クロップ範囲は常に「ページ本来の向き(page.rotate、ユーザーが回転ボタンで加えた分は含まない)」で
+  // 選択・保存する。PDFのCropBoxは/Rotateの影響を受けない座標系で定義されるため、これが唯一正しい基準になる。
+  // 画面上のピクセル座標→PDF座標の変換は、自前で回転の三角関数を書く代わりに
+  // pdf.jsのviewport.convertToPdfPoint()にそのまま委譲する(既に回転を正しく考慮した変換を提供してくれるため)。
+  const cropBackdrop = $('cropModalBackdrop');
+  const cropStage = $('cropStage');
+  const cropCanvas = $('cropCanvas');
+  const cropRectEl = $('cropRectEl');
+  const cropRotateHint = $('cropRotateHint');
+  const cropApplyAllChk = $('cropApplyAll');
+  let cropCtx = { deckId: null, viewport: null, selRectPx: null, dragging: false, dragStart: null };
+
+  function cropSelRectFromCanvasPx(x0, y0, x1, y1){
+    const w = cropCanvas.width, h = cropCanvas.height;
+    const left = Math.max(0, Math.min(x0, x1));
+    const top = Math.max(0, Math.min(y0, y1));
+    const right = Math.min(w, Math.max(x0, x1));
+    const bottom = Math.min(h, Math.max(y0, y1));
+    return { left, top, right, bottom };
+  }
+
+  function drawCropRectOverlay(){
+    const r = cropCtx.selRectPx;
+    const scaleX = cropStage.clientWidth / cropCanvas.width;
+    const scaleY = cropStage.clientHeight / cropCanvas.height;
+    if (!r){ cropRectEl.style.display = 'none'; return; }
+    cropRectEl.style.display = 'block';
+    cropRectEl.style.left = (r.left * scaleX) + 'px';
+    cropRectEl.style.top = (r.top * scaleY) + 'px';
+    cropRectEl.style.width = ((r.right - r.left) * scaleX) + 'px';
+    cropRectEl.style.height = ((r.bottom - r.top) * scaleY) + 'px';
+  }
+
+  async function openCropModal(deckId){
+    const entry = deck.find(d => d.id === deckId);
+    if (!entry) return;
+    const media = mediaById(entry.mediaId);
+    if (!media) return;
+    const page = await media.pdfjsDoc.getPage(entry.pageIndex + 1);
+    // モーダル描画はページ本来の向き(page.rotate)のみを使う。entry.rotation(追加回転)は含めない。
+    const baseViewport = page.getViewport({ scale: 1 });
+    const CROP_STAGE_MAX = 560;
+    const scale = Math.min(CROP_STAGE_MAX / baseViewport.width, CROP_STAGE_MAX / baseViewport.height, 2);
+    const viewport = page.getViewport({ scale });
+    cropCanvas.width = Math.max(1, Math.ceil(viewport.width));
+    cropCanvas.height = Math.max(1, Math.ceil(viewport.height));
+    const ctx = cropCanvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    cropCtx = { deckId, viewport, selRectPx: null, dragging: false, dragStart: null };
+    if (entry.crop){
+      // 保存済みのPDF座標のクロップ範囲を、このモーダル描画用のキャンバスピクセル座標へ逆変換して復元する
+      const c = entry.crop;
+      const corners = [
+        viewport.convertToViewportPoint(c.x, c.y),
+        viewport.convertToViewportPoint(c.x + c.width, c.y + c.height),
+      ];
+      const xs = corners.map(p => p[0]), ys = corners.map(p => p[1]);
+      cropCtx.selRectPx = cropSelRectFromCanvasPx(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys));
+    }
+    cropApplyAllChk.checked = false;
+    cropRotateHint.style.display = entry.rotation ? 'block' : 'none';
+    cropBackdrop.style.display = 'flex';
+    requestAnimationFrame(drawCropRectOverlay); // レイアウト確定後にオーバーレイ位置を合わせる
+  }
+
+  function canvasPxFromEvent(e){
+    const rect = cropStage.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (cropCanvas.width / rect.width);
+    const y = (e.clientY - rect.top) * (cropCanvas.height / rect.height);
+    return [x, y];
+  }
+  cropStage.addEventListener('pointerdown', e => {
+    if (!cropCtx.viewport) return;
+    cropStage.setPointerCapture(e.pointerId);
+    const [x, y] = canvasPxFromEvent(e);
+    cropCtx.dragging = true;
+    cropCtx.dragStart = [x, y];
+    cropCtx.selRectPx = cropSelRectFromCanvasPx(x, y, x, y);
+    drawCropRectOverlay();
+  });
+  cropStage.addEventListener('pointermove', e => {
+    if (!cropCtx.dragging) return;
+    const [x, y] = canvasPxFromEvent(e);
+    cropCtx.selRectPx = cropSelRectFromCanvasPx(cropCtx.dragStart[0], cropCtx.dragStart[1], x, y);
+    drawCropRectOverlay();
+  });
+  ['pointerup','pointercancel'].forEach(ev => cropStage.addEventListener(ev, () => { cropCtx.dragging = false; }));
+
+  $('cropResetBtn').addEventListener('click', () => { cropCtx.selRectPx = null; drawCropRectOverlay(); });
+  $('cropCancelBtn').addEventListener('click', () => { cropBackdrop.style.display = 'none'; });
+  cropBackdrop.addEventListener('click', e => { if (e.target === cropBackdrop) cropBackdrop.style.display = 'none'; });
+
+  function applyCropToEntry(entry, cropBox){
+    entry.crop = cropBox;
+    const card = deckGrid.querySelector(`.page-card[data-deck-id="${CSS.escape(entry.id)}"]`);
+    const btn = card && card.querySelector('.page-crop');
+    if (btn){
+      btn.classList.toggle('active', !!cropBox);
+      btn.title = cropBox ? 'クロップ設定済み(クリックで編集)' : 'クロップ';
+    }
+  }
+
+  $('cropClearBtn').addEventListener('click', () => {
+    const entry = deck.find(d => d.id === cropCtx.deckId);
+    if (entry) applyCropToEntry(entry, null);
+    cropBackdrop.style.display = 'none';
+  });
+
+  $('cropApplyBtn').addEventListener('click', async () => {
+    const entry = deck.find(d => d.id === cropCtx.deckId);
+    if (!entry || !cropCtx.viewport) { cropBackdrop.style.display = 'none'; return; }
+    const r = cropCtx.selRectPx;
+    if (!r || r.right - r.left < 2 || r.bottom - r.top < 2){
+      // 選択が無い/極端に小さい場合はクロップ解除として扱う
+      applyCropToEntry(entry, null);
+      cropBackdrop.style.display = 'none';
+      return;
+    }
+    const [px0, py0] = cropCtx.viewport.convertToPdfPoint(r.left, r.top);
+    const [px1, py1] = cropCtx.viewport.convertToPdfPoint(r.right, r.bottom);
+    const cropBox = {
+      x: Math.min(px0, px1), y: Math.min(py0, py1),
+      width: Math.abs(px1 - px0), height: Math.abs(py1 - py0),
+    };
+
+    if (cropApplyAllChk.checked){
+      // 「全ページに同じ比率で適用」: キャンバス上での選択範囲を0〜1の割合に変換し、
+      // 各ページ自身のビューポートへ同じ割合で当てはめてからPDF座標に変換する
+      // (ページごとに用紙サイズが違っても、見た目の比率を揃えられる)。
+      const fx0 = r.left / cropCanvas.width, fy0 = r.top / cropCanvas.height;
+      const fx1 = r.right / cropCanvas.width, fy1 = r.bottom / cropCanvas.height;
+      setStatus('クロップを全ページへ適用しています…');
+      for (const e2 of deck){
+        const m2 = mediaById(e2.mediaId);
+        if (!m2) continue;
+        const p2 = await m2.pdfjsDoc.getPage(e2.pageIndex + 1);
+        const vp2 = p2.getViewport({ scale: 1 });
+        const [qx0, qy0] = vp2.convertToPdfPoint(fx0 * vp2.width, fy0 * vp2.height);
+        const [qx1, qy1] = vp2.convertToPdfPoint(fx1 * vp2.width, fy1 * vp2.height);
+        applyCropToEntry(e2, {
+          x: Math.min(qx0, qx1), y: Math.min(qy0, qy1),
+          width: Math.abs(qx1 - qx0), height: Math.abs(qy1 - qy0),
+        });
+      }
+      setStatus(`クロップを編集領域の全${deck.length}ページへ適用しました。`);
+    } else {
+      applyCropToEntry(entry, cropBox);
+    }
+    cropBackdrop.style.display = 'none';
   });
 
   // ---------- 編集領域: ドラッグ&ドロップでの挿入位置判定 ----------
@@ -570,12 +879,46 @@ button:disabled{opacity:.45; cursor:not-allowed}
   });
 
   // ---------- 書き出し形式の切り替え ----------
+  const metaFieldsEl = $('metaFields');
   let exportFormat = 'pdf';
   document.querySelectorAll('#format button').forEach(b => b.addEventListener('click', () => {
     exportFormat = b.dataset.f;
     document.querySelectorAll('#format button').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
     compressRow.hidden = exportFormat !== 'pdf';
+    metaFieldsEl.style.display = exportFormat === 'pdf' ? '' : 'none'; // メタデータはPDF書き出し時のみ意味を持つ
   }));
+
+  // ---------- 透かし設定UI ----------
+  const wmEnableChk = $('wmEnable'), wmFieldsEl = $('wmFields'), wmTextInput = $('wmText');
+  const wmSizeSel = $('wmSize'), wmOpacitySel = $('wmOpacity');
+  wmEnableChk.addEventListener('change', () => { wmFieldsEl.style.display = wmEnableChk.checked ? '' : 'none'; });
+
+  function getWatermarkOptions(){
+    if (!wmEnableChk.checked) return null;
+    const text = wmTextInput.value.trim();
+    if (!text) return null;
+    const sizeMap = { small: 0.045, medium: 0.07, large: 0.1 }; // ページ幅に対する文字サイズの比率
+    return { text, sizeRatio: sizeMap[wmSizeSel.value] || sizeMap.medium, opacity: parseFloat(wmOpacitySel.value) || 0.2 };
+  }
+
+  // 透かし文字をcanvasへ描画する(ページ用/画像書き出し用で共通利用)。
+  // ページ全体にページ幅基準のフォントサイズで対角線上に1回だけ描く、最もシンプルな構成。
+  // ブラウザに読み込み済みのWebフォント("Zen Kaku Gothic New")でそのまま描画するため、
+  // PDFへのフォント埋め込み作業なしに日本語の透かしをそのまま扱える(文字はラスタ画像として埋め込まれる)。
+  function drawWatermarkOnCanvas(ctx, canvasW, canvasH, opts){
+    if (!opts) return;
+    ctx.save();
+    ctx.globalAlpha = opts.opacity;
+    ctx.fillStyle = '#5A6878';
+    const fontPx = Math.max(10, canvasW * opts.sizeRatio);
+    ctx.font = `700 ${fontPx}px "Zen Kaku Gothic New",sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.translate(canvasW / 2, canvasH / 2);
+    ctx.rotate(-Math.PI / 6); // -30度、よく使われる対角の向き
+    ctx.fillText(opts.text, 0, 0);
+    ctx.restore();
+  }
 
   // ---------- PDF内の画像圧縮(JPEG/DCTDecodeのみ、見た目が壊れる恐れのある形式は対象外) ----------
   async function recompressJpegBytes(jpegBytes, preset){
@@ -713,12 +1056,62 @@ button:disabled{opacity:.45; cursor:not-allowed}
     }
 
     const cursors = new Map();
+    const addedPages = []; // { page, entry } 回転・クロップ・透かしの適用に使う
     for (const entry of deck){
       const queue = copiedQueueByMedia.get(entry.mediaId);
       const cursor = cursors.get(entry.mediaId) || 0;
-      outDoc.addPage(queue[cursor]);
+      const page = outDoc.addPage(queue[cursor]);
       cursors.set(entry.mediaId, cursor + 1);
+      addedPages.push({ page, entry });
     }
+
+    // 回転・クロップを適用する。どちらもページのMediaBox基準の座標系(/Rotateの影響を受けない)で
+    // 完結する操作なので、適用順は入れ替えても結果は変わらない。
+    for (const { page, entry } of addedPages){
+      if (entry.rotation){
+        const current = page.getRotation().angle || 0;
+        page.setRotation(PDFLib.degrees((current + entry.rotation) % 360));
+      }
+      if (entry.crop){
+        page.setCropBox(entry.crop.x, entry.crop.y, entry.crop.width, entry.crop.height);
+      }
+    }
+
+    // 透かし: ページ全体(MediaBox全体)に対して描画してから、必要ならクロップで切り取られる形になる
+    // (= クロップ範囲外の透かしは単に表示されないだけで、挙動として自然)。
+    const wmOpts = getWatermarkOptions();
+    if (wmOpts){
+      setStatus('透かしを追加しています…');
+      const wmImageCache = new Map(); // 同じページサイズならPNGを使い回し、埋め込み回数を減らす
+      for (const { page } of addedPages){
+        const { width, height } = page.getSize();
+        const key = `${Math.round(width)}x${Math.round(height)}`;
+        let embedded = wmImageCache.get(key);
+        if (!embedded){
+          const scale = 2; // 画質のため実寸の2倍の解像度で描画してから埋め込む
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(width * scale));
+          canvas.height = Math.max(1, Math.round(height * scale));
+          const ctx = canvas.getContext('2d');
+          drawWatermarkOnCanvas(ctx, canvas.width, canvas.height, wmOpts);
+          const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+          const pngBytes = new Uint8Array(await blob.arrayBuffer());
+          embedded = await outDoc.embedPng(pngBytes);
+          wmImageCache.set(key, embedded);
+        }
+        page.drawImage(embedded, { x: 0, y: 0, width, height });
+      }
+    }
+
+    // メタデータ(空欄の項目は変更しない)
+    const metaTitle = $('metaTitle').value.trim();
+    const metaAuthor = $('metaAuthor').value.trim();
+    const metaSubject = $('metaSubject').value.trim();
+    const metaKeywords = $('metaKeywords').value.trim();
+    if (metaTitle) outDoc.setTitle(metaTitle);
+    if (metaAuthor) outDoc.setAuthor(metaAuthor);
+    if (metaSubject) outDoc.setSubject(metaSubject);
+    if (metaKeywords) outDoc.setKeywords(metaKeywords.split(',').map(s => s.trim()).filter(Boolean));
 
     let compressResult = null;
     const level = compressLevelSel.value;
@@ -742,6 +1135,43 @@ button:disabled{opacity:.45; cursor:not-allowed}
     }
   }
 
+  // 1ページぶんを、回転・クロップ・透かしをすべて反映した最終的なcanvasとして描画する。
+  // クロップは「回転込みのビューポート上でのピクセル範囲」に変換してから元画像を切り出す方式。
+  // (クロップ範囲自体はページ本来の向きの座標で保存されているが、見た目は追加回転後の状態で
+  // 切り取る必要があるため、viewport.convertToViewportPoint()で回転込みの座標へ変換する)
+  async function renderEditedPageCanvas(media, entry, scale, fillWhite){
+    const page = await media.pdfjsDoc.getPage(entry.pageIndex + 1);
+    const totalRotation = ((page.rotate || 0) + entry.rotation) % 360;
+    const viewport = page.getViewport({ scale, rotation: totalRotation });
+    const fullCanvas = document.createElement('canvas');
+    fullCanvas.width = Math.max(1, Math.ceil(viewport.width));
+    fullCanvas.height = Math.max(1, Math.ceil(viewport.height));
+    const fullCtx = fullCanvas.getContext('2d');
+    if (fillWhite){ fullCtx.fillStyle = '#fff'; fullCtx.fillRect(0, 0, fullCanvas.width, fullCanvas.height); }
+    await page.render({ canvasContext: fullCtx, viewport }).promise;
+
+    let outCanvas = fullCanvas;
+    if (entry.crop){
+      const c0 = viewport.convertToViewportPoint(entry.crop.x, entry.crop.y);
+      const c1 = viewport.convertToViewportPoint(entry.crop.x + entry.crop.width, entry.crop.y + entry.crop.height);
+      const left = Math.max(0, Math.min(c0[0], c1[0]));
+      const top = Math.max(0, Math.min(c0[1], c1[1]));
+      const right = Math.min(fullCanvas.width, Math.max(c0[0], c1[0]));
+      const bottom = Math.min(fullCanvas.height, Math.max(c0[1], c1[1]));
+      const w = Math.max(1, Math.round(right - left)), h = Math.max(1, Math.round(bottom - top));
+      const cropped = document.createElement('canvas');
+      cropped.width = w; cropped.height = h;
+      const cctx = cropped.getContext('2d');
+      if (fillWhite){ cctx.fillStyle = '#fff'; cctx.fillRect(0, 0, w, h); }
+      cctx.drawImage(fullCanvas, left, top, w, h, 0, 0, w, h);
+      outCanvas = cropped;
+    }
+
+    const wmOpts = getWatermarkOptions();
+    if (wmOpts) drawWatermarkOnCanvas(outCanvas.getContext('2d'), outCanvas.width, outCanvas.height, wmOpts);
+    return outCanvas;
+  }
+
   async function exportImages(format){
     const zip = new JSZip();
     const ext = format === 'png' ? 'png' : 'jpg';
@@ -749,14 +1179,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
     for (let i = 0; i < deck.length; i++){
       const entry = deck[i];
       const media = mediaById(entry.mediaId);
-      const page = await media.pdfjsDoc.getPage(entry.pageIndex + 1);
-      const viewport = page.getViewport({ scale: EXPORT_SCALE });
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.ceil(viewport.width);
-      canvas.height = Math.ceil(viewport.height);
-      const ctx = canvas.getContext('2d');
-      if (format === 'jpg'){ ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
-      await page.render({ canvasContext: ctx, viewport }).promise;
+      const canvas = await renderEditedPageCanvas(media, entry, EXPORT_SCALE, format === 'jpg');
       const blob = await new Promise(res => canvas.toBlob(res, mime, format === 'jpg' ? 0.92 : undefined));
       zip.file(`page-${String(i + 1).padStart(3, '0')}.${ext}`, blob);
       setStatus(`書き出し中… ${i + 1}/${deck.length}`);
