@@ -49,10 +49,10 @@ h1 .mark::after{
 header p{margin:0; color:var(--sub); font-size:13.5px}
 
 main{
-  display:grid; grid-template-columns:280px minmax(0,1fr); gap:18px;
+  display:grid; grid-template-columns:1fr 2fr 1fr; gap:18px;
   padding:6px 22px 28px; align-items:start;
 }
-@media (max-width:860px){ main{grid-template-columns:1fr} }
+@media (max-width:980px){ main{grid-template-columns:1fr} }
 
 section.box{
   background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:14px 16px;
@@ -102,7 +102,7 @@ h2{font-size:14.5px; margin:0; font-weight:700; display:flex; align-items:center
 }
 
 /* ---------- 編集領域 ---------- */
-.editor{display:flex; flex-direction:column; gap:12px; min-width:0}
+.editor,.export-panel{display:flex; flex-direction:column; gap:10px; min-width:0}
 .editor-toolbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
 .editor-toolbar .hint{flex:1; margin:0; font-size:13px; color:var(--sub)}
 
@@ -264,30 +264,29 @@ button:disabled{opacity:.45; cursor:not-allowed}
     <div class="pool-header">
       <h2><span class="step-badge">1</span>メディアプール</h2>
     </div>
+    <p class="pool-hint"><span class="arrow">↓</span>編集したいPDFをドラッグ&amp;ドロップで、下の②編集領域の枠に入れてください。</p>
     <div class="pool-actions">
       <button id="pickFilesBtn">ファイルを選択</button>
       <button id="pickFolderBtn">フォルダを選択</button>
     </div>
     <div class="pool-list" id="mediaList"></div>
-    <p class="pool-hint"><span class="arrow">↓</span>編集したいPDFをドラッグ&amp;ドロップで、下の②編集領域の枠に入れてください。</p>
     <input type="file" id="pickFiles" accept="application/pdf,.pdf" multiple class="sr">
     <input type="file" id="pickFolder" webkitdirectory multiple class="sr">
   </section>
 
-  <section class="editor">
-    <div class="box" style="display:flex; flex-direction:column; gap:10px">
-      <div class="editor-toolbar">
-        <h2><span class="step-badge">2</span>編集領域</h2>
-        <p class="hint" id="deckCount"></p>
-        <button id="clearDeck" class="ghost-btn" disabled>編集領域を空にする</button>
-      </div>
-      <p class="icon-legend">各ページのボタン: <b>↻</b>回転 / <b>✂</b>クロップ / <b>🖋</b>署名・スタンプ / <b>×</b>削除</p>
-      <div class="deck-grid" id="deckGrid"></div>
+  <section class="editor box">
+    <div class="editor-toolbar">
+      <h2><span class="step-badge">2</span>編集領域</h2>
+      <p class="hint" id="deckCount"></p>
+      <button id="clearDeck" class="ghost-btn" disabled>編集領域を空にする</button>
     </div>
+    <p class="icon-legend">各ページのボタン: <b>↻</b>回転 / <b>✂</b>クロップ / <b>🖋</b>署名・スタンプ / <b>×</b>削除</p>
+    <div class="deck-grid" id="deckGrid"></div>
+  </section>
 
-    <div class="box" style="display:flex; flex-direction:column; gap:10px">
-      <h2><span class="step-badge">3</span>書き出し形式</h2>
-      <div class="export-bar">
+  <section class="export-panel box">
+    <h2><span class="step-badge">3</span>書き出し形式</h2>
+    <div class="export-bar">
         <div class="seg" id="format" role="group" aria-label="書き出し形式">
           <button data-f="pdf" aria-pressed="true">PDF</button>
           <button data-f="png" aria-pressed="false">PNG</button>
@@ -353,9 +352,8 @@ button:disabled{opacity:.45; cursor:not-allowed}
         </div>
       </details>
 
-      <div class="progress" id="prog"><i></i></div>
-      <p id="status">メディアプールのファイルを編集領域へドラッグすると、ページごとに並びます。</p>
-    </div>
+    <div class="progress" id="prog"><i></i></div>
+    <p id="status">メディアプールのファイルを編集領域へドラッグすると、ページごとに並びます。</p>
   </section>
 </main>
 
