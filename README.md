@@ -28,7 +28,9 @@ tools/
 
 ## 公開
 
-GitHub Pagesで公開する想定(`main`ブランチのルートを配信)。
+GitHub Pagesで公開(`main`ブランチのルートを配信)。
+
+**公開URL: https://seishiro-nishioka.github.io/tools/**
 
 ## ツール一覧
 
