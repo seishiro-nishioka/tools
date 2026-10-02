@@ -105,10 +105,10 @@ h2{font-size:14.5px; margin:0; font-weight:700; display:flex; align-items:center
 }
 .media-meta{margin:2px 0 0; font-size:12px; color:var(--sub)}
 .media-pdfmeta{
-  margin:2px 0 0; font-size:11px; color:var(--sub); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  margin:2px 0 0; font-size:11px; color:var(--sub); white-space:normal; overflow-wrap:break-word;
 }
 .media-encwarn{
-  margin:2px 0 0; font-size:11px; color:var(--red); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  margin:2px 0 0; font-size:11px; color:var(--red); white-space:normal; overflow-wrap:break-word;
 }
 
 /* ---------- 編集領域 ---------- */
@@ -998,7 +998,6 @@ button:disabled{opacity:.45; cursor:not-allowed}
           const pmEl = document.createElement('p');
           pmEl.className = 'media-pdfmeta';
           pmEl.textContent = parts.join(' / ');
-          pmEl.title = parts.join('\n'); // 1行に省略表示される分、ホバーで全文を見られるようにする
           info.appendChild(pmEl);
         }
       }
