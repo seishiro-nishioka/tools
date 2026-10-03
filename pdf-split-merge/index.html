@@ -451,8 +451,13 @@ button:disabled{opacity:.45; cursor:not-allowed}
         <li>ページを再読み込みする(<code>F5</code>)。ここでpdf.js等のライブラリ読み込みが一覧に表示されるのは想定通り(プログラムのコードを取得しているだけで、ファイルの中身ではありません)</li>
         <li>一覧を一旦クリアする(🚫マーク、または右上の「Clear」)</li>
         <li>このツールでPDFの読み込み・編集・書き出しを行う</li>
-        <li>その間、一覧に新しい通信が1件も追加されないことを確認する(=ファイルの中身を含む通信が発生していない証拠)</li>
+        <li>一覧に項目が増えても、各行の<b>Size列</b>を確認する。<b>0 B</b> と表示されている行(<code>data:</code>や<code>blob:</code>で始まるURL)は実際には転送が発生していない、ブラウザ内部だけの処理です。<b>外部のドメイン名(<code>https://〜</code>)宛てで、かつ0 Bより大きいサイズの行が無いこと</b>を確認してください(あっても、読み込み直後に出るpdf.js等のライブラリ本体や、Google Fontsのフォントファイルのみのはずです)</li>
       </ol>
+    </div>
+
+    <div class="security-section">
+      <h4><code>data:</code>・<code>blob:</code>で始まる行について</h4>
+      <p class="modal-hint">PDFの枚数が多い、または画像を多く含むPDFを扱うと、Networkの一覧に<code>data:image/...</code>や<code>blob:https://〜</code>で始まる行が大量に表示されることがあります。これは「通信」ではなく、ブラウザが内部的に画像を処理する際の技術的な仕組み(URLの中にデータ自体を埋め込む形式、またはメモリ上のデータへの参照)で、どこにも送信されていません。全てSize列が0 Bになっているはずなので、そこで見分けられます。</p>
     </div>
 
     <div class="security-section">
