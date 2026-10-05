@@ -67,6 +67,8 @@ main{
 .tool-btn .ico{flex:none; width:18px; text-align:center}
 .tool-btn:hover{background:var(--bg)}
 .tool-btn[aria-pressed="true"]{background:var(--blue); color:var(--blue-ink); font-weight:700}
+.tool-btn:disabled{opacity:.38; cursor:not-allowed}
+.tool-btn:disabled:hover{background:transparent}
 .field{display:flex; flex-direction:column; gap:3px}
 .field label{font-size:11.5px; color:var(--sub)}
 .field input[type="number"]{
@@ -134,18 +136,28 @@ button.ghost-sm:hover{border-color:var(--blue)}
   <section class="panel">
     <div class="panel-pad">
       <div class="tool-group">
-        <p class="tool-group-label">ツール</p>
+        <p class="tool-group-label">描画</p>
         <button type="button" class="tool-btn" id="toolSelect" aria-pressed="true"><span class="ico">⇖</span>選択・移動</button>
         <button type="button" class="tool-btn" id="toolDraw" aria-pressed="false"><span class="ico">◯</span>円を描く</button>
-        <button type="button" class="tool-btn" id="toolTangent1" aria-pressed="false"><span class="ico">⊙</span>外接(1円に)</button>
-        <button type="button" class="tool-btn" id="toolTangent2" aria-pressed="false"><span class="ico">⊚</span>外接(2円に)</button>
-        <button type="button" class="tool-btn" id="toolConstruction" aria-pressed="false"><span class="ico">┄</span>構築線切替</button>
-        <button type="button" class="tool-btn" id="toolDelete" aria-pressed="false"><span class="ico">×</span>削除</button>
       </div>
-      <hr class="sep">
       <div class="field">
         <label for="newDiameter">新しく描く円の直径(mm)</label>
         <input type="number" id="newDiameter" value="20" min="0.1" step="0.5">
+      </div>
+      <hr class="sep">
+      <div class="tool-group">
+        <p class="tool-group-label" id="selectionCountLabel">拘束(0個選択中)</p>
+        <button type="button" class="tool-btn" id="cmdTangent" title="最後に選んだ円を、他の選択円に外接させる"><span class="ico">⊙</span>外接</button>
+        <button type="button" class="tool-btn" id="cmdConcentric" title="最後に選んだ円を、もう一方と同心にする"><span class="ico">◎</span>同心</button>
+        <button type="button" class="tool-btn" id="cmdDistance" title="最後に選んだ円を、もう一方から指定距離に配置する"><span class="ico">↔</span>距離</button>
+        <div class="field">
+          <label for="constraintValue">距離の値(mm)</label>
+          <input type="number" id="constraintValue" value="20" min="0.01" step="0.5">
+        </div>
+        <button type="button" class="tool-btn" id="cmdEqual" title="選択した円どうしの直径を揃える"><span class="ico">=</span>等しい直径</button>
+        <button type="button" class="tool-btn" id="cmdFixed" title="選択した円のドラッグ移動を禁止/許可する"><span class="ico">📌</span>固定</button>
+        <button type="button" class="tool-btn" id="cmdConstruction" title="選択した円を構築線(補助円)に切り替える"><span class="ico">┄</span>構築線</button>
+        <button type="button" class="tool-btn" id="cmdDelete" title="選択した円を削除する"><span class="ico">×</span>削除</button>
       </div>
       <hr class="sep">
       <div class="tool-group">
@@ -185,10 +197,18 @@ button.ghost-sm:hover{border-color:var(--blue)}
   const $ = id => document.getElementById(id);
 
   // ---------- データモデル ----------
-  // circle: { id, cx, cy(mm, 数学座標でY上向き), d(直径mm), construction(bool), constraint(null|{type:'tangent1',target}|{type:'tangent2',targets:[a,b]}) }
+  // circle: {
+  //   id, cx, cy(mm, 数学座標でY上向き), d(直径mm), construction(bool), fixed(bool、ドラッグ移動を禁止),
+  //   equalGroup(number|null、「等しい直径」で連動しているグループ番号),
+  //   posConstraint: null
+  //     | {type:'tangent', targets:[id,...]}   // 1〜2個の円に外接
+  //     | {type:'concentric', target:id}        // 同心
+  //     | {type:'distance', target:id, value}   // 中心間距離を指定値にする
+  // }
   const circles = [];
   let nextId = 1;
-  let selectedId = null;
+  let nextEqualGroup = 1;
+  let selectedIds = []; // 選択順を保持。最後の要素が「拘束される側(self)」として扱われる
 
   const statusEl = $('status');
   const setStatus = (msg, isError = false) => {
@@ -236,25 +256,29 @@ button.ghost-sm:hover{border-color:var(--blue)}
     return { x: slvs.getParamValue(pt.param[0]), y: slvs.getParamValue(pt.param[1]) };
   }
 
-  function tangentToOne(target, r, hint) {
+  // 1〜2個の円に外接させる(targetsの個数ぶんのdistance拘束を同時に解く)
+  function solveTangent(targets, r, hint) {
+    return withSketch((g, wp, normal) => {
+      const pts = targets.map(t => fixedCircle(g, wp, normal, t.center, t.r));
+      const ptSelf = freeCircleCenter(g, wp, normal, hint, r);
+      targets.forEach((t, i) => slvs.distance(g, pts[i], ptSelf, t.r + r, wp));
+      const result = slvs.solveSketch(g, true);
+      return result.result === 0 ? readPoint(ptSelf) : null;
+    });
+  }
+  // 中心間距離を指定値にする
+  function solveDistance(target, value, r, hint) {
     return withSketch((g, wp, normal) => {
       const ptA = fixedCircle(g, wp, normal, target.center, target.r);
       const ptB = freeCircleCenter(g, wp, normal, hint, r);
-      slvs.distance(g, ptA, ptB, target.r + r, wp);
+      slvs.distance(g, ptA, ptB, value, wp);
       const result = slvs.solveSketch(g, true);
       return result.result === 0 ? readPoint(ptB) : null;
     });
   }
-  function tangentToTwo(a, b, r, hint) {
-    return withSketch((g, wp, normal) => {
-      const ptA = fixedCircle(g, wp, normal, a.center, a.r);
-      const ptB = fixedCircle(g, wp, normal, b.center, b.r);
-      const ptC = freeCircleCenter(g, wp, normal, hint, r);
-      slvs.distance(g, ptA, ptC, a.r + r, wp);
-      slvs.distance(g, ptB, ptC, b.r + r, wp);
-      const result = slvs.solveSketch(g, true);
-      return result.result === 0 ? readPoint(ptC) : null;
-    });
+  // 同心は中心座標をそのままコピーするだけで閉じた式そのものなので、ソルバーを使うまでもない
+  function solveConcentric(target) {
+    return { x: target.center.x, y: target.center.y };
   }
 
   // 作成順(=依存先が必ず先に来る順)に1パスで再計算する。
@@ -263,34 +287,44 @@ button.ghost-sm:hover{border-color:var(--blue)}
   function resolveAll() {
     if (!slvs) return; // エンジン読み込み前はスキップ(読み込み完了時に改めて呼ばれる)
     for (const c of circles) {
-      if (!c.constraint) continue;
+      const k = c.posConstraint;
+      if (!k) continue;
       const r = c.d / 2;
       const hint = { x: c.cx, y: c.cy }; // 直前の位置を手がかりに同じ側の解を維持する
-      if (c.constraint.type === 'tangent1') {
-        const t = circleById(c.constraint.target);
-        if (!t) { c.constraint = null; continue; }
-        const p = tangentToOne({ center: { x: t.cx, y: t.cy }, r: t.d / 2 }, r, hint);
+      if (k.type === 'tangent') {
+        const targets = k.targets.map(circleById);
+        if (targets.some(t => !t)) { c.posConstraint = null; continue; }
+        const p = solveTangent(targets.map(t => ({ center: { x: t.cx, y: t.cy }, r: t.d / 2 })), r, hint);
         if (p){ c.cx = p.x; c.cy = p.y; }
-        else setStatus('外接できませんでした。直径や配置を見直してください。', true);
-      } else if (c.constraint.type === 'tangent2') {
-        const [ta, tb] = c.constraint.targets.map(circleById);
-        if (!ta || !tb) { c.constraint = null; continue; }
-        const p = tangentToTwo(
-          { center: { x: ta.cx, y: ta.cy }, r: ta.d / 2 },
-          { center: { x: tb.cx, y: tb.cy }, r: tb.d / 2 },
-          r, hint
-        );
+        else setStatus(`円#${c.id}: 外接できませんでした(円どうしが離れすぎている、または内包関係です)。直径や配置を見直してください。`, true);
+      } else if (k.type === 'concentric') {
+        const t = circleById(k.target);
+        if (!t) { c.posConstraint = null; continue; }
+        const p = solveConcentric({ center: { x: t.cx, y: t.cy } });
+        c.cx = p.x; c.cy = p.y;
+      } else if (k.type === 'distance') {
+        const t = circleById(k.target);
+        if (!t) { c.posConstraint = null; continue; }
+        const p = solveDistance({ center: { x: t.cx, y: t.cy }, r: t.d / 2 }, k.value, r, hint);
         if (p){ c.cx = p.x; c.cy = p.y; }
-        else setStatus('外接できませんでした(円どうしが離れすぎている、または内包関係です)。直径や配置を見直してください。', true);
+        else setStatus(`円#${c.id}: 距離拘束を満たせませんでした。値を見直してください。`, true);
       }
     }
   }
 
   function constraintLabel(c){
-    if (!c.constraint) return 'なし(自由配置)';
-    if (c.constraint.type === 'tangent1') return `円#${c.constraint.target} に外接`;
-    if (c.constraint.type === 'tangent2') return `円#${c.constraint.targets[0]}・円#${c.constraint.targets[1]} に外接`;
+    const k = c.posConstraint;
+    if (!k) return '自由配置';
+    if (k.type === 'tangent') return `円${k.targets.map(id => '#' + id).join('・')} に外接`;
+    if (k.type === 'concentric') return `円#${k.target} と同心`;
+    if (k.type === 'distance') return `円#${k.target} から ${trimNum(k.value)}mm`;
     return '';
+  }
+  function constraintRefs(c){
+    const k = c.posConstraint;
+    if (!k) return [];
+    if (k.type === 'tangent') return k.targets;
+    return [k.target];
   }
 
   // ---------- ビュー変換(mm ⇔ 画面px、Y上向き) ----------
@@ -347,20 +381,21 @@ button.ghost-sm:hover{border-color:var(--blue)}
     for (const c of circles){
       const p = toScreen(c.cx, c.cy);
       const rpx = (c.d / 2) * scale;
-      const isSelected = c.id === selectedId;
+      const isSelected = selectedIds.includes(c.id);
+      const isConstrained = !!c.posConstraint || c.equalGroup != null;
       const circleEl = el('circle', {
         cx: p.x, cy: p.y, r: Math.max(0.5, rpx),
         fill: 'none',
-        stroke: isSelected ? 'var(--red)' : (c.constraint ? 'var(--blue)' : 'var(--ink)'),
-        'stroke-width': isSelected ? 2.5 : 1.6,
+        stroke: isSelected ? 'var(--red)' : (isConstrained ? 'var(--blue)' : 'var(--ink)'),
+        'stroke-width': isSelected ? 2.5 : (c.fixed ? 2.1 : 1.6),
         'stroke-dasharray': c.construction ? '5,4' : 'none',
         'data-id': c.id,
       });
       circleEl.style.cursor = 'pointer';
       stage.appendChild(circleEl);
 
-      // 中心点マーク
-      stage.appendChild(el('circle', { cx: p.x, cy: p.y, r: 1.6, fill: 'var(--sub)', 'pointer-events': 'none' }));
+      // 中心点マーク(固定されている円は赤で目立たせる)
+      stage.appendChild(el('circle', { cx: p.x, cy: p.y, r: c.fixed ? 2.2 : 1.6, fill: c.fixed ? 'var(--red)' : 'var(--sub)', 'pointer-events': 'none' }));
 
       if ($('showDims').checked){
         const label = el('text', {
@@ -411,7 +446,28 @@ button.ghost-sm:hover{border-color:var(--blue)}
   // ---------- インスペクタ ----------
   const inspectorEl = $('inspector');
   function renderInspector(){
-    const c = circleById(selectedId);
+    if (selectedIds.length === 0){
+      inspectorEl.innerHTML = '<p class="inspector-empty">円をクリックすると詳細がここに表示されます(Shiftキーで複数選択できます)。</p>';
+      return;
+    }
+    if (selectedIds.length > 1){
+      inspectorEl.innerHTML = '';
+      const title = document.createElement('p');
+      title.className = 'inspector-title';
+      title.textContent = `${selectedIds.length}個選択中`;
+      inspectorEl.appendChild(title);
+      const list = document.createElement('p');
+      list.className = 'readout';
+      list.textContent = selectedIds.map(id => `円#${id}`).join(' / ');
+      inspectorEl.appendChild(list);
+      const hint = document.createElement('p');
+      hint.className = 'inspector-empty';
+      hint.textContent = '左の「拘束」コマンドをクリックすると、この選択に適用されます(最後に選んだ円が、他の円を基準に拘束されます)。';
+      inspectorEl.appendChild(hint);
+      return;
+    }
+
+    const c = circleById(selectedIds[0]);
     if (!c){
       inspectorEl.innerHTML = '<p class="inspector-empty">円をクリックすると詳細がここに表示されます。</p>';
       return;
@@ -432,26 +488,53 @@ button.ghost-sm:hover{border-color:var(--blue)}
       const v = parseFloat(dInput.value);
       if (!(v > 0)) return;
       c.d = v;
+      if (c.equalGroup != null){
+        for (const other of circles) if (other.equalGroup === c.equalGroup && other !== c) other.d = v;
+      }
       resolveAll();
       render();
     });
 
     const cons = document.createElement('div');
     cons.className = 'constraint-badge';
-    cons.textContent = `拘束: ${constraintLabel(c)}`;
+    cons.textContent = `位置の拘束: ${constraintLabel(c)}`;
     inspectorEl.appendChild(cons);
 
-    if (c.constraint){
+    if (c.posConstraint){
       const freeBtn = document.createElement('button');
       freeBtn.className = 'ghost-sm';
-      freeBtn.textContent = '拘束を解除(自由配置にする)';
+      freeBtn.textContent = '位置の拘束を解除(自由配置にする)';
       freeBtn.addEventListener('click', () => {
-        c.constraint = null;
-        renderInspector();
-        setStatus(`円#${c.id}の拘束を解除しました。`);
+        c.posConstraint = null;
+        resolveAll(); render(); renderInspector();
+        setStatus(`円#${c.id}の位置の拘束を解除しました。`);
       });
       inspectorEl.appendChild(freeBtn);
     }
+
+    if (c.equalGroup != null){
+      const eqBadge = document.createElement('div');
+      eqBadge.className = 'constraint-badge';
+      eqBadge.textContent = `等しい直径グループ #${c.equalGroup} に所属`;
+      inspectorEl.appendChild(eqBadge);
+      const unlinkBtn = document.createElement('button');
+      unlinkBtn.className = 'ghost-sm';
+      unlinkBtn.textContent = 'このグループから外す';
+      unlinkBtn.addEventListener('click', () => {
+        c.equalGroup = null;
+        render(); renderInspector();
+        setStatus(`円#${c.id}を等しい直径グループから外しました。`);
+      });
+      inspectorEl.appendChild(unlinkBtn);
+    }
+
+    const fixedRow = document.createElement('label');
+    fixedRow.className = 'check-row';
+    fixedRow.innerHTML = `<input type="checkbox" id="inspFixed">固定する(ドラッグ移動を禁止)`;
+    inspectorEl.appendChild(fixedRow);
+    const fChk = fixedRow.querySelector('#inspFixed');
+    fChk.checked = !!c.fixed;
+    fChk.addEventListener('change', () => { c.fixed = fChk.checked; render(); });
 
     const constructionRow = document.createElement('label');
     constructionRow.className = 'check-row';
@@ -469,50 +552,138 @@ button.ghost-sm:hover{border-color:var(--blue)}
     const delBtn = document.createElement('button');
     delBtn.className = 'danger';
     delBtn.textContent = 'この円を削除';
-    delBtn.addEventListener('click', () => deleteCircle(c.id));
+    delBtn.addEventListener('click', () => deleteCircles([c.id]));
     inspectorEl.appendChild(delBtn);
   }
 
-  function deleteCircle(id){
-    const idx = circles.findIndex(c => c.id === id);
-    if (idx === -1) return;
-    circles.splice(idx, 1);
-    let freed = 0;
-    for (const c of circles){
-      if (!c.constraint) continue;
-      const refs = c.constraint.type === 'tangent1' ? [c.constraint.target] : c.constraint.targets;
-      if (refs.includes(id)){ c.constraint = null; freed++; }
+  function deleteCircles(ids){
+    let deletedCount = 0, freedCount = 0;
+    for (const id of ids){
+      const idx = circles.findIndex(c => c.id === id);
+      if (idx === -1) continue;
+      circles.splice(idx, 1);
+      deletedCount++;
     }
-    if (selectedId === id) selectedId = null;
-    if (freed) setStatus(`円#${id}を削除しました(それに外接していた${freed}個の円は自由配置に戻りました)。`);
-    else setStatus(`円#${id}を削除しました。`);
-    render(); renderInspector();
+    if (!deletedCount) return;
+    for (const c of circles){
+      if (c.posConstraint && constraintRefs(c).some(r => ids.includes(r))){ c.posConstraint = null; freedCount++; }
+    }
+    selectedIds = selectedIds.filter(id => !ids.includes(id));
+    const freedNote = freedCount ? `(それらに拘束されていた${freedCount}個の円は自由配置に戻りました)` : '';
+    setStatus(deletedCount === 1 ? `円#${ids[0]}を削除しました${freedNote}。` : `${deletedCount}個の円を削除しました${freedNote}。`);
+    render(); renderInspector(); updateCommandAvailability();
   }
 
-  // ---------- ツール状態 ----------
+  // ---------- ツール状態(SolveSpaceに倣い、「描画」は従来どおりモード型、「拘束」は選択→コマンド適用型) ----------
   let activeTool = 'select';
-  const toolButtons = { select: $('toolSelect'), draw: $('toolDraw'), tangent1: $('toolTangent1'), tangent2: $('toolTangent2'), construction: $('toolConstruction'), delete: $('toolDelete') };
-  let pendingPicks = []; // tangent1/tangent2操作中に選んだ円idを貯める
+  const toolButtons = { select: $('toolSelect'), draw: $('toolDraw') };
 
   const hintBanner = $('hintBanner');
   function setTool(name){
     activeTool = name;
-    pendingPicks = [];
     for (const key in toolButtons) toolButtons[key].setAttribute('aria-pressed', key === name ? 'true' : 'false');
     canvasWrap.classList.toggle('draw-mode', name === 'draw');
-    canvasWrap.classList.toggle('tangent-mode', name === 'tangent1' || name === 'tangent2');
-    const hints = {
-      select: '',
-      draw: 'クリックした位置に新しい円を配置します。',
-      tangent1: '①外接させたい円をクリック → ②外接させる相手の円をクリック',
-      tangent2: '①外接させたい円をクリック → ②③外接させる相手の円を2つクリック',
-      construction: '構築線(補助円)にしたい円をクリックすると切り替わります。',
-      delete: '削除したい円をクリックしてください。',
-    };
-    hintBanner.textContent = hints[name] || '';
-    hintBanner.style.display = hints[name] ? 'block' : 'none';
+    hintBanner.textContent = name === 'draw' ? 'クリックした位置に新しい円を配置します。' : '';
+    hintBanner.style.display = name === 'draw' ? 'block' : 'none';
   }
   for (const key in toolButtons) toolButtons[key].addEventListener('click', () => setTool(key));
+
+  // ---------- 拘束コマンド(SolveSpaceと同様、先に円を選択してからコマンドボタンを押す) ----------
+  // 複数選択のうち「最後に選んだ円」が拘束される側(self)、それ以外が参照先(target)になる。
+  const selectionCountLabel = $('selectionCountLabel');
+  function updateCommandAvailability(){
+    const n = selectedIds.length;
+    selectionCountLabel.textContent = `拘束(${n}個選択中)`;
+    $('cmdTangent').disabled = !slvs || n < 2 || n > 3;
+    $('cmdConcentric').disabled = !slvs || n !== 2;
+    $('cmdDistance').disabled = !slvs || n !== 2;
+    $('cmdEqual').disabled = n < 2;
+    $('cmdFixed').disabled = n < 1;
+    $('cmdConstruction').disabled = n < 1;
+    $('cmdDelete').disabled = n < 1;
+  }
+
+  function selfAndTargets(){
+    const ids = [...selectedIds];
+    const selfId = ids.pop();
+    return { self: circleById(selfId), targetIds: ids };
+  }
+
+  $('cmdTangent').addEventListener('click', () => {
+    if (selectedIds.length < 2 || selectedIds.length > 3){
+      setStatus('外接コマンド: 円を2〜3個選択してください(拘束される円+相手1〜2個)。', true);
+      return;
+    }
+    const { self, targetIds } = selfAndTargets();
+    if (!self) return;
+    self.posConstraint = { type: 'tangent', targets: targetIds };
+    resolveAll(); render(); renderInspector();
+    setStatus(`円#${self.id}を ${constraintLabel(self)} にしました。`);
+  });
+
+  $('cmdConcentric').addEventListener('click', () => {
+    if (selectedIds.length !== 2){
+      setStatus('同心コマンド: 円を2個選択してください。', true);
+      return;
+    }
+    const { self, targetIds } = selfAndTargets();
+    if (!self) return;
+    self.posConstraint = { type: 'concentric', target: targetIds[0] };
+    resolveAll(); render(); renderInspector();
+    setStatus(`円#${self.id}を ${constraintLabel(self)} にしました。`);
+  });
+
+  $('cmdDistance').addEventListener('click', () => {
+    if (selectedIds.length !== 2){
+      setStatus('距離コマンド: 円を2個選択してください。', true);
+      return;
+    }
+    const value = parseFloat($('constraintValue').value);
+    if (!(value > 0)){
+      setStatus('距離の値(mm)を正しく入力してください。', true);
+      return;
+    }
+    const { self, targetIds } = selfAndTargets();
+    if (!self) return;
+    self.posConstraint = { type: 'distance', target: targetIds[0], value };
+    resolveAll(); render(); renderInspector();
+    setStatus(`円#${self.id}を ${constraintLabel(self)} にしました。`);
+  });
+
+  $('cmdEqual').addEventListener('click', () => {
+    if (selectedIds.length < 2){
+      setStatus('等しい直径コマンド: 円を2個以上選択してください。', true);
+      return;
+    }
+    const members = selectedIds.map(circleById).filter(Boolean);
+    let group = members.map(m => m.equalGroup).find(g => g != null);
+    if (group == null) group = nextEqualGroup++;
+    const value = members[members.length - 1].d; // 最後に選んだ円の直径を基準に揃える
+    for (const m of members){ m.equalGroup = group; m.d = value; }
+    resolveAll(); render(); renderInspector();
+    setStatus(`${members.length}個の円の直径を ⌀${trimNum(value)}mm で揃えました。`);
+  });
+
+  $('cmdFixed').addEventListener('click', () => {
+    if (!selectedIds.length){ setStatus('固定コマンド: 円を選択してください。', true); return; }
+    const members = selectedIds.map(circleById).filter(Boolean);
+    for (const m of members) m.fixed = !m.fixed;
+    render(); renderInspector();
+    setStatus(`${members.length}個の円の固定状態を切り替えました。`);
+  });
+
+  $('cmdConstruction').addEventListener('click', () => {
+    if (!selectedIds.length){ setStatus('構築線コマンド: 円を選択してください。', true); return; }
+    const members = selectedIds.map(circleById).filter(Boolean);
+    for (const m of members) m.construction = !m.construction;
+    render();
+    setStatus(`${members.length}個の円の構築線状態を切り替えました。`);
+  });
+
+  $('cmdDelete').addEventListener('click', () => {
+    if (!selectedIds.length){ setStatus('削除する円を選択してください。', true); return; }
+    deleteCircles([...selectedIds]);
+  });
 
   // ---------- ポインタ操作 ----------
   function hitTestCircle(mx, my){
@@ -540,16 +711,23 @@ button.ghost-sm:hover{border-color:var(--blue)}
 
     if (activeTool === 'select'){
       if (hit){
-        selectedId = hit.id;
-        render(); renderInspector();
-        if (!hit.constraint){
+        if (e.shiftKey){
+          const idx = selectedIds.indexOf(hit.id);
+          if (idx === -1) selectedIds.push(hit.id); else selectedIds.splice(idx, 1);
+        } else {
+          selectedIds = [hit.id];
+        }
+        render(); renderInspector(); updateCommandAvailability();
+        const soleSelected = !e.shiftKey && selectedIds.length === 1 && selectedIds[0] === hit.id;
+        if (soleSelected && !hit.posConstraint && !hit.fixed){
           dragState = { kind: 'circle', id: hit.id };
           canvasWrap.setPointerCapture(e.pointerId);
-        } else {
-          setStatus(`円#${hit.id}は拘束されているため直接ドラッグできません(拘束を解除すると動かせます)。`);
+        } else if (soleSelected && (hit.posConstraint || hit.fixed)){
+          setStatus(`円#${hit.id}は${hit.fixed ? '固定' : '拘束'}されているため直接ドラッグできません。`);
         }
       } else {
-        selectedId = null; render(); renderInspector();
+        if (!e.shiftKey) selectedIds = [];
+        render(); renderInspector(); updateCommandAvailability();
         dragState = { kind: 'pan', startPanX: panX, startPanY: panY, startSx: sp.x, startSy: sp.y };
         canvasWrap.classList.add('panning');
         canvasWrap.setPointerCapture(e.pointerId);
@@ -560,49 +738,11 @@ button.ghost-sm:hover{border-color:var(--blue)}
     if (activeTool === 'draw'){
       if (hit) return; // 既存円の上では作らない
       const d = parseFloat($('newDiameter').value) || 20;
-      const c = { id: nextId++, cx: mp.x, cy: mp.y, d, construction: false, constraint: null };
+      const c = { id: nextId++, cx: mp.x, cy: mp.y, d, construction: false, fixed: false, equalGroup: null, posConstraint: null };
       circles.push(c);
-      selectedId = c.id;
-      render(); renderInspector();
+      selectedIds = [c.id];
+      render(); renderInspector(); updateCommandAvailability();
       setStatus(`円#${c.id}(⌀${trimNum(d)}mm)を配置しました。`);
-      return;
-    }
-
-    if (activeTool === 'tangent1' || activeTool === 'tangent2'){
-      if (!hit) return;
-      pendingPicks.push(hit.id);
-      const need = activeTool === 'tangent1' ? 2 : 3;
-      if (pendingPicks.length < need){
-        setStatus(`円#${hit.id}を選択しました。あと${need - pendingPicks.length}個クリックしてください。`);
-        return;
-      }
-      const [selfId, ...targets] = pendingPicks;
-      pendingPicks = [];
-      const self = circleById(selfId);
-      if (!self){ return; }
-      if (targets.includes(selfId) || new Set(targets).size !== targets.length){
-        setStatus('同じ円を重複して選択しています。やり直してください。', true);
-        return;
-      }
-      self.constraint = activeTool === 'tangent1' ? { type: 'tangent1', target: targets[0] } : { type: 'tangent2', targets };
-      resolveAll();
-      selectedId = self.id;
-      render(); renderInspector();
-      setStatus(`円#${self.id}を ${constraintLabel(self)} にしました。`);
-      return;
-    }
-
-    if (activeTool === 'construction'){
-      if (!hit) return;
-      hit.construction = !hit.construction;
-      render();
-      setStatus(`円#${hit.id}を${hit.construction ? '構築線に設定しました。' : '通常の円に戻しました。'}`);
-      return;
-    }
-
-    if (activeTool === 'delete'){
-      if (!hit) return;
-      deleteCircle(hit.id);
       return;
     }
   });
@@ -645,18 +785,18 @@ button.ghost-sm:hover{border-color:var(--blue)}
   $('clearAllBtn').addEventListener('click', () => {
     if (!circles.length) return;
     if (!confirm('すべての円を消去します。よろしいですか?')) return;
-    circles.length = 0; selectedId = null; nextId = 1;
-    render(); renderInspector();
+    circles.length = 0; selectedIds = []; nextId = 1; nextEqualGroup = 1;
+    render(); renderInspector(); updateCommandAvailability();
     setStatus('すべての円を消去しました。');
   });
   $('showDims').addEventListener('change', render);
   $('showGrid').addEventListener('change', render);
 
   window.addEventListener('keydown', e => {
-    if (e.key === 'Escape'){ pendingPicks = []; setTool('select'); }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId !== null && document.activeElement.tagName !== 'INPUT'){
+    if (e.key === 'Escape'){ selectedIds = []; setTool('select'); render(); renderInspector(); updateCommandAvailability(); }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length && document.activeElement.tagName !== 'INPUT'){
       e.preventDefault();
-      deleteCircle(selectedId);
+      deleteCircles([...selectedIds]);
     }
   });
 
@@ -664,13 +804,11 @@ button.ghost-sm:hover{border-color:var(--blue)}
 
   resetView();
   render();
+  updateCommandAvailability();
 
-  // 計算エンジン(slvs.js, WebAssembly)の読み込み完了まで、外接ツールは使用不可にしておく
-  toolButtons.tangent1.disabled = true;
-  toolButtons.tangent2.disabled = true;
+  // 計算エンジン(slvs.js, WebAssembly)の読み込み完了まで、ソルバーを使うコマンドは使用不可にしておく
   slvsReadyPromise.then(() => {
-    toolButtons.tangent1.disabled = false;
-    toolButtons.tangent2.disabled = false;
+    updateCommandAvailability();
     setStatus('準備ができました。円を描くツールでクリックすると円を配置できます。');
   }).catch(err => {
     console.error('計算エンジンの読み込みに失敗しました:', err);
