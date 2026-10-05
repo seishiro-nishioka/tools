@@ -26,12 +26,13 @@
   --red:#FF5040; --blue:#5B93C9; --blue-ink:#0E1620;
 }
 *,*::before,*::after{box-sizing:inherit}
-html,body{height:100%}
+html,body{height:100%; overscroll-behavior:none}
 body{
   margin:0; background:var(--bg); color:var(--ink);
   font-family:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif;
   font-size:14.5px; line-height:1.5;
   display:flex; flex-direction:column; height:100vh;
+  overflow:hidden;
 }
 header{
   display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; flex:none;
@@ -55,7 +56,15 @@ main{
   background:var(--line); flex:1; min-height:0; overflow:hidden;
 }
 .panel{background:var(--panel); min-height:0; display:flex; flex-direction:column}
-.panel-pad{padding:12px; display:flex; flex-direction:column; gap:10px; overflow:auto}
+.panel-pad{padding:12px; display:flex; flex-direction:column; gap:10px; overflow:auto; overscroll-behavior:contain}
+
+/* 狭い画面(スマホ)では3カラムを縦積みにし、上=ツールバー/中央=キャンバス/下=インスペクタにする */
+@media (max-width: 760px){
+  main{
+    grid-template-columns:1fr;
+    grid-template-rows:minmax(0,32vh) minmax(240px,1fr) minmax(0,28vh);
+  }
+}
 
 .tool-group{display:flex; flex-direction:column; gap:4px}
 .tool-group-label{font-size:11px; color:var(--sub); font-weight:700; letter-spacing:.03em; margin:4px 0 0}
@@ -79,7 +88,7 @@ main{
 .check-row input{width:15px; height:15px}
 hr.sep{border:0; border-top:1px solid var(--line); margin:4px 0}
 
-.canvas-wrap{position:relative; overflow:hidden; background:var(--bg); cursor:default}
+.canvas-wrap{position:relative; overflow:hidden; background:var(--bg); cursor:default; flex:1; min-height:0; overscroll-behavior:none; touch-action:none}
 .canvas-wrap.pan-mode{cursor:grab}
 .canvas-wrap.panning{cursor:grabbing}
 .canvas-wrap.draw-mode{cursor:crosshair}
