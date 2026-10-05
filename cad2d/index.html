@@ -38,6 +38,13 @@ header{
   display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; flex:none;
   padding:12px 18px 6px;
 }
+.back-link{
+  flex:none; display:inline-flex; align-items:center; gap:4px;
+  font-size:12.5px; color:var(--sub); text-decoration:none;
+  padding:4px 9px; border-radius:5px; border:1px solid var(--line);
+  order:-1;
+}
+.back-link:hover{border-color:var(--blue); color:var(--ink)}
 h1{
   margin:0; font-size:19px; font-weight:700; letter-spacing:.02em;
   display:flex; align-items:center; gap:8px;
@@ -138,6 +145,7 @@ button.ghost-sm:hover{border-color:var(--blue)}
 </head>
 <body>
 <header>
+  <a class="back-link" href="../" aria-label="ツール一覧に戻る">← 一覧</a>
   <h1><span class="mark" aria-hidden="true"></span>簡易2D CAD</h1>
   <p>点・線分・円を配置し、幾何拘束で正確に組み立てるツールです。データは端末内で完結し、どこにも送信されません。</p>
 </header>
@@ -222,10 +230,15 @@ button.ghost-sm:hover{border-color:var(--blue)}
   let nextEntityId = 1;
   let nextConstraintId = 1;
   let selectedIds = []; // 選択順を保持(複数選択時はShift+クリック)
+  // pendingCommand: コマンドを「選択より先に」実行した場合の、対象ピック待ち状態。
+  // {type, value?}。null以外の間はキャンバスのクリックが選択(のトグル追加)として働き、
+  // 選択内容がそのコマンドの条件を満たした瞬間に自動的に実行される。
+  let pendingCommand = null;
 
   const CONSTRAINT_LABELS = {
     coincident: '一致', distance: '距離', horizontal: '水平', vertical: '鉛直',
     parallel: '平行', perpendicular: '垂直', equal: '等しい', tangent: '接する', diameter: '直径',
+    fixed: '固定', construction: '構築線', delete: '削除',
   };
 
   const statusEl = $('status');
@@ -668,13 +681,23 @@ button.ghost-sm:hover{border-color:var(--blue)}
     line: '始点をクリックし、続けて終点をクリックしてください(既存の点の近くでクリックすると接続されます)。',
     circle: '中心をクリックし、続けて半径を決める位置をクリックしてください(中心は既存の点に接続できます)。',
   };
+  function refreshHint(){
+    if (pendingCommand){
+      hintBanner.textContent = `「${CONSTRAINT_LABELS[pendingCommand.type]}」: 対象の図形をクリックしてください(Escでキャンセル)`;
+      hintBanner.style.display = 'block';
+    } else {
+      hintBanner.textContent = HINTS[activeTool] || '';
+      hintBanner.style.display = HINTS[activeTool] ? 'block' : 'none';
+    }
+  }
   function setTool(name){
+    if (pendingCommand){ pendingCommand = null; setStatus('拘束コマンドをキャンセルしました。'); }
     activeTool = name;
     drawState = null;
     for (const key in toolButtons) toolButtons[key].setAttribute('aria-pressed', key === name ? 'true' : 'false');
     canvasWrap.classList.toggle('draw-mode', name !== 'select');
-    hintBanner.textContent = HINTS[name] || '';
-    hintBanner.style.display = HINTS[name] ? 'block' : 'none';
+    refreshHint();
+    updateCommandAvailability();
   }
   for (const key in toolButtons) toolButtons[key].addEventListener('click', () => setTool(key));
 
@@ -700,54 +723,79 @@ button.ghost-sm:hover{border-color:var(--blue)}
       delete: n >= 1,
     };
   }
+  const CMD_BUTTON_TYPE = {
+    cmdCoincident: 'coincident', cmdDistance: 'distance', cmdHorizontal: 'horizontal', cmdVertical: 'vertical',
+    cmdParallel: 'parallel', cmdPerpendicular: 'perpendicular', cmdEqual: 'equal', cmdTangent: 'tangent',
+    cmdDiameter: 'diameter', cmdFixed: 'fixed', cmdConstruction: 'construction', cmdDelete: 'delete',
+  };
+  const SOLVER_TYPES = new Set(['coincident', 'distance', 'horizontal', 'vertical', 'parallel', 'perpendicular', 'equal', 'tangent', 'diameter']);
+
   function updateCommandAvailability(){
     const n = selectedIds.length;
-    selectionCountLabel.textContent = `拘束(${n}個選択中)`;
-    const avail = commandApplicable();
-    $('cmdCoincident').disabled = !slvs || !avail.coincident;
-    $('cmdDistance').disabled = !slvs || !avail.distance;
-    $('cmdHorizontal').disabled = !slvs || !avail.horizontal;
-    $('cmdVertical').disabled = !slvs || !avail.vertical;
-    $('cmdParallel').disabled = !slvs || !avail.parallel;
-    $('cmdPerpendicular').disabled = !slvs || !avail.perpendicular;
-    $('cmdEqual').disabled = !slvs || !avail.equal;
-    $('cmdTangent').disabled = !slvs || !avail.tangent;
-    $('cmdDiameter').disabled = !slvs || !avail.diameter;
-    $('cmdFixed').disabled = !avail.fixed;
-    $('cmdConstruction').disabled = !avail.construction;
-    $('cmdDelete').disabled = !avail.delete;
+    selectionCountLabel.textContent = pendingCommand
+      ? `「${CONSTRAINT_LABELS[pendingCommand.type]}」: 対象を選択中(${n}個)`
+      : `拘束(${n}個選択中)`;
+    for (const id in CMD_BUTTON_TYPE){
+      const type = CMD_BUTTON_TYPE[id];
+      const btn = $(id);
+      if (pendingCommand){
+        const isActive = pendingCommand.type === type;
+        btn.disabled = !isActive;
+        btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      } else {
+        btn.disabled = SOLVER_TYPES.has(type) && !slvs;
+        btn.setAttribute('aria-pressed', 'false');
+      }
+    }
+  }
+
+  // 拘束コマンドの実行方法は3通りを統一的に扱う:
+  //  1) 何も選択せずコマンドを押す → 対象・基準とも、続けてクリックして選ぶ(ピック待ちに入る)
+  //  2) 一部だけ選択してコマンドを押す → 選択済みを対象として、残りをクリックして選ぶ(ピック待ちに入る)
+  //  3) コマンドの条件を満たす数・組み合わせをあらかじめ選択してコマンドを押す → 即座に実行
+  // 選択数・組み合わせの条件(引数)はコマンドごとに異なり、commandApplicable()が判定する。
+  // ピック待ち中はキャンバスのクリックがselectedIdsへのトグル追加として働き、
+  // 条件を満たした瞬間に自動実行される。
+  function startOrFireCommand(type){
+    if (pendingCommand && pendingCommand.type === type){
+      pendingCommand = null;
+      updateCommandAvailability(); refreshHint();
+      setStatus('拘束コマンドをキャンセルしました。');
+      return;
+    }
+    let value;
+    if (type === 'distance' || type === 'diameter'){
+      value = parseFloat($('constraintValue').value);
+      if (!(value > 0)){ setStatus('値(mm)を正しく入力してください。', true); return; }
+    }
+    if (commandApplicable()[type]){
+      fireCommand(type, value);
+      return;
+    }
+    pendingCommand = { type, value };
+    updateCommandAvailability(); refreshHint();
+    setStatus(`「${CONSTRAINT_LABELS[type]}」: 対象の図形をクリックして選択してください。`);
+  }
+
+  function fireCommand(type, value){
+    pendingCommand = null;
+    if (type === 'fixed') return applyFixedToggle();
+    if (type === 'construction') return applyConstructionToggle();
+    if (type === 'delete') return applyDeleteSelection();
+    addConstraintCmd(type, value);
   }
 
   function addConstraintCmd(type, value){
     const c = { id: nextConstraintId++, type, refs: [...selectedIds], value };
     constraints.push(c);
-    if (!solveAll()){ constraints.pop(); render(); renderInspector(); return; }
-    render(); renderInspector(); updateCommandAvailability();
+    if (!solveAll()){ constraints.pop(); render(); renderInspector(); updateCommandAvailability(); refreshHint(); return; }
+    render(); renderInspector(); updateCommandAvailability(); refreshHint();
     setStatus(`拘束「${CONSTRAINT_LABELS[type]}」を追加しました。`);
   }
 
-  $('cmdCoincident').addEventListener('click', () => addConstraintCmd('coincident'));
-  $('cmdHorizontal').addEventListener('click', () => addConstraintCmd('horizontal'));
-  $('cmdVertical').addEventListener('click', () => addConstraintCmd('vertical'));
-  $('cmdParallel').addEventListener('click', () => addConstraintCmd('parallel'));
-  $('cmdPerpendicular').addEventListener('click', () => addConstraintCmd('perpendicular'));
-  $('cmdEqual').addEventListener('click', () => addConstraintCmd('equal'));
-  $('cmdTangent').addEventListener('click', () => addConstraintCmd('tangent'));
-
-  $('cmdDistance').addEventListener('click', () => {
-    const value = parseFloat($('constraintValue').value);
-    if (!(value > 0)){ setStatus('値(mm)を正しく入力してください。', true); return; }
-    addConstraintCmd('distance', value);
-  });
-  $('cmdDiameter').addEventListener('click', () => {
-    const value = parseFloat($('constraintValue').value);
-    if (!(value > 0)){ setStatus('値(mm)を正しく入力してください。', true); return; }
-    addConstraintCmd('diameter', value);
-  });
-
-  $('cmdFixed').addEventListener('click', () => {
+  function applyFixedToggle(){
     const sel = selKinds();
-    if (!sel.length) return;
+    if (!sel.length){ updateCommandAvailability(); refreshHint(); return; }
     const pts = new Set();
     for (const e of sel){
       if (e.type === 'point') pts.add(e.id);
@@ -757,22 +805,28 @@ button.ghost-sm:hover{border-color:var(--blue)}
     const ptEntities = [...pts].map(entityById).filter(Boolean);
     const allFixed = ptEntities.every(p => p.fixed);
     for (const p of ptEntities) p.fixed = !allFixed;
-    solveAll(); render(); renderInspector();
+    solveAll(); render(); renderInspector(); updateCommandAvailability(); refreshHint();
     setStatus(allFixed ? '固定を解除しました。' : '固定しました。');
-  });
+  }
 
-  $('cmdConstruction').addEventListener('click', () => {
+  function applyConstructionToggle(){
     const sel = selKinds().filter(e => e.type !== 'point');
-    if (!sel.length) return;
+    if (!sel.length){ updateCommandAvailability(); refreshHint(); return; }
     const allConstruction = sel.every(e => e.construction);
     for (const e of sel) e.construction = !allConstruction;
-    render();
-  });
+    render(); updateCommandAvailability(); refreshHint();
+    setStatus(allConstruction ? '構築線を解除しました。' : '構築線にしました。');
+  }
 
-  $('cmdDelete').addEventListener('click', () => {
-    if (!selectedIds.length) return;
+  function applyDeleteSelection(){
+    if (!selectedIds.length){ updateCommandAvailability(); refreshHint(); return; }
     deleteEntities([...selectedIds]);
-  });
+    refreshHint();
+  }
+
+  for (const id in CMD_BUTTON_TYPE){
+    $(id).addEventListener('click', () => startOrFireCommand(CMD_BUTTON_TYPE[id]));
+  }
 
   // ---------- ポインタ操作 ----------
   function distPointToSegment(p, a, b){
@@ -834,6 +888,20 @@ button.ghost-sm:hover{border-color:var(--blue)}
 
     if (activeTool === 'select'){
       const hit = hitTest(mp.x, mp.y);
+
+      if (pendingCommand){
+        if (hit){
+          const idx = selectedIds.indexOf(hit.id);
+          if (idx === -1) selectedIds.push(hit.id); else selectedIds.splice(idx, 1);
+          render(); renderInspector(); updateCommandAvailability(); refreshHint();
+          if (commandApplicable()[pendingCommand.type]){
+            const { type, value } = pendingCommand;
+            fireCommand(type, value);
+          }
+        }
+        return; // ピック待ち中は空クリックでのパン開始やドラッグは行わない
+      }
+
       if (hit){
         if (e.shiftKey){
           const idx = selectedIds.indexOf(hit.id);
@@ -957,7 +1025,9 @@ button.ghost-sm:hover{border-color:var(--blue)}
   $('showGrid').addEventListener('change', render);
 
   window.addEventListener('keydown', e => {
-    if (e.key === 'Escape'){ selectedIds = []; setTool('select'); render(); renderInspector(); updateCommandAvailability(); }
+    if (e.key === 'Escape'){
+      selectedIds = []; setTool('select'); render(); renderInspector(); updateCommandAvailability();
+    }
     if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length && document.activeElement.tagName !== 'INPUT'){
       e.preventDefault();
       deleteEntities([...selectedIds]);
