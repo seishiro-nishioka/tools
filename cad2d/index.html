@@ -81,6 +81,8 @@ main{
   border:1px solid transparent; background:transparent; color:var(--ink); cursor:pointer;
 }
 .tool-btn .ico{flex:none; width:18px; text-align:center}
+.btn-row{display:flex; gap:6px}
+.btn-row .tool-btn{width:auto; flex:1; justify-content:center; padding-left:6px; padding-right:6px}
 .tool-btn:hover{background:var(--bg)}
 .tool-btn[aria-pressed="true"]{background:var(--blue); color:var(--blue-ink); font-weight:700}
 .tool-btn:disabled{opacity:.38; cursor:not-allowed}
@@ -153,6 +155,14 @@ button.ghost-sm:hover{border-color:var(--blue)}
 <main>
   <section class="panel">
     <div class="panel-pad">
+      <div class="tool-group">
+        <p class="tool-group-label">操作</p>
+        <div class="btn-row">
+          <button type="button" class="tool-btn" id="undoBtn" title="元に戻す (Ctrl+Z)" disabled><span class="ico">↶</span>元に戻す</button>
+          <button type="button" class="tool-btn" id="redoBtn" title="やり直す (Ctrl+Shift+Z)" disabled><span class="ico">↷</span>やり直す</button>
+        </div>
+      </div>
+      <hr class="sep">
       <div class="tool-group">
         <p class="tool-group-label">描画</p>
         <button type="button" class="tool-btn" id="toolSelect" aria-pressed="true"><span class="ico">⇖</span>選択・移動</button>
@@ -249,6 +259,56 @@ button.ghost-sm:hover{border-color:var(--blue)}
 
   const entityById = id => entities.find(e => e.id === id);
   const constraintsFor = id => constraints.filter(c => c.refs.includes(id));
+
+  // ---------- 元に戻す/やり直す ----------
+  // entities/constraints(+IDカウンタ)のスナップショットをスタックで保持する簡易実装。
+  // ビュー(パン・ズーム)や選択状態は対象外とし、モデルの変更のみを対象とする。
+  const undoStack = [];
+  const redoStack = [];
+  const MAX_UNDO = 100;
+  function snapshotState(){
+    return {
+      entities: JSON.parse(JSON.stringify(entities)),
+      constraints: JSON.parse(JSON.stringify(constraints)),
+      nextEntityId, nextConstraintId,
+    };
+  }
+  function restoreState(snap){
+    entities.length = 0; entities.push(...snap.entities);
+    constraints.length = 0; constraints.push(...snap.constraints);
+    nextEntityId = snap.nextEntityId; nextConstraintId = snap.nextConstraintId;
+  }
+  function commitUndoSnapshot(snap){
+    undoStack.push(snap);
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack.length = 0;
+    updateUndoRedoAvailability();
+  }
+  function pushUndo(){
+    commitUndoSnapshot(snapshotState());
+  }
+  function updateUndoRedoAvailability(){
+    $('undoBtn').disabled = !undoStack.length;
+    $('redoBtn').disabled = !redoStack.length;
+  }
+  function undo(){
+    if (!undoStack.length) return;
+    redoStack.push(snapshotState());
+    restoreState(undoStack.pop());
+    selectedIds = []; pendingCommand = null;
+    solveAll(); render(); renderInspector(); updateCommandAvailability(); refreshHint(); updateUndoRedoAvailability();
+    setStatus('元に戻しました。');
+  }
+  function redo(){
+    if (!redoStack.length) return;
+    undoStack.push(snapshotState());
+    restoreState(redoStack.pop());
+    selectedIds = []; pendingCommand = null;
+    solveAll(); render(); renderInspector(); updateCommandAvailability(); refreshHint(); updateUndoRedoAvailability();
+    setStatus('やり直しました。');
+  }
+  $('undoBtn').addEventListener('click', undo);
+  $('redoBtn').addEventListener('click', redo);
 
   // ---------- 幾何計算: SolveSpace本家の拘束ソルバー(libslvs、WebAssembly版)を使用 ----------
   // https://github.com/solvespace/solvespace (npm: slvs, GPL-3.0)。
@@ -572,7 +632,11 @@ button.ghost-sm:hover{border-color:var(--blue)}
       inspectorEl.appendChild(fy);
       const xi = fx.querySelector('#inspX'), yi = fy.querySelector('#inspY');
       xi.value = trimNum(e.x); yi.value = trimNum(e.y);
+      let xyEditStarted = false;
+      xi.addEventListener('focus', () => { xyEditStarted = false; });
+      yi.addEventListener('focus', () => { xyEditStarted = false; });
       const applyXY = () => {
+        if (!xyEditStarted){ pushUndo(); xyEditStarted = true; }
         const vx = parseFloat(xi.value), vy = parseFloat(yi.value);
         if (Number.isFinite(vx)) e.x = vx;
         if (Number.isFinite(vy)) e.y = vy;
@@ -586,7 +650,7 @@ button.ghost-sm:hover{border-color:var(--blue)}
       inspectorEl.appendChild(fixedRow);
       const fChk = fixedRow.querySelector('#inspFixed');
       fChk.checked = !!e.fixed;
-      fChk.addEventListener('change', () => { e.fixed = fChk.checked; solveAll(); render(); });
+      fChk.addEventListener('change', () => { pushUndo(); e.fixed = fChk.checked; solveAll(); render(); });
     } else if (e.type === 'line'){
       const a = entityById(e.p1), b = entityById(e.p2);
       const len = (a && b) ? Math.hypot(b.x - a.x, b.y - a.y) : 0;
@@ -598,16 +662,19 @@ button.ghost-sm:hover{border-color:var(--blue)}
       inspectorEl.appendChild(cRow);
       const cChk = cRow.querySelector('#inspConstruction');
       cChk.checked = e.construction;
-      cChk.addEventListener('change', () => { e.construction = cChk.checked; render(); });
+      cChk.addEventListener('change', () => { pushUndo(); e.construction = cChk.checked; render(); });
     } else if (e.type === 'circle'){
       const fd = document.createElement('div'); fd.className = 'field';
       fd.innerHTML = `<label for="inspD">直径 (mm)</label><input type="number" id="inspD" min="0.1" step="0.5">`;
       inspectorEl.appendChild(fd);
       const di = fd.querySelector('#inspD');
       di.value = trimNum(e.r * 2);
+      let dEditStarted = false;
+      di.addEventListener('focus', () => { dEditStarted = false; });
       di.addEventListener('input', () => {
         const v = parseFloat(di.value);
         if (!(v > 0)) return;
+        if (!dEditStarted){ pushUndo(); dEditStarted = true; }
         e.r = v / 2;
         solveAll(); render();
       });
@@ -616,7 +683,7 @@ button.ghost-sm:hover{border-color:var(--blue)}
       inspectorEl.appendChild(cRow);
       const cChk = cRow.querySelector('#inspConstruction');
       cChk.checked = e.construction;
-      cChk.addEventListener('change', () => { e.construction = cChk.checked; render(); });
+      cChk.addEventListener('change', () => { pushUndo(); e.construction = cChk.checked; render(); });
     }
 
     const refs = constraintsFor(e.id);
@@ -645,12 +712,15 @@ button.ghost-sm:hover{border-color:var(--blue)}
   function deleteConstraint(id){
     const idx = constraints.findIndex(c => c.id === id);
     if (idx === -1) return;
+    pushUndo();
     constraints.splice(idx, 1);
     solveAll(); render(); renderInspector(); updateCommandAvailability();
     setStatus('拘束を解除しました。');
   }
 
   function deleteEntities(ids){
+    if (!ids.length) return;
+    pushUndo();
     const idSet = new Set(ids);
     let changed = true;
     while (changed){
@@ -786,9 +856,11 @@ button.ghost-sm:hover{border-color:var(--blue)}
   }
 
   function addConstraintCmd(type, value){
+    const snap = snapshotState(); // 失敗時にundo履歴を汚さないよう、成功してからコミットする
     const c = { id: nextConstraintId++, type, refs: [...selectedIds], value };
     constraints.push(c);
     if (!solveAll()){ constraints.pop(); render(); renderInspector(); updateCommandAvailability(); refreshHint(); return; }
+    commitUndoSnapshot(snap);
     render(); renderInspector(); updateCommandAvailability(); refreshHint();
     setStatus(`拘束「${CONSTRAINT_LABELS[type]}」を追加しました。`);
   }
@@ -796,6 +868,7 @@ button.ghost-sm:hover{border-color:var(--blue)}
   function applyFixedToggle(){
     const sel = selKinds();
     if (!sel.length){ updateCommandAvailability(); refreshHint(); return; }
+    pushUndo();
     const pts = new Set();
     for (const e of sel){
       if (e.type === 'point') pts.add(e.id);
@@ -812,6 +885,7 @@ button.ghost-sm:hover{border-color:var(--blue)}
   function applyConstructionToggle(){
     const sel = selKinds().filter(e => e.type !== 'point');
     if (!sel.length){ updateCommandAvailability(); refreshHint(); return; }
+    pushUndo();
     const allConstruction = sel.every(e => e.construction);
     for (const e of sel) e.construction = !allConstruction;
     render(); updateCommandAvailability(); refreshHint();
@@ -912,6 +986,7 @@ button.ghost-sm:hover{border-color:var(--blue)}
         render(); renderInspector(); updateCommandAvailability();
         const sole = !e.shiftKey && selectedIds.length === 1 && selectedIds[0] === hit.id;
         if (sole && hit.type === 'point' && !hit.fixed){
+          pushUndo(); // ドラッグ開始時点を1つの操作としてまとめて記録(移動のたびには記録しない)
           dragState = { kind: 'point', id: hit.id };
           canvasWrap.setPointerCapture(e.pointerId);
         } else if (sole && hit.type === 'point' && hit.fixed){
@@ -929,6 +1004,7 @@ button.ghost-sm:hover{border-color:var(--blue)}
 
     if (activeTool === 'point'){
       if (hitTest(mp.x, mp.y)) return;
+      pushUndo();
       const p = addPoint(mp.x, mp.y);
       selectedIds = [p.id];
       solveAll(); render(); renderInspector(); updateCommandAvailability();
@@ -938,6 +1014,10 @@ button.ghost-sm:hover{border-color:var(--blue)}
 
     if (activeTool === 'line'){
       const existing = findNearbyPoint(mp.x, mp.y);
+      if (drawState && existing && existing.id === drawState.firstId){ drawState = null; return; }
+      // 新しい点の作成(1クリック目)、または線分の確定(2クリック目、どちらにせよ必ず変更を伴う)の
+      // 直前でまとめて1回だけ記録し、1クリック=1回のundoになるようにする
+      if (!existing || drawState) pushUndo();
       const pt = existing || addPoint(mp.x, mp.y);
       if (!drawState){
         drawState = { kind: 'line', firstId: pt.id };
@@ -945,7 +1025,6 @@ button.ghost-sm:hover{border-color:var(--blue)}
         render(); renderInspector();
         setStatus('次の点をクリックして線分を確定してください。');
       } else {
-        if (pt.id === drawState.firstId){ drawState = null; return; }
         const line = { id: nextEntityId++, type: 'line', p1: drawState.firstId, p2: pt.id, construction: false };
         entities.push(line);
         selectedIds = [line.id];
@@ -959,12 +1038,14 @@ button.ghost-sm:hover{border-color:var(--blue)}
     if (activeTool === 'circle'){
       if (!drawState){
         const existing = findNearbyPoint(mp.x, mp.y);
+        if (!existing) pushUndo();
         const pt = existing || addPoint(mp.x, mp.y);
         drawState = { kind: 'circle', centerId: pt.id };
         selectedIds = [pt.id];
         render(); renderInspector();
         setStatus('半径を決める位置をクリックしてください。');
       } else {
+        pushUndo();
         const center = entityById(drawState.centerId);
         const r = Math.hypot(mp.x - center.x, mp.y - center.y) || 1;
         const circle = { id: nextEntityId++, type: 'circle', center: drawState.centerId, r, construction: false };
@@ -1016,6 +1097,7 @@ button.ghost-sm:hover{border-color:var(--blue)}
   $('clearAllBtn').addEventListener('click', () => {
     if (!entities.length) return;
     if (!confirm('すべての図形を消去します。よろしいですか?')) return;
+    pushUndo();
     entities.length = 0; constraints.length = 0; selectedIds = [];
     nextEntityId = 1; nextConstraintId = 1; drawState = null;
     render(); renderInspector(); updateCommandAvailability();
@@ -1025,10 +1107,19 @@ button.ghost-sm:hover{border-color:var(--blue)}
   $('showGrid').addEventListener('change', render);
 
   window.addEventListener('keydown', e => {
+    const inInput = document.activeElement && document.activeElement.tagName === 'INPUT';
+    if (!inInput && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z'){
+      e.preventDefault();
+      if (e.shiftKey) redo(); else undo();
+      return;
+    }
+    if (!inInput && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y'){
+      e.preventDefault(); redo(); return;
+    }
     if (e.key === 'Escape'){
       selectedIds = []; setTool('select'); render(); renderInspector(); updateCommandAvailability();
     }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length && document.activeElement.tagName !== 'INPUT'){
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length && !inInput){
       e.preventDefault();
       deleteEntities([...selectedIds]);
     }
@@ -1039,6 +1130,7 @@ button.ghost-sm:hover{border-color:var(--blue)}
   resetView();
   render();
   updateCommandAvailability();
+  updateUndoRedoAvailability();
 
   slvsReadyPromise.then(() => {
     updateCommandAvailability();
