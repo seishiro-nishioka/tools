@@ -1,0 +1,12 @@
+このフォルダ(cad2d/)は、SolveSpace( https://github.com/solvespace/solvespace )の
+幾何拘束ソルバーをWebAssembly化した公式配布物 slvs.js(npmパッケージ "slvs")を
+同梱しています。slvs.js は GNU General Public License v3 (GPL-3.0) で配布されています。
+
+GPL-3.0の条件に従い、このフォルダ内のコード(index.html に含まれる本ツール独自の
+JavaScript/HTML/CSSを含む)は全体として GPL-3.0-or-later のもとで配布します。
+
+slvs.js 自体のソースコードおよびライセンス全文は次を参照してください:
+https://github.com/solvespace/solvespace/blob/master/COPYING.txt
+
+このライセンスは cad2d/ フォルダ内に限ります。このリポジトリ内の他のツール
+(他のサブディレクトリ)には適用されません。

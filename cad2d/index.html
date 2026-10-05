@@ -177,8 +177,9 @@ button.ghost-sm:hover{border-color:var(--blue)}
   </section>
 </main>
 
-<p id="status">円を描くツールでクリックすると円を配置できます。</p>
+<p id="status">計算エンジンを読み込み中…</p>
 
+<script src="slvs.js"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -197,37 +198,70 @@ button.ghost-sm:hover{border-color:var(--blue)}
 
   const circleById = id => circles.find(c => c.id === id);
 
-  // ---------- 幾何計算(単体テスト済みのロジックをそのまま使用) ----------
-  const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
-  const add = (a, b) => ({ x: a.x + b.x, y: a.y + b.y });
-  const scl = (a, s) => ({ x: a.x * s, y: a.y * s });
-  const len = a => Math.hypot(a.x, a.y);
-  const norm = a => { const l = len(a); return l < 1e-9 ? { x: 1, y: 0 } : { x: a.x / l, y: a.y / l }; };
+  // ---------- 幾何計算: SolveSpace本家の拘束ソルバー(libslvs、WebAssembly版)を使用 ----------
+  // https://github.com/solvespace/solvespace (npm: slvs, GPL-3.0) を直接呼び出す。
+  // 持続的な1つのスケッチを編集し続けるのではなく、再計算のたびに「対象の円(動かさない・dragged)+
+  // 新しい円(位置だけ未知数)」という最小のスケッチを都度組み立てて1回だけ解く方式にしている。
+  // これにより、このツール側のデータモデル(円の配列・UI・描画)は従来のまま保てる。
+  //
+  // 重要な既知の制約: slvsの tangent() ヘルパーは円弧(Arc)専用で、完全な円(Circle)同士には使えない
+  // (ソース上 Arc-Line / Cubic-Line / Arc・Cubicが端点を共有する場合のみ対応)。
+  // 円と円の外接は「中心点どうしの距離 = 半径の和」という点-点距離拘束と数学的に同値なので、
+  // 実機検証のうえ distance() 拘束で表現している。
+  let slvs = null;
+  const slvsReadyPromise = (typeof solvespace === 'function')
+    ? solvespace().then(m => { slvs = m; })
+    : Promise.reject(new Error('slvs.js が読み込まれていません'));
+
+  function withSketch(fn){
+    slvs.clearSketch();
+    const g = 1;
+    const normal = slvs.addNormal3D(g, 1, 0, 0, 0); // 標準XY平面(単位クォータニオン)
+    const origin = slvs.addPoint3D(g, 0, 0, 0);
+    const wp = slvs.addWorkplane(g, origin, normal);
+    return fn(g, wp, normal);
+  }
+  function fixedCircle(g, wp, normal, center, r){
+    const pt = slvs.addPoint2D(g, center.x, center.y, wp);
+    slvs.dragged(g, pt, wp); // 位置を固定(動かさない基準として使う)
+    slvs.addCircle(g, normal, pt, slvs.addDistance(g, r, wp), wp);
+    return pt;
+  }
+  function freeCircleCenter(g, wp, normal, hint, r){
+    const pt = slvs.addPoint2D(g, hint.x, hint.y, wp);
+    slvs.addCircle(g, normal, pt, slvs.addDistance(g, r, wp), wp);
+    return pt;
+  }
+  function readPoint(pt){
+    return { x: slvs.getParamValue(pt.param[0]), y: slvs.getParamValue(pt.param[1]) };
+  }
 
   function tangentToOne(target, r, hint) {
-    const dir = norm(sub(hint, target.center));
-    return add(target.center, scl(dir, target.r + r));
+    return withSketch((g, wp, normal) => {
+      const ptA = fixedCircle(g, wp, normal, target.center, target.r);
+      const ptB = freeCircleCenter(g, wp, normal, hint, r);
+      slvs.distance(g, ptA, ptB, target.r + r, wp);
+      const result = slvs.solveSketch(g, true);
+      return result.result === 0 ? readPoint(ptB) : null;
+    });
   }
   function tangentToTwo(a, b, r, hint) {
-    const R1 = a.r + r, R2 = b.r + r;
-    const d = len(sub(b.center, a.center));
-    if (d < 1e-9) return null;
-    if (d > R1 + R2 + 1e-6) return null;
-    if (d < Math.abs(R1 - R2) - 1e-6) return null;
-    const aDist = (d * d + R1 * R1 - R2 * R2) / (2 * d);
-    const h2 = R1 * R1 - aDist * aDist;
-    const h = Math.sqrt(Math.max(0, h2));
-    const dirAB = norm(sub(b.center, a.center));
-    const foot = add(a.center, scl(dirAB, aDist));
-    const perp = { x: -dirAB.y, y: dirAB.x };
-    const c1 = add(foot, scl(perp, h));
-    const c2 = add(foot, scl(perp, -h));
-    return len(sub(c1, hint)) <= len(sub(c2, hint)) ? c1 : c2;
+    return withSketch((g, wp, normal) => {
+      const ptA = fixedCircle(g, wp, normal, a.center, a.r);
+      const ptB = fixedCircle(g, wp, normal, b.center, b.r);
+      const ptC = freeCircleCenter(g, wp, normal, hint, r);
+      slvs.distance(g, ptA, ptC, a.r + r, wp);
+      slvs.distance(g, ptB, ptC, b.r + r, wp);
+      const result = slvs.solveSketch(g, true);
+      return result.result === 0 ? readPoint(ptC) : null;
+    });
   }
 
   // 作成順(=依存先が必ず先に来る順)に1パスで再計算する。
-  // 汎用の反復ソルバーは使わず、拘束ごとに閉じた式で直接位置を求める方針。
+  // 拘束の数式自体はslvsソルバーに解かせるが、依存グラフの解決順は単純な配列順に委ねている
+  // (このツールでは「後から作った円が、先に作った円を参照する」運用しかできないため、循環参照は起きない)。
   function resolveAll() {
+    if (!slvs) return; // エンジン読み込み前はスキップ(読み込み完了時に改めて呼ばれる)
     for (const c of circles) {
       if (!c.constraint) continue;
       const r = c.d / 2;
@@ -236,7 +270,8 @@ button.ghost-sm:hover{border-color:var(--blue)}
         const t = circleById(c.constraint.target);
         if (!t) { c.constraint = null; continue; }
         const p = tangentToOne({ center: { x: t.cx, y: t.cy }, r: t.d / 2 }, r, hint);
-        c.cx = p.x; c.cy = p.y;
+        if (p){ c.cx = p.x; c.cy = p.y; }
+        else setStatus('外接できませんでした。直径や配置を見直してください。', true);
       } else if (c.constraint.type === 'tangent2') {
         const [ta, tb] = c.constraint.targets.map(circleById);
         if (!ta || !tb) { c.constraint = null; continue; }
@@ -629,6 +664,18 @@ button.ghost-sm:hover{border-color:var(--blue)}
 
   resetView();
   render();
+
+  // 計算エンジン(slvs.js, WebAssembly)の読み込み完了まで、外接ツールは使用不可にしておく
+  toolButtons.tangent1.disabled = true;
+  toolButtons.tangent2.disabled = true;
+  slvsReadyPromise.then(() => {
+    toolButtons.tangent1.disabled = false;
+    toolButtons.tangent2.disabled = false;
+    setStatus('準備ができました。円を描くツールでクリックすると円を配置できます。');
+  }).catch(err => {
+    console.error('計算エンジンの読み込みに失敗しました:', err);
+    setStatus('計算エンジン(slvs.js)の読み込みに失敗しました。ページを再読み込みしてください。', true);
+  });
 })();
 </script>
 </body>
