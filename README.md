@@ -39,3 +39,4 @@ GitHub Pagesで公開(`main`ブランチのルートを配信)。
 | [zoom-pip](zoom-pip/) | 動画の一部を枠で囲み、拡大映像をピクチャインピクチャで重ねて書き出すツール |
 | [pdf-split-merge](pdf-split-merge/) | PDFをページ単位に分解して並べ替え、PDF/PNG/JPGとして書き出すツール |
 | [serial-monitor](serial-monitor/) | マイコンなどのシリアルポートをポート/ボーレート指定で読み書きするツール(Web Serial API) |
+| [cad2d](cad2d/) | 円を描いて他の円に外接する拘束をかけながら配置する、直径指定つきの簡易2D CAD |

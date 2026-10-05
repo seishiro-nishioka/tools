@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>簡易2D CAD(円の外接配置)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EEF1F4; --panel:#FFFFFF; --ink:#1B2733; --sub:#5A6878; --line:#CBD4DE;
+  --red:#E0301E; --blue:#2B5C8A; --blue-ink:#FFFFFF;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141A21; --panel:#1C242D; --ink:#E6ECF2; --sub:#9AA8B6; --line:#33404D;
+    --red:#FF5040; --blue:#5B93C9; --blue-ink:#0E1620;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#141A21; --panel:#1C242D; --ink:#E6ECF2; --sub:#9AA8B6; --line:#33404D;
+  --red:#FF5040; --blue:#5B93C9; --blue-ink:#0E1620;
+}
+*,*::before,*::after{box-sizing:inherit}
+html,body{height:100%}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  font-size:14.5px; line-height:1.5;
+  display:flex; flex-direction:column; height:100vh;
+}
+header{
+  display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; flex:none;
+  padding:12px 18px 6px;
+}
+h1{
+  margin:0; font-size:19px; font-weight:700; letter-spacing:.02em;
+  display:flex; align-items:center; gap:8px;
+}
+h1 .mark{
+  width:18px; height:14px; border:2.5px solid var(--red); position:relative; display:inline-block; flex:none;
+}
+h1 .mark::after{
+  content:""; position:absolute; right:-10px; top:-8px; width:10px; height:8px;
+  border:2px solid var(--red); background:var(--bg);
+}
+header p{margin:0; color:var(--sub); font-size:12.5px}
+
+main{
+  display:grid; grid-template-columns:200px minmax(0,1fr) 240px; gap:1px;
+  background:var(--line); flex:1; min-height:0; overflow:hidden;
+}
+.panel{background:var(--panel); min-height:0; display:flex; flex-direction:column}
+.panel-pad{padding:12px; display:flex; flex-direction:column; gap:10px; overflow:auto}
+
+.tool-group{display:flex; flex-direction:column; gap:4px}
+.tool-group-label{font-size:11px; color:var(--sub); font-weight:700; letter-spacing:.03em; margin:4px 0 0}
+.tool-btn{
+  display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+  font:inherit; font-size:13.5px; padding:8px 10px; border-radius:6px;
+  border:1px solid transparent; background:transparent; color:var(--ink); cursor:pointer;
+}
+.tool-btn .ico{flex:none; width:18px; text-align:center}
+.tool-btn:hover{background:var(--bg)}
+.tool-btn[aria-pressed="true"]{background:var(--blue); color:var(--blue-ink); font-weight:700}
+.field{display:flex; flex-direction:column; gap:3px}
+.field label{font-size:11.5px; color:var(--sub)}
+.field input[type="number"]{
+  font:inherit; font-size:13.5px; padding:6px 8px; border-radius:5px; border:1px solid var(--line);
+  background:var(--panel); color:var(--ink); width:100%;
+}
+.check-row{display:flex; align-items:center; gap:7px; font-size:13px}
+.check-row input{width:15px; height:15px}
+hr.sep{border:0; border-top:1px solid var(--line); margin:4px 0}
+
+.canvas-wrap{position:relative; overflow:hidden; background:var(--bg); cursor:default}
+.canvas-wrap.pan-mode{cursor:grab}
+.canvas-wrap.panning{cursor:grabbing}
+.canvas-wrap.draw-mode, .canvas-wrap.tangent-mode{cursor:crosshair}
+svg.stage{display:block; width:100%; height:100%; touch-action:none}
+.zoom-controls{
+  position:absolute; right:10px; bottom:10px; display:flex; flex-direction:column; gap:4px; z-index:2;
+}
+.zoom-controls button{
+  width:30px; height:30px; border-radius:6px; border:1px solid var(--line); background:var(--panel);
+  color:var(--ink); font-size:16px; cursor:pointer; line-height:1;
+}
+.zoom-controls button:hover{border-color:var(--blue)}
+.hint-banner{
+  position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:2;
+  background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:5px 12px;
+  font-size:12.5px; color:var(--sub); white-space:nowrap; pointer-events:none; display:none;
+}
+
+.inspector-empty{color:var(--sub); font-size:13px; padding:4px 2px}
+.inspector-title{font-size:13.5px; font-weight:700; display:flex; align-items:center; gap:6px}
+.constraint-badge{
+  font-size:12px; color:var(--sub); background:var(--bg); border:1px solid var(--line);
+  border-radius:5px; padding:6px 8px; line-height:1.5;
+}
+.readout{font-size:12px; color:var(--sub)}
+.readout b{color:var(--ink); font-variant-numeric:tabular-nums}
+
+button.danger{
+  font:inherit; font-size:13px; padding:7px 10px; border-radius:5px; border:1px solid var(--line);
+  background:var(--panel); color:var(--red); cursor:pointer;
+}
+button.danger:hover{border-color:var(--red); background:color-mix(in srgb, var(--red) 8%, transparent)}
+button.ghost-sm{
+  font:inherit; font-size:12.5px; padding:5px 8px; border-radius:5px; border:1px solid var(--line);
+  background:var(--panel); color:var(--ink); cursor:pointer;
+}
+button.ghost-sm:hover{border-color:var(--blue)}
+
+#status{
+  flex:none; padding:6px 14px; font-size:12.5px; color:var(--sub); min-height:1.6em;
+  background:var(--panel); border-top:1px solid var(--line);
+}
+#status.error{color:var(--red)}
+.sr{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="mark" aria-hidden="true"></span>簡易2D CAD</h1>
+  <p>円を描いて、他の円に外接する拘束をかけながら配置するツールです。データは端末内で完結し、どこにも送信されません。</p>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="panel-pad">
+      <div class="tool-group">
+        <p class="tool-group-label">ツール</p>
+        <button type="button" class="tool-btn" id="toolSelect" aria-pressed="true"><span class="ico">⇖</span>選択・移動</button>
+        <button type="button" class="tool-btn" id="toolDraw" aria-pressed="false"><span class="ico">◯</span>円を描く</button>
+        <button type="button" class="tool-btn" id="toolTangent1" aria-pressed="false"><span class="ico">⊙</span>外接(1円に)</button>
+        <button type="button" class="tool-btn" id="toolTangent2" aria-pressed="false"><span class="ico">⊚</span>外接(2円に)</button>
+        <button type="button" class="tool-btn" id="toolConstruction" aria-pressed="false"><span class="ico">┄</span>構築線切替</button>
+        <button type="button" class="tool-btn" id="toolDelete" aria-pressed="false"><span class="ico">×</span>削除</button>
+      </div>
+      <hr class="sep">
+      <div class="field">
+        <label for="newDiameter">新しく描く円の直径(mm)</label>
+        <input type="number" id="newDiameter" value="20" min="0.1" step="0.5">
+      </div>
+      <hr class="sep">
+      <div class="tool-group">
+        <p class="tool-group-label">表示</p>
+        <label class="check-row"><input type="checkbox" id="showDims" checked>直径を表示</label>
+        <label class="check-row"><input type="checkbox" id="showGrid" checked>グリッドを表示</label>
+      </div>
+      <hr class="sep">
+      <button type="button" class="ghost-sm" id="fitViewBtn">全体表示</button>
+      <button type="button" class="danger" id="clearAllBtn">すべて消去</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="canvas-wrap" id="canvasWrap">
+      <svg class="stage" id="stage"></svg>
+      <p class="hint-banner" id="hintBanner"></p>
+      <div class="zoom-controls">
+        <button type="button" id="zoomInBtn" aria-label="拡大">+</button>
+        <button type="button" id="zoomOutBtn" aria-label="縮小">−</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-pad" id="inspector">
+      <p class="inspector-empty">円をクリックすると詳細がここに表示されます。</p>
+    </div>
+  </section>
+</main>
+
+<p id="status">円を描くツールでクリックすると円を配置できます。</p>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+
+  // ---------- データモデル ----------
+  // circle: { id, cx, cy(mm, 数学座標でY上向き), d(直径mm), construction(bool), constraint(null|{type:'tangent1',target}|{type:'tangent2',targets:[a,b]}) }
+  const circles = [];
+  let nextId = 1;
+  let selectedId = null;
+
+  const statusEl = $('status');
+  const setStatus = (msg, isError = false) => {
+    statusEl.textContent = msg;
+    statusEl.classList.toggle('error', !!isError);
+  };
+
+  const circleById = id => circles.find(c => c.id === id);
+
+  // ---------- 幾何計算(単体テスト済みのロジックをそのまま使用) ----------
+  const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
+  const add = (a, b) => ({ x: a.x + b.x, y: a.y + b.y });
+  const scl = (a, s) => ({ x: a.x * s, y: a.y * s });
+  const len = a => Math.hypot(a.x, a.y);
+  const norm = a => { const l = len(a); return l < 1e-9 ? { x: 1, y: 0 } : { x: a.x / l, y: a.y / l }; };
+
+  function tangentToOne(target, r, hint) {
+    const dir = norm(sub(hint, target.center));
+    return add(target.center, scl(dir, target.r + r));
+  }
+  function tangentToTwo(a, b, r, hint) {
+    const R1 = a.r + r, R2 = b.r + r;
+    const d = len(sub(b.center, a.center));
+    if (d < 1e-9) return null;
+    if (d > R1 + R2 + 1e-6) return null;
+    if (d < Math.abs(R1 - R2) - 1e-6) return null;
+    const aDist = (d * d + R1 * R1 - R2 * R2) / (2 * d);
+    const h2 = R1 * R1 - aDist * aDist;
+    const h = Math.sqrt(Math.max(0, h2));
+    const dirAB = norm(sub(b.center, a.center));
+    const foot = add(a.center, scl(dirAB, aDist));
+    const perp = { x: -dirAB.y, y: dirAB.x };
+    const c1 = add(foot, scl(perp, h));
+    const c2 = add(foot, scl(perp, -h));
+    return len(sub(c1, hint)) <= len(sub(c2, hint)) ? c1 : c2;
+  }
+
+  // 作成順(=依存先が必ず先に来る順)に1パスで再計算する。
+  // 汎用の反復ソルバーは使わず、拘束ごとに閉じた式で直接位置を求める方針。
+  function resolveAll() {
+    for (const c of circles) {
+      if (!c.constraint) continue;
+      const r = c.d / 2;
+      const hint = { x: c.cx, y: c.cy }; // 直前の位置を手がかりに同じ側の解を維持する
+      if (c.constraint.type === 'tangent1') {
+        const t = circleById(c.constraint.target);
+        if (!t) { c.constraint = null; continue; }
+        const p = tangentToOne({ center: { x: t.cx, y: t.cy }, r: t.d / 2 }, r, hint);
+        c.cx = p.x; c.cy = p.y;
+      } else if (c.constraint.type === 'tangent2') {
+        const [ta, tb] = c.constraint.targets.map(circleById);
+        if (!ta || !tb) { c.constraint = null; continue; }
+        const p = tangentToTwo(
+          { center: { x: ta.cx, y: ta.cy }, r: ta.d / 2 },
+          { center: { x: tb.cx, y: tb.cy }, r: tb.d / 2 },
+          r, hint
+        );
+        if (p){ c.cx = p.x; c.cy = p.y; }
+        else setStatus('外接できませんでした(円どうしが離れすぎている、または内包関係です)。直径や配置を見直してください。', true);
+      }
+    }
+  }
+
+  function constraintLabel(c){
+    if (!c.constraint) return 'なし(自由配置)';
+    if (c.constraint.type === 'tangent1') return `円#${c.constraint.target} に外接`;
+    if (c.constraint.type === 'tangent2') return `円#${c.constraint.targets[0]}・円#${c.constraint.targets[1]} に外接`;
+    return '';
+  }
+
+  // ---------- ビュー変換(mm ⇔ 画面px、Y上向き) ----------
+  const stage = $('stage');
+  const canvasWrap = $('canvasWrap');
+  let scale = 4; // px/mm
+  let panX = 0, panY = 0; // 画面px、モデル原点(0,0)の画面上位置
+  function resetView(){
+    const rect = canvasWrap.getBoundingClientRect();
+    panX = rect.width / 2; panY = rect.height / 2; scale = 4;
+  }
+  function toScreen(mx, my){ return { x: panX + mx * scale, y: panY - my * scale }; }
+  function toModel(sx, sy){ return { x: (sx - panX) / scale, y: -(sy - panY) / scale }; }
+  function svgPointFromEvent(e){
+    const rect = stage.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  function fitView(){
+    const rect = canvasWrap.getBoundingClientRect();
+    if (!circles.length){ resetView(); render(); return; }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const c of circles){
+      const r = c.d / 2;
+      minX = Math.min(minX, c.cx - r); maxX = Math.max(maxX, c.cx + r);
+      minY = Math.min(minY, c.cy - r); maxY = Math.max(maxY, c.cy + r);
+    }
+    const w = Math.max(1, maxX - minX), h = Math.max(1, maxY - minY);
+    const pad = 1.2;
+    scale = Math.min((rect.width / w) / pad, (rect.height / h) / pad);
+    scale = Math.min(Math.max(scale, 0.2), 200);
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    panX = rect.width / 2 - cx * scale;
+    panY = rect.height / 2 + cy * scale;
+    render();
+  }
+
+  // ---------- 描画 ----------
+  const NS = 'http://www.w3.org/2000/svg';
+  function el(tag, attrs){
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  function render(){
+    stage.innerHTML = '';
+    const rect = canvasWrap.getBoundingClientRect();
+    stage.setAttribute('width', rect.width);
+    stage.setAttribute('height', rect.height);
+
+    if ($('showGrid').checked) renderGrid(rect);
+
+    for (const c of circles){
+      const p = toScreen(c.cx, c.cy);
+      const rpx = (c.d / 2) * scale;
+      const isSelected = c.id === selectedId;
+      const circleEl = el('circle', {
+        cx: p.x, cy: p.y, r: Math.max(0.5, rpx),
+        fill: 'none',
+        stroke: isSelected ? 'var(--red)' : (c.constraint ? 'var(--blue)' : 'var(--ink)'),
+        'stroke-width': isSelected ? 2.5 : 1.6,
+        'stroke-dasharray': c.construction ? '5,4' : 'none',
+        'data-id': c.id,
+      });
+      circleEl.style.cursor = 'pointer';
+      stage.appendChild(circleEl);
+
+      // 中心点マーク
+      stage.appendChild(el('circle', { cx: p.x, cy: p.y, r: 1.6, fill: 'var(--sub)', 'pointer-events': 'none' }));
+
+      if ($('showDims').checked){
+        const label = el('text', {
+          x: p.x, y: p.y - rpx - 8,
+          'text-anchor': 'middle', 'font-size': 11.5, fill: 'var(--sub)',
+          'pointer-events': 'none', style: 'font-family:inherit',
+        });
+        label.textContent = `⌀${trimNum(c.d)}`;
+        stage.appendChild(label);
+      }
+    }
+  }
+
+  function trimNum(n){
+    return Math.round(n * 1000) / 1000;
+  }
+
+  function renderGrid(rect){
+    const stepMm = pickGridStep();
+    const topLeft = toModel(0, 0), bottomRight = toModel(rect.width, rect.height);
+    const minX = Math.floor(Math.min(topLeft.x, bottomRight.x) / stepMm) * stepMm;
+    const maxX = Math.ceil(Math.max(topLeft.x, bottomRight.x) / stepMm) * stepMm;
+    const minY = Math.floor(Math.min(topLeft.y, bottomRight.y) / stepMm) * stepMm;
+    const maxY = Math.ceil(Math.max(topLeft.y, bottomRight.y) / stepMm) * stepMm;
+    const g = el('g', {});
+    for (let x = minX; x <= maxX; x += stepMm){
+      const isAxis = Math.abs(x) < 1e-6;
+      const p1 = toScreen(x, minY), p2 = toScreen(x, maxY);
+      g.appendChild(el('line', { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, stroke: isAxis ? 'var(--sub)' : 'var(--line)', 'stroke-width': isAxis ? 1.2 : 0.7 }));
+    }
+    for (let y = minY; y <= maxY; y += stepMm){
+      const isAxis = Math.abs(y) < 1e-6;
+      const p1 = toScreen(minX, y), p2 = toScreen(maxX, y);
+      g.appendChild(el('line', { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, stroke: isAxis ? 'var(--sub)' : 'var(--line)', 'stroke-width': isAxis ? 1.2 : 0.7 }));
+    }
+    stage.appendChild(g);
+  }
+  function pickGridStep(){
+    // 画面上で約40px間隔になるmm刻みを 1/2/5/10... の中から選ぶ
+    const targetMm = 40 / scale;
+    const pow = Math.pow(10, Math.floor(Math.log10(targetMm)));
+    for (const m of [1, 2, 5, 10]){
+      if (m * pow >= targetMm) return m * pow;
+    }
+    return 10 * pow;
+  }
+
+  // ---------- インスペクタ ----------
+  const inspectorEl = $('inspector');
+  function renderInspector(){
+    const c = circleById(selectedId);
+    if (!c){
+      inspectorEl.innerHTML = '<p class="inspector-empty">円をクリックすると詳細がここに表示されます。</p>';
+      return;
+    }
+    inspectorEl.innerHTML = '';
+    const title = document.createElement('p');
+    title.className = 'inspector-title';
+    title.textContent = `円 #${c.id}`;
+    inspectorEl.appendChild(title);
+
+    const dField = document.createElement('div');
+    dField.className = 'field';
+    dField.innerHTML = `<label for="inspDiameter">直径(mm)</label><input type="number" id="inspDiameter" min="0.1" step="0.5">`;
+    inspectorEl.appendChild(dField);
+    const dInput = dField.querySelector('#inspDiameter');
+    dInput.value = trimNum(c.d);
+    dInput.addEventListener('input', () => {
+      const v = parseFloat(dInput.value);
+      if (!(v > 0)) return;
+      c.d = v;
+      resolveAll();
+      render();
+    });
+
+    const cons = document.createElement('div');
+    cons.className = 'constraint-badge';
+    cons.textContent = `拘束: ${constraintLabel(c)}`;
+    inspectorEl.appendChild(cons);
+
+    if (c.constraint){
+      const freeBtn = document.createElement('button');
+      freeBtn.className = 'ghost-sm';
+      freeBtn.textContent = '拘束を解除(自由配置にする)';
+      freeBtn.addEventListener('click', () => {
+        c.constraint = null;
+        renderInspector();
+        setStatus(`円#${c.id}の拘束を解除しました。`);
+      });
+      inspectorEl.appendChild(freeBtn);
+    }
+
+    const constructionRow = document.createElement('label');
+    constructionRow.className = 'check-row';
+    constructionRow.innerHTML = `<input type="checkbox" id="inspConstruction">構築線(補助円)にする`;
+    inspectorEl.appendChild(constructionRow);
+    const cChk = constructionRow.querySelector('#inspConstruction');
+    cChk.checked = c.construction;
+    cChk.addEventListener('change', () => { c.construction = cChk.checked; render(); });
+
+    const readout = document.createElement('p');
+    readout.className = 'readout';
+    readout.innerHTML = `中心: <b>X ${trimNum(c.cx)}</b> / <b>Y ${trimNum(c.cy)}</b> mm`;
+    inspectorEl.appendChild(readout);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'danger';
+    delBtn.textContent = 'この円を削除';
+    delBtn.addEventListener('click', () => deleteCircle(c.id));
+    inspectorEl.appendChild(delBtn);
+  }
+
+  function deleteCircle(id){
+    const idx = circles.findIndex(c => c.id === id);
+    if (idx === -1) return;
+    circles.splice(idx, 1);
+    let freed = 0;
+    for (const c of circles){
+      if (!c.constraint) continue;
+      const refs = c.constraint.type === 'tangent1' ? [c.constraint.target] : c.constraint.targets;
+      if (refs.includes(id)){ c.constraint = null; freed++; }
+    }
+    if (selectedId === id) selectedId = null;
+    if (freed) setStatus(`円#${id}を削除しました(それに外接していた${freed}個の円は自由配置に戻りました)。`);
+    else setStatus(`円#${id}を削除しました。`);
+    render(); renderInspector();
+  }
+
+  // ---------- ツール状態 ----------
+  let activeTool = 'select';
+  const toolButtons = { select: $('toolSelect'), draw: $('toolDraw'), tangent1: $('toolTangent1'), tangent2: $('toolTangent2'), construction: $('toolConstruction'), delete: $('toolDelete') };
+  let pendingPicks = []; // tangent1/tangent2操作中に選んだ円idを貯める
+
+  const hintBanner = $('hintBanner');
+  function setTool(name){
+    activeTool = name;
+    pendingPicks = [];
+    for (const key in toolButtons) toolButtons[key].setAttribute('aria-pressed', key === name ? 'true' : 'false');
+    canvasWrap.classList.toggle('draw-mode', name === 'draw');
+    canvasWrap.classList.toggle('tangent-mode', name === 'tangent1' || name === 'tangent2');
+    const hints = {
+      select: '',
+      draw: 'クリックした位置に新しい円を配置します。',
+      tangent1: '①外接させたい円をクリック → ②外接させる相手の円をクリック',
+      tangent2: '①外接させたい円をクリック → ②③外接させる相手の円を2つクリック',
+      construction: '構築線(補助円)にしたい円をクリックすると切り替わります。',
+      delete: '削除したい円をクリックしてください。',
+    };
+    hintBanner.textContent = hints[name] || '';
+    hintBanner.style.display = hints[name] ? 'block' : 'none';
+  }
+  for (const key in toolButtons) toolButtons[key].addEventListener('click', () => setTool(key));
+
+  // ---------- ポインタ操作 ----------
+  function hitTestCircle(mx, my){
+    // 画面px距離で判定(細い円でもクリックしやすいよう、円周から一定px以内 or 内部ならヒット)
+    const p = toScreen(mx, my);
+    let best = null, bestDist = Infinity;
+    for (const c of circles){
+      const cp = toScreen(c.cx, c.cy);
+      const rpx = (c.d / 2) * scale;
+      const dist = Math.hypot(p.x - cp.x, p.y - cp.y);
+      const edgeDist = Math.abs(dist - rpx);
+      if (dist <= rpx || edgeDist <= 8){
+        if (edgeDist < bestDist){ bestDist = edgeDist; best = c; }
+      }
+    }
+    return best;
+  }
+
+  let dragState = null; // {kind:'circle', id} | {kind:'pan', startPanX, startPanY, startSx, startSy}
+
+  canvasWrap.addEventListener('pointerdown', e => {
+    const sp = svgPointFromEvent(e);
+    const mp = toModel(sp.x, sp.y);
+    const hit = hitTestCircle(mp.x, mp.y);
+
+    if (activeTool === 'select'){
+      if (hit){
+        selectedId = hit.id;
+        render(); renderInspector();
+        if (!hit.constraint){
+          dragState = { kind: 'circle', id: hit.id };
+          canvasWrap.setPointerCapture(e.pointerId);
+        } else {
+          setStatus(`円#${hit.id}は拘束されているため直接ドラッグできません(拘束を解除すると動かせます)。`);
+        }
+      } else {
+        selectedId = null; render(); renderInspector();
+        dragState = { kind: 'pan', startPanX: panX, startPanY: panY, startSx: sp.x, startSy: sp.y };
+        canvasWrap.classList.add('panning');
+        canvasWrap.setPointerCapture(e.pointerId);
+      }
+      return;
+    }
+
+    if (activeTool === 'draw'){
+      if (hit) return; // 既存円の上では作らない
+      const d = parseFloat($('newDiameter').value) || 20;
+      const c = { id: nextId++, cx: mp.x, cy: mp.y, d, construction: false, constraint: null };
+      circles.push(c);
+      selectedId = c.id;
+      render(); renderInspector();
+      setStatus(`円#${c.id}(⌀${trimNum(d)}mm)を配置しました。`);
+      return;
+    }
+
+    if (activeTool === 'tangent1' || activeTool === 'tangent2'){
+      if (!hit) return;
+      pendingPicks.push(hit.id);
+      const need = activeTool === 'tangent1' ? 2 : 3;
+      if (pendingPicks.length < need){
+        setStatus(`円#${hit.id}を選択しました。あと${need - pendingPicks.length}個クリックしてください。`);
+        return;
+      }
+      const [selfId, ...targets] = pendingPicks;
+      pendingPicks = [];
+      const self = circleById(selfId);
+      if (!self){ return; }
+      if (targets.includes(selfId) || new Set(targets).size !== targets.length){
+        setStatus('同じ円を重複して選択しています。やり直してください。', true);
+        return;
+      }
+      self.constraint = activeTool === 'tangent1' ? { type: 'tangent1', target: targets[0] } : { type: 'tangent2', targets };
+      resolveAll();
+      selectedId = self.id;
+      render(); renderInspector();
+      setStatus(`円#${self.id}を ${constraintLabel(self)} にしました。`);
+      return;
+    }
+
+    if (activeTool === 'construction'){
+      if (!hit) return;
+      hit.construction = !hit.construction;
+      render();
+      setStatus(`円#${hit.id}を${hit.construction ? '構築線に設定しました。' : '通常の円に戻しました。'}`);
+      return;
+    }
+
+    if (activeTool === 'delete'){
+      if (!hit) return;
+      deleteCircle(hit.id);
+      return;
+    }
+  });
+
+  canvasWrap.addEventListener('pointermove', e => {
+    if (!dragState) return;
+    const sp = svgPointFromEvent(e);
+    if (dragState.kind === 'circle'){
+      const mp = toModel(sp.x, sp.y);
+      const c = circleById(dragState.id);
+      if (c){ c.cx = mp.x; c.cy = mp.y; resolveAll(); render(); renderInspector(); }
+    } else if (dragState.kind === 'pan'){
+      panX = dragState.startPanX + (sp.x - dragState.startSx);
+      panY = dragState.startPanY + (sp.y - dragState.startSy);
+      render();
+    }
+  });
+  function endDrag(e){
+    if (dragState && dragState.kind === 'pan') canvasWrap.classList.remove('panning');
+    dragState = null;
+  }
+  canvasWrap.addEventListener('pointerup', endDrag);
+  canvasWrap.addEventListener('pointercancel', endDrag);
+
+  canvasWrap.addEventListener('wheel', e => {
+    e.preventDefault();
+    const sp = svgPointFromEvent(e);
+    const before = toModel(sp.x, sp.y);
+    const factor = Math.exp(-e.deltaY * 0.001);
+    scale = Math.min(Math.max(scale * factor, 0.2), 200);
+    const after = toModel(sp.x, sp.y);
+    panX += (after.x - before.x) * scale;
+    panY -= (after.y - before.y) * scale;
+    render();
+  }, { passive: false });
+
+  $('zoomInBtn').addEventListener('click', () => { scale = Math.min(scale * 1.3, 200); render(); });
+  $('zoomOutBtn').addEventListener('click', () => { scale = Math.max(scale / 1.3, 0.2); render(); });
+  $('fitViewBtn').addEventListener('click', fitView);
+  $('clearAllBtn').addEventListener('click', () => {
+    if (!circles.length) return;
+    if (!confirm('すべての円を消去します。よろしいですか?')) return;
+    circles.length = 0; selectedId = null; nextId = 1;
+    render(); renderInspector();
+    setStatus('すべての円を消去しました。');
+  });
+  $('showDims').addEventListener('change', render);
+  $('showGrid').addEventListener('change', render);
+
+  window.addEventListener('keydown', e => {
+    if (e.key === 'Escape'){ pendingPicks = []; setTool('select'); }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId !== null && document.activeElement.tagName !== 'INPUT'){
+      e.preventDefault();
+      deleteCircle(selectedId);
+    }
+  });
+
+  window.addEventListener('resize', () => render());
+
+  resetView();
+  render();
+})();
+</script>
+</body>
+</html>
