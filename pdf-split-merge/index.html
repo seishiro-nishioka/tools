@@ -39,6 +39,7 @@ header{
 .header-row{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
 .header-row h1{flex:1; min-width:0}
 .header-action{margin-left:auto; font-size:13px; white-space:nowrap}
+.header-action2{font-size:13px; white-space:nowrap}
 h1{
   margin:0; font-size:22px; font-weight:700; letter-spacing:.02em;
   display:flex; align-items:center; gap:10px;
@@ -296,7 +297,8 @@ button:disabled{opacity:.45; cursor:not-allowed}
   <div class="header-row">
     <h1><span class="mark" aria-hidden="true"></span>PDF分割・結合ツール</h1>
     <button id="securityInfoBtn" class="ghost-btn header-action">🔒 安全性について</button>
-    <button id="downloadToolBtn" class="ghost-btn header-action">⬇ ツールをダウンロード</button>
+    <button id="licenseInfoBtn" class="ghost-btn header-action2">📄 ライセンスについて</button>
+    <button id="downloadToolBtn" class="ghost-btn header-action2">⬇ ツールをダウンロード</button>
   </div>
   <p>PDFをページ単位に分解して並べ替え、PDF・PNG・JPGとして書き出します。ファイルはサーバーに送信されず、処理はすべてお使いの端末のブラウザ内で行われます。</p>
 </header>
@@ -467,6 +469,39 @@ button:disabled{opacity:.45; cursor:not-allowed}
 
     <div class="modal-actions">
       <button type="button" id="securityInfoCloseBtn" class="primary">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="licenseModalBackdrop" style="display:none">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="licenseModalTitle">
+    <h3 id="licenseModalTitle">📄 使用ライブラリのライセンスについて</h3>
+    <p class="modal-hint">このツールは次の3つのオープンソースライブラリを読み込んで動作しています。いずれも寛容なライセンス(MIT / Apache License 2.0)で、<b>個人利用・商用利用(会社での利用)とも、追加の許諾や費用なしに利用できます</b>(著作権表示・ライセンス文の保持以外に条件はありません)。</p>
+
+    <div class="security-section">
+      <h4>pdf.js(Mozilla) — Apache License 2.0</h4>
+      <p class="modal-hint">PDFの表示・ページ解析に使用。<a href="https://github.com/mozilla/pdf.js/blob/master/LICENSE" target="_blank" rel="noopener">ライセンス全文(GitHub)</a></p>
+    </div>
+    <div class="security-section">
+      <h4>pdf-lib — MIT License</h4>
+      <p class="modal-hint">PDFの分割・結合・回転・メタデータ編集・暗号化解除などの書き出し処理に使用。<a href="https://github.com/Hopding/pdf-lib/blob/master/LICENSE.md" target="_blank" rel="noopener">ライセンス全文(GitHub)</a></p>
+    </div>
+    <div class="security-section">
+      <h4>JSZip — MIT License(MIT / GPL-3.0-or-laterのデュアルライセンス)</h4>
+      <p class="modal-hint">画像を複数まとめてZIPとして書き出す際に使用。利用者がMIT・GPL-3.0-or-laterのどちらかを選べるデュアルライセンスで、本ツールはMIT条件での利用を前提としています。<a href="https://github.com/Stuk/jszip/blob/main/LICENSE.markdown" target="_blank" rel="noopener">ライセンス全文(GitHub)</a></p>
+    </div>
+    <div class="security-section">
+      <h4>Webフォント「Zen Kaku Gothic New」 — SIL Open Font License 1.1</h4>
+      <p class="modal-hint">画面表示用にGoogle Fontsから読み込んでいます。商用・個人を問わず無料で利用できるフォントライセンスです。</p>
+    </div>
+
+    <div class="security-section">
+      <h4>まとめ</h4>
+      <p class="modal-hint">MIT・Apache License 2.0・SIL OFLはいずれも「著作権表示とライセンス文を保持すること」程度の緩い条件のみのパーミッシブライセンスで、ソースコードの公開義務(コピーレフト)や利用料は発生しません。個人・会社どちらでご利用いただいても問題ありません。各ライブラリはCDN(jsDelivr)から読み込んでおり、このツール自体にファイルとして同梱・再配布はしていません。</p>
+    </div>
+
+    <div class="modal-actions">
+      <button type="button" id="licenseInfoCloseBtn" class="primary">閉じる</button>
     </div>
   </div>
 </div>
@@ -923,6 +958,12 @@ button:disabled{opacity:.45; cursor:not-allowed}
   $('securityInfoBtn').addEventListener('click', () => { securityModalBackdrop.style.display = 'flex'; });
   $('securityInfoCloseBtn').addEventListener('click', () => { securityModalBackdrop.style.display = 'none'; });
   securityModalBackdrop.addEventListener('click', e => { if (e.target === securityModalBackdrop) securityModalBackdrop.style.display = 'none'; });
+
+  // ---------- ライセンスについてのモーダル ----------
+  const licenseModalBackdrop = $('licenseModalBackdrop');
+  $('licenseInfoBtn').addEventListener('click', () => { licenseModalBackdrop.style.display = 'flex'; });
+  $('licenseInfoCloseBtn').addEventListener('click', () => { licenseModalBackdrop.style.display = 'none'; });
+  licenseModalBackdrop.addEventListener('click', e => { if (e.target === licenseModalBackdrop) licenseModalBackdrop.style.display = 'none'; });
 
   // ---------- サムネイル描画 ----------
   // rotationExtra: ユーザーが回転ボタンで加えた追加回転(0/90/180/270)。
