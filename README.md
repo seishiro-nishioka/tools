@@ -38,6 +38,6 @@ GitHub Pagesで公開(`main`ブランチのルートを配信)。
 |---|---|
 | [zoom-pip](zoom-pip/) | 動画の一部を枠で囲み、拡大映像をピクチャインピクチャで重ねて書き出すツール |
 | [pdf-split-merge](pdf-split-merge/) | PDFをページ単位に分解して並べ替え、PDF/PNG/JPGとして書き出すツール |
-| [pdf-text-extract](pdf-text-extract/) | PDFに埋め込まれた文字データだけを抽出するツール(OCRではなくテキスト層の解析) |
+| [pdf-text-extract](pdf-text-extract/) | PDFに埋め込まれた文字データだけを抽出するツール(OCRではなくテキスト層の解析、罫線表のCSV化・Excel出力にも対応) |
 | [serial-monitor](serial-monitor/) | マイコンなどのシリアルポートをポート/ボーレート指定で読み書きするツール(Web Serial API) |
 | [cad2d](cad2d/) | 点・線分・円を配置し、SolveSpaceの幾何拘束ソルバーで正確に組み立てる簡易2D CAD |

@@ -125,6 +125,17 @@ button.danger:hover{border-color:var(--red); background:color-mix(in srgb, var(-
 .viewer-head h2{margin:0; font-size:14px; font-weight:700; word-break:break-all}
 .viewer-head .vmeta{font-size:12px; color:var(--sub)}
 .viewer-empty{flex:1; display:flex; align-items:center; justify-content:center; color:var(--sub); font-size:13px; text-align:center; padding:20px}
+.tables-panel{
+  flex:none; display:flex; flex-direction:column; gap:6px; padding:10px 14px;
+  border-bottom:1px solid var(--line); max-height:28vh; overflow:auto;
+}
+.tables-panel-label{font-size:11px; color:var(--sub); font-weight:700; letter-spacing:.03em}
+.table-card{
+  display:flex; align-items:center; gap:10px; padding:7px 10px; border-radius:6px;
+  border:1px solid var(--line); background:var(--bg); flex-wrap:wrap;
+}
+.table-card .tmeta{font-size:12.5px; flex:1; min-width:120px}
+.table-card .tmeta b{font-variant-numeric:tabular-nums}
 textarea#textOut{
   flex:1; min-height:0; width:100%; resize:none; border:0; outline:0;
   padding:14px; font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
@@ -143,7 +154,7 @@ textarea#textOut{
 <header>
   <a class="back-link" href="../" aria-label="ツール一覧に戻る">← 一覧</a>
   <h1><span class="mark" aria-hidden="true"></span>PDFテキスト抽出</h1>
-  <p>PDFに埋め込まれた文字データ(テキスト層)だけを抽出します。OCRは行わないため、スキャン画像のみのページからは抽出できません。ファイルはサーバーに送信されず、処理はすべて端末内で完結します。</p>
+  <p>PDFに埋め込まれた文字データ(テキスト層)だけを抽出します。OCRは行わないため、スキャン画像のみのページからは抽出できません。罫線のある表はCSV形式に変換し、表ごとにExcel形式でもダウンロードできます。ファイルはサーバーに送信されず、処理はすべて端末内で完結します。</p>
 </header>
 
 <main>
@@ -162,6 +173,7 @@ textarea#textOut{
       <hr class="sep">
       <label class="check-row"><input type="checkbox" id="optPageMarkers" checked>ページ区切りを挿入</label>
       <label class="check-row"><input type="checkbox" id="optPageNumbers" checked>ページ番号を表示</label>
+      <label class="check-row"><input type="checkbox" id="optDetectTables" checked>検出した表をCSV形式で表示</label>
 
       <hr class="sep">
       <div class="btn-row">
@@ -179,6 +191,9 @@ textarea#textOut{
         <h2 id="viewerFileName"></h2>
         <span class="vmeta" id="viewerMeta"></span>
       </div>
+      <div class="tables-panel" id="tablesPanel" style="display:none">
+        <p class="tables-panel-label" id="tablesPanelLabel"></p>
+      </div>
       <p class="viewer-empty" id="viewerEmpty">左の「PDFをドロップ」からファイルを読み込むと、ここに抽出したテキストが表示されます。</p>
       <textarea id="textOut" style="display:none" spellcheck="false" placeholder=""></textarea>
     </div>
@@ -189,6 +204,7 @@ textarea#textOut{
 
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -202,7 +218,8 @@ textarea#textOut{
     statusEl.classList.toggle('error', !!isError);
   };
 
-  // files: [{ id, name, status:'loading'|'done'|'error', errorMsg, pageCount, textPageCount, pages:[{num,text,empty}] }]
+  // files: [{ id, name, status:'loading'|'done'|'error', errorMsg, pageCount, textPageCount, tables:[{globalIndex,pageNum,rows}],
+  //           pages:[{num, empty, blocks:[{kind:'line',y,text}|{kind:'table',y,rows,tableIndex}]}] }]
   const files = [];
   let nextFileId = 1;
   let activeFileId = null;
@@ -211,33 +228,199 @@ textarea#textOut{
   // pdf.jsのgetTextContent()は文字アイテムの配列(座標付き)を返すだけで改行情報を持たないため、
   // Y座標でまとめて行を作り、行内はX座標順に並べ替えて読み取り順に再構成している。
   // 複数段組みなど複雑なレイアウトでは読み取り順が崩れる場合がある(簡易ヒューリスティックのため)。
-  async function extractPageText(page){
-    const content = await page.getTextContent();
-    const items = content.items.filter(it => it.str !== undefined);
-    if (!items.length) return '';
-    const Y_TOLERANCE = 2;
+  //
+  // 文字間のスペース判定は、固定の絶対しきい値(例:1pt)ではなく「そのアイテムのフォントサイズに
+  // 対する相対しきい値」で行う。Word/Illustrator等が書き出すPDFは1単語の中でも文字ごとに個別の
+  // 描画命令(字送り調整)を持つことが多く、絶対しきい値だと単語の途中にまで余計なスペースが
+  // 入ってしまうため(実際に発生していた不具合)。
+  function fontSizeOf(item){
+    const fs = Math.hypot(item.transform[2], item.transform[3]);
+    if (fs > 0.01) return fs;
+    const fsAlt = Math.hypot(item.transform[0], item.transform[1]);
+    return fsAlt > 0.01 ? fsAlt : 10;
+  }
+
+  function linesFromItems(items){
+    if (!items.length) return [];
     const lines = [];
     for (const item of items){
       const x = item.transform[4], y = item.transform[5];
-      let line = lines.find(l => Math.abs(l.y - y) <= Y_TOLERANCE);
-      if (!line){ line = { y, parts: [] }; lines.push(line); }
-      line.parts.push({ x, str: item.str, width: item.width || 0 });
+      const fs = fontSizeOf(item);
+      let line = lines.find(l => Math.abs(l.y - y) <= Math.max(1.5, l.fontSize * 0.35));
+      if (!line){ line = { y, fontSize: fs, parts: [] }; lines.push(line); }
+      else if (fs > line.fontSize) line.fontSize = fs;
+      line.parts.push({ x, str: item.str, width: item.width || 0, fs });
     }
     lines.sort((a, b) => b.y - a.y); // PDF座標はY上向きなので降順=上から下
     return lines.map(line => {
       line.parts.sort((a, b) => a.x - b.x);
-      let text = '', prevEnd = null;
+      let text = '', prevEnd = null, prevFs = line.fontSize;
       for (const part of line.parts){
-        if (prevEnd !== null && part.x - prevEnd > 1) text += ' ';
+        if (prevEnd !== null){
+          const gap = part.x - prevEnd;
+          const threshold = Math.max(1, prevFs * 0.22);
+          if (gap > threshold && !/\s$/.test(text) && !/^\s/.test(part.str)) text += ' ';
+        }
         text += part.str;
         prevEnd = part.x + part.width;
+        prevFs = part.fs || prevFs;
       }
-      return text.trimEnd();
-    }).join('\n');
+      return { y: line.y, text: text.trimEnd() };
+    });
+  }
+
+  // ---------- 表(罫線)の検出 ----------
+  // ページを一度キャンバスに描画し、ピクセル単位で「長く連続した暗い直線」を走査することで
+  // 罫線を検出する(PDFの描画命令を直接解析するより、pdf.js標準のrender()だけで完結し確実)。
+  // 交差する横線・縦線の集合を連結成分としてグループ化し、2本以上の横線×2本以上の縦線が
+  // 作る格子をひとつの表とみなす。罫線のない(余白だけで区切られた)表は検出対象外。
+  async function detectTableGrids(page){
+    const scale = 2;
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.ceil(viewport.width));
+    canvas.height = Math.max(1, Math.ceil(viewport.height));
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    const W = canvas.width, H = canvas.height;
+    const data = ctx.getImageData(0, 0, W, H).data;
+    const isDark = (x, y) => {
+      const i = (y * W + x) * 4;
+      if (data[i + 3] < 10) return false;
+      return (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]) < 200;
+    };
+    const MIN_LINE_PX = Math.round(18 * scale);
+
+    const hCandidates = [];
+    for (let y = 0; y < H; y++){
+      let runStart = -1, bestStart = -1, bestLen = 0;
+      for (let x = 0; x <= W; x++){
+        const dark = x < W && isDark(x, y);
+        if (dark){ if (runStart === -1) runStart = x; }
+        else if (runStart !== -1){ const len = x - runStart; if (len > bestLen){ bestLen = len; bestStart = runStart; } runStart = -1; }
+      }
+      if (bestLen >= MIN_LINE_PX) hCandidates.push({ y, x1: bestStart, x2: bestStart + bestLen });
+    }
+    const vCandidates = [];
+    for (let x = 0; x < W; x++){
+      let runStart = -1, bestStart = -1, bestLen = 0;
+      for (let y = 0; y <= H; y++){
+        const dark = y < H && isDark(x, y);
+        if (dark){ if (runStart === -1) runStart = y; }
+        else if (runStart !== -1){ const len = y - runStart; if (len > bestLen){ bestLen = len; bestStart = runStart; } runStart = -1; }
+      }
+      if (bestLen >= MIN_LINE_PX) vCandidates.push({ x, y1: bestStart, y2: bestStart + bestLen });
+    }
+
+    function mergeLines(cands, posKey, aKey, bKey){
+      cands.sort((p, q) => p[posKey] - q[posKey]);
+      const merged = [];
+      for (const c of cands){
+        const last = merged[merged.length - 1];
+        if (last && c[posKey] - last[posKey] <= 3){
+          last[aKey] = Math.min(last[aKey], c[aKey]);
+          last[bKey] = Math.max(last[bKey], c[bKey]);
+        } else {
+          merged.push({ ...c });
+        }
+      }
+      return merged;
+    }
+    const hLines = mergeLines(hCandidates, 'y', 'x1', 'x2');
+    const vLines = mergeLines(vCandidates, 'x', 'y1', 'y2');
+    if (hLines.length < 2 || vLines.length < 2) return [];
+
+    const EPS = 4;
+    const n = hLines.length + vLines.length;
+    const parent = Array.from({ length: n }, (_, i) => i);
+    const find = i => { while (parent[i] !== i){ parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+    const union = (i, j) => { const a = find(i), b = find(j); if (a !== b) parent[a] = b; };
+    for (let hi = 0; hi < hLines.length; hi++){
+      for (let vi = 0; vi < vLines.length; vi++){
+        const h = hLines[hi], v = vLines[vi];
+        if (v.x >= h.x1 - EPS && v.x <= h.x2 + EPS && h.y >= v.y1 - EPS && h.y <= v.y2 + EPS) union(hi, hLines.length + vi);
+      }
+    }
+    const groups = new Map();
+    for (let i = 0; i < n; i++){
+      const r = find(i);
+      if (!groups.has(r)) groups.set(r, { h: [], v: [] });
+      if (i < hLines.length) groups.get(r).h.push(hLines[i]); else groups.get(r).v.push(vLines[i - hLines.length]);
+    }
+
+    const grids = [];
+    for (const { h, v } of groups.values()){
+      if (h.length < 2 || v.length < 2) continue;
+      h.sort((a, b) => a.y - b.y);
+      v.sort((a, b) => a.x - b.x);
+      // 1行×1列(単なる四角い枠線)は表ではないので除外する。セル数2以上(2行以上または2列以上)のみ表として扱う
+      if ((h.length - 1) * (v.length - 1) < 2) continue;
+      const rows = h.map(line => viewport.convertToPdfPoint(0, line.y)[1]);
+      const cols = v.map(line => viewport.convertToPdfPoint(line.x, 0)[0]);
+      // セルが不自然に細かい(数pt未満)場合は、写真やノイズの多いページを誤って格子と
+      // 認識している可能性が高いため除外する(実際にテスト中に発生した誤検出への対策)
+      let minRowH = Infinity, minColW = Infinity;
+      for (let r = 0; r < rows.length - 1; r++) minRowH = Math.min(minRowH, Math.abs(rows[r] - rows[r + 1]));
+      for (let c = 0; c < cols.length - 1; c++) minColW = Math.min(minColW, Math.abs(cols[c + 1] - cols[c]));
+      if (minRowH < 4 || minColW < 4) continue;
+      grids.push({ rows, cols });
+    }
+    return grids;
+  }
+
+  function csvEscapeField(s){
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function rowsToCsv(rows){
+    return rows.map(row => row.map(csvEscapeField).join(',')).join('\n');
+  }
+
+  // ページ全体を「自由なテキスト行」と「検出した表」が混在する、Y位置順のブロック列として再構成する
+  async function extractPageContent(page, detectTables){
+    const content = await page.getTextContent();
+    const items = content.items.filter(it => it.str !== undefined && it.str !== '');
+
+    const grids = detectTables ? await detectTableGrids(page) : [];
+    const gridCellItems = grids.map(g => Array.from({ length: g.rows.length - 1 }, () => Array.from({ length: g.cols.length - 1 }, () => [])));
+    const assignedIdx = new Set();
+
+    items.forEach((item, idx) => {
+      const x = item.transform[4], y = item.transform[5];
+      for (let gi = 0; gi < grids.length; gi++){
+        const g = grids[gi];
+        if (x < g.cols[0] - 2 || x > g.cols[g.cols.length - 1] + 2 || y > g.rows[0] + 2 || y < g.rows[g.rows.length - 1] - 2) continue;
+        let ri = -1, ci = -1;
+        for (let r = 0; r < g.rows.length - 1; r++){ if (y <= g.rows[r] + 1 && y >= g.rows[r + 1] - 1){ ri = r; break; } }
+        for (let c = 0; c < g.cols.length - 1; c++){ if (x >= g.cols[c] - 1 && x <= g.cols[c + 1] + 1){ ci = c; break; } }
+        if (ri >= 0 && ci >= 0){ gridCellItems[gi][ri][ci].push(item); assignedIdx.add(idx); break; }
+      }
+    });
+
+    const freeItems = items.filter((it, idx) => !assignedIdx.has(idx));
+    const freeLines = linesFromItems(freeItems).map(l => ({ kind: 'line', y: l.y, text: l.text }));
+
+    const tableBlocks = grids.map((g, gi) => ({
+      kind: 'table',
+      y: g.rows[0],
+      rows: gridCellItems[gi].map(rowCells => rowCells.map(cellItems => linesFromItems(cellItems).map(l => l.text).join(' ').trim())),
+    }));
+
+    const blocks = [...freeLines, ...tableBlocks].sort((a, b) => b.y - a.y);
+    return blocks;
+  }
+
+  function composePageText(page, detectTables){
+    const parts = [];
+    for (const b of page.blocks){
+      if (b.kind === 'line'){ if (b.text) parts.push(b.text); }
+      else if (detectTables) parts.push(rowsToCsv(b.rows));
+      else parts.push(b.rows.map(row => row.join('  ')).join('\n'));
+    }
+    return parts.join('\n').trim();
   }
 
   async function loadFile(file){
-    const entry = { id: nextFileId++, name: file.name, status: 'loading', errorMsg: '', pageCount: 0, textPageCount: 0, pages: [] };
+    const entry = { id: nextFileId++, name: file.name, status: 'loading', errorMsg: '', pageCount: 0, textPageCount: 0, pages: [], tables: [] };
     files.push(entry);
     renderFileList();
     if (activeFileId === null){ activeFileId = entry.id; }
@@ -249,14 +432,21 @@ textarea#textOut{
       entry.pageCount = doc.numPages;
       for (let i = 1; i <= doc.numPages; i++){
         const page = await doc.getPage(i);
-        const text = await extractPageText(page);
-        const empty = text.trim().length === 0;
+        const blocks = await extractPageContent(page, true);
+        for (const b of blocks){
+          if (b.kind === 'table'){
+            b.tableIndex = entry.tables.length;
+            entry.tables.push({ globalIndex: entry.tables.length + 1, pageNum: i, rows: b.rows });
+          }
+        }
+        const empty = blocks.every(b => b.kind === 'table' ? b.rows.every(r => r.every(c => !c)) : !b.text);
         if (!empty) entry.textPageCount++;
-        entry.pages.push({ num: i, text, empty });
+        entry.pages.push({ num: i, empty, blocks });
         renderFileList(); // ページ数が多い場合に進捗が見えるよう都度更新
       }
       entry.status = 'done';
-      setStatus(`${file.name}: ${entry.pageCount}ページ中${entry.textPageCount}ページでテキストを検出しました。`);
+      const tableNote = entry.tables.length ? `、表${entry.tables.length}個を検出` : '';
+      setStatus(`${file.name}: ${entry.pageCount}ページ中${entry.textPageCount}ページでテキストを検出しました${tableNote}。`);
     } catch (err){
       entry.status = 'error';
       if (err && err.name === 'PasswordException'){
@@ -277,13 +467,14 @@ textarea#textOut{
   function composeText(entry){
     const showMarkers = $('optPageMarkers').checked;
     const showNumbers = $('optPageNumbers').checked;
+    const detectTables = $('optDetectTables').checked;
     const parts = [];
     for (const p of entry.pages){
       if (showMarkers){
         const label = showNumbers ? `--- ページ ${p.num} ---` : '---';
         parts.push(p.empty ? `${label}(テキストなし)` : label);
       }
-      if (!p.empty) parts.push(p.text);
+      if (!p.empty) parts.push(composePageText(p, detectTables));
     }
     return parts.join('\n\n').trim();
   }
@@ -342,12 +533,58 @@ textarea#textOut{
   const viewerHead = $('viewerHead');
   const viewerEmpty = $('viewerEmpty');
   const textOut = $('textOut');
+  const tablesPanel = $('tablesPanel');
+
+  function xlsxFilenameForTable(entry, table){
+    return `${baseName(entry.name)}_表${table.globalIndex}_p${table.pageNum}.xlsx`;
+  }
+
+  function downloadTableAsXlsx(entry, table){
+    const ws = XLSX.utils.aoa_to_sheet(table.rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `表${table.globalIndex}`.slice(0, 31));
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    downloadBlob(new Blob([wbout], { type: 'application/octet-stream' }), xlsxFilenameForTable(entry, table));
+    setStatus(`${xlsxFilenameForTable(entry, table)} をダウンロードしました。`);
+  }
+
+  function renderTablesPanel(entry){
+    if (!entry || entry.status !== 'done' || !entry.tables.length){
+      tablesPanel.style.display = 'none';
+      tablesPanel.innerHTML = '<p class="tables-panel-label" id="tablesPanelLabel"></p>';
+      return;
+    }
+    tablesPanel.style.display = 'flex';
+    tablesPanel.innerHTML = '';
+    const label = document.createElement('p');
+    label.className = 'tables-panel-label';
+    label.textContent = `検出した表(${entry.tables.length}個、罫線のある表のみ)`;
+    tablesPanel.appendChild(label);
+    for (const table of entry.tables){
+      const card = document.createElement('div');
+      card.className = 'table-card';
+      const meta = document.createElement('span');
+      meta.className = 'tmeta';
+      const rowCount = table.rows.length, colCount = table.rows[0] ? table.rows[0].length : 0;
+      meta.innerHTML = `表${table.globalIndex} <span style="color:var(--sub)">(p.${table.pageNum}、<b>${rowCount}</b>行×<b>${colCount}</b>列)</span>`;
+      card.appendChild(meta);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ghost-sm';
+      btn.textContent = '⬇ Excel形式';
+      btn.addEventListener('click', () => downloadTableAsXlsx(entry, table));
+      card.appendChild(btn);
+      tablesPanel.appendChild(card);
+    }
+  }
+
   function renderViewer(){
     const entry = fileById(activeFileId);
     if (!entry){
       viewerHead.style.display = 'none';
       viewerEmpty.style.display = 'flex';
       textOut.style.display = 'none';
+      renderTablesPanel(null);
       return;
     }
     viewerHead.style.display = 'flex';
@@ -356,6 +593,8 @@ textarea#textOut{
     if (entry.status === 'loading') metaEl.textContent = '解析中…';
     else if (entry.status === 'error') metaEl.textContent = entry.errorMsg;
     else metaEl.textContent = `${entry.pageCount}ページ中${entry.textPageCount}ページでテキストを検出`;
+
+    renderTablesPanel(entry);
 
     if (entry.status === 'done'){
       viewerEmpty.style.display = 'none';
@@ -370,6 +609,7 @@ textarea#textOut{
 
   $('optPageMarkers').addEventListener('change', renderViewer);
   $('optPageNumbers').addEventListener('change', renderViewer);
+  $('optDetectTables').addEventListener('change', renderViewer);
 
   // ---------- ボタン類 ----------
   function updateButtons(){
