@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PDFテキスト抽出</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EEF1F4; --panel:#FFFFFF; --ink:#1B2733; --sub:#5A6878; --line:#CBD4DE;
+  --red:#E0301E; --blue:#2B5C8A; --blue-ink:#FFFFFF;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141A21; --panel:#1C242D; --ink:#E6ECF2; --sub:#9AA8B6; --line:#33404D;
+    --red:#FF5040; --blue:#5B93C9; --blue-ink:#0E1620;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#141A21; --panel:#1C242D; --ink:#E6ECF2; --sub:#9AA8B6; --line:#33404D;
+  --red:#FF5040; --blue:#5B93C9; --blue-ink:#0E1620;
+}
+*,*::before,*::after{box-sizing:inherit}
+html,body{height:100%}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  font-size:14.5px; line-height:1.5;
+  display:flex; flex-direction:column; height:100vh; overflow:hidden;
+}
+header{
+  display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; flex:none;
+  padding:12px 18px 6px;
+}
+.back-link{
+  flex:none; display:inline-flex; align-items:center; gap:4px;
+  font-size:12.5px; color:var(--sub); text-decoration:none;
+  padding:4px 9px; border-radius:5px; border:1px solid var(--line);
+  order:-1;
+}
+.back-link:hover{border-color:var(--blue); color:var(--ink)}
+h1{
+  margin:0; font-size:19px; font-weight:700; letter-spacing:.02em;
+  display:flex; align-items:center; gap:8px;
+}
+h1 .mark{
+  width:18px; height:14px; border:2.5px solid var(--red); position:relative; display:inline-block; flex:none;
+}
+h1 .mark::after{
+  content:""; position:absolute; right:-10px; top:-8px; width:10px; height:8px;
+  border:2px solid var(--red); background:var(--bg);
+}
+header p{margin:0; color:var(--sub); font-size:12.5px}
+
+main{
+  display:grid; grid-template-columns:280px minmax(0,1fr); gap:1px;
+  background:var(--line); flex:1; min-height:0; overflow:hidden;
+}
+@media (max-width: 760px){
+  main{
+    grid-template-columns:1fr;
+    grid-template-rows:minmax(0,40vh) minmax(240px,1fr);
+  }
+}
+.panel{background:var(--panel); min-height:0; display:flex; flex-direction:column}
+.panel-pad{padding:12px; display:flex; flex-direction:column; gap:10px; overflow:auto}
+
+.dropzone{
+  border:2px dashed var(--line); border-radius:8px; padding:18px 10px; text-align:center;
+  color:var(--sub); font-size:12.5px; cursor:pointer; transition:background-color .1s ease;
+}
+.dropzone:hover, .dropzone.drag-over{background:var(--bg); border-color:var(--blue)}
+.dropzone b{display:block; color:var(--ink); font-size:13.5px; margin-bottom:2px}
+
+.tool-group-label{font-size:11px; color:var(--sub); font-weight:700; letter-spacing:.03em; margin:4px 0 0}
+hr.sep{border:0; border-top:1px solid var(--line); margin:4px 0}
+
+.file-list{display:flex; flex-direction:column; gap:6px}
+.file-item{
+  display:flex; flex-direction:column; gap:3px; padding:8px 9px; border-radius:6px;
+  border:1px solid var(--line); background:var(--bg); cursor:pointer; text-align:left;
+  font:inherit; color:var(--ink); width:100%;
+}
+.file-item:hover{border-color:var(--blue)}
+.file-item[aria-pressed="true"]{border-color:var(--blue); box-shadow:0 0 0 1px var(--blue)}
+.file-item .fname{font-size:13px; font-weight:700; word-break:break-all}
+.file-item .fmeta{font-size:11.5px; color:var(--sub)}
+.file-item .fmeta.warn{color:var(--red)}
+.file-item .fremove{
+  align-self:flex-end; font:inherit; font-size:11px; color:var(--sub); background:none; border:0; cursor:pointer; padding:2px 4px;
+}
+.file-item .fremove:hover{color:var(--red)}
+
+.check-row{display:flex; align-items:center; gap:7px; font-size:13px}
+.check-row input{width:15px; height:15px}
+
+button.ghost-sm{
+  font:inherit; font-size:12.5px; padding:6px 9px; border-radius:5px; border:1px solid var(--line);
+  background:var(--panel); color:var(--ink); cursor:pointer;
+}
+button.ghost-sm:hover{border-color:var(--blue)}
+button.ghost-sm:disabled{opacity:.4; cursor:not-allowed}
+button.primary{
+  font:inherit; font-size:13px; padding:8px 10px; border-radius:6px; border:1px solid var(--red);
+  background:var(--red); color:#fff; cursor:pointer; font-weight:700;
+}
+button.primary:hover{opacity:.9}
+button.primary:disabled{opacity:.4; cursor:not-allowed; background:var(--sub); border-color:var(--sub)}
+button.danger{
+  font:inherit; font-size:13px; padding:7px 10px; border-radius:5px; border:1px solid var(--line);
+  background:var(--panel); color:var(--red); cursor:pointer;
+}
+button.danger:hover{border-color:var(--red); background:color-mix(in srgb, var(--red) 8%, transparent)}
+.btn-row{display:flex; gap:6px; flex-wrap:wrap}
+
+.viewer{display:flex; flex-direction:column; min-height:0; height:100%}
+.viewer-head{
+  flex:none; padding:10px 14px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+}
+.viewer-head h2{margin:0; font-size:14px; font-weight:700; word-break:break-all}
+.viewer-head .vmeta{font-size:12px; color:var(--sub)}
+.viewer-empty{flex:1; display:flex; align-items:center; justify-content:center; color:var(--sub); font-size:13px; text-align:center; padding:20px}
+textarea#textOut{
+  flex:1; min-height:0; width:100%; resize:none; border:0; outline:0;
+  padding:14px; font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  font-size:13px; line-height:1.6; background:var(--panel); color:var(--ink);
+}
+
+#status{
+  flex:none; padding:6px 14px; font-size:12.5px; color:var(--sub); min-height:1.6em;
+  background:var(--panel); border-top:1px solid var(--line);
+}
+#status.error{color:var(--red)}
+.sr{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+<header>
+  <a class="back-link" href="../" aria-label="ツール一覧に戻る">← 一覧</a>
+  <h1><span class="mark" aria-hidden="true"></span>PDFテキスト抽出</h1>
+  <p>PDFに埋め込まれた文字データ(テキスト層)だけを抽出します。OCRは行わないため、スキャン画像のみのページからは抽出できません。ファイルはサーバーに送信されず、処理はすべて端末内で完結します。</p>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="panel-pad">
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="PDFを選択またはドロップ">
+        <b>PDFをドロップ</b>
+        またはクリックして選択(複数可)
+      </div>
+      <input type="file" id="fileInput" accept="application/pdf" multiple class="sr">
+
+      <hr class="sep">
+      <p class="tool-group-label" id="fileListLabel">読み込んだPDF(0件)</p>
+      <div class="file-list" id="fileList"></div>
+
+      <hr class="sep">
+      <label class="check-row"><input type="checkbox" id="optPageMarkers" checked>ページ区切りを挿入</label>
+      <label class="check-row"><input type="checkbox" id="optPageNumbers" checked>ページ番号を表示</label>
+
+      <hr class="sep">
+      <div class="btn-row">
+        <button type="button" class="ghost-sm" id="copyBtn" disabled>📋 コピー</button>
+        <button type="button" class="ghost-sm" id="downloadTxtBtn" disabled>⬇ .txtで保存</button>
+      </div>
+      <button type="button" class="ghost-sm" id="downloadZipBtn" disabled>⬇ 全ファイルをZIPで保存</button>
+      <button type="button" class="danger" id="clearAllBtn" disabled>すべて消去</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="viewer">
+      <div class="viewer-head" id="viewerHead" style="display:none">
+        <h2 id="viewerFileName"></h2>
+        <span class="vmeta" id="viewerMeta"></span>
+      </div>
+      <p class="viewer-empty" id="viewerEmpty">左の「PDFをドロップ」からファイルを読み込むと、ここに抽出したテキストが表示されます。</p>
+      <textarea id="textOut" style="display:none" spellcheck="false" placeholder=""></textarea>
+    </div>
+  </section>
+</main>
+
+<p id="status"></p>
+
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+  const statusEl = $('status');
+  const setStatus = (msg, isError = false) => {
+    statusEl.textContent = msg;
+    statusEl.classList.toggle('error', !!isError);
+  };
+
+  // files: [{ id, name, status:'loading'|'done'|'error', errorMsg, pageCount, textPageCount, pages:[{num,text,empty}] }]
+  const files = [];
+  let nextFileId = 1;
+  let activeFileId = null;
+
+  // ---------- PDFのテキスト層からの抽出(OCRは行わない) ----------
+  // pdf.jsのgetTextContent()は文字アイテムの配列(座標付き)を返すだけで改行情報を持たないため、
+  // Y座標でまとめて行を作り、行内はX座標順に並べ替えて読み取り順に再構成している。
+  // 複数段組みなど複雑なレイアウトでは読み取り順が崩れる場合がある(簡易ヒューリスティックのため)。
+  async function extractPageText(page){
+    const content = await page.getTextContent();
+    const items = content.items.filter(it => it.str !== undefined);
+    if (!items.length) return '';
+    const Y_TOLERANCE = 2;
+    const lines = [];
+    for (const item of items){
+      const x = item.transform[4], y = item.transform[5];
+      let line = lines.find(l => Math.abs(l.y - y) <= Y_TOLERANCE);
+      if (!line){ line = { y, parts: [] }; lines.push(line); }
+      line.parts.push({ x, str: item.str, width: item.width || 0 });
+    }
+    lines.sort((a, b) => b.y - a.y); // PDF座標はY上向きなので降順=上から下
+    return lines.map(line => {
+      line.parts.sort((a, b) => a.x - b.x);
+      let text = '', prevEnd = null;
+      for (const part of line.parts){
+        if (prevEnd !== null && part.x - prevEnd > 1) text += ' ';
+        text += part.str;
+        prevEnd = part.x + part.width;
+      }
+      return text.trimEnd();
+    }).join('\n');
+  }
+
+  async function loadFile(file){
+    const entry = { id: nextFileId++, name: file.name, status: 'loading', errorMsg: '', pageCount: 0, textPageCount: 0, pages: [] };
+    files.push(entry);
+    renderFileList();
+    if (activeFileId === null){ activeFileId = entry.id; }
+    renderViewer();
+
+    try {
+      const buf = await file.arrayBuffer();
+      const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+      entry.pageCount = doc.numPages;
+      for (let i = 1; i <= doc.numPages; i++){
+        const page = await doc.getPage(i);
+        const text = await extractPageText(page);
+        const empty = text.trim().length === 0;
+        if (!empty) entry.textPageCount++;
+        entry.pages.push({ num: i, text, empty });
+        renderFileList(); // ページ数が多い場合に進捗が見えるよう都度更新
+      }
+      entry.status = 'done';
+      setStatus(`${file.name}: ${entry.pageCount}ページ中${entry.textPageCount}ページでテキストを検出しました。`);
+    } catch (err){
+      entry.status = 'error';
+      if (err && err.name === 'PasswordException'){
+        entry.errorMsg = 'パスワードで保護されたPDFは非対応です。';
+      } else {
+        entry.errorMsg = '読み込みに失敗しました(破損している、またはPDF以外のファイルの可能性があります)。';
+      }
+      console.error('PDF読み込みエラー:', file.name, err);
+      setStatus(`${file.name}: ${entry.errorMsg}`, true);
+    }
+    renderFileList();
+    renderViewer();
+    updateButtons();
+  }
+
+  function fileById(id){ return files.find(f => f.id === id); }
+
+  function composeText(entry){
+    const showMarkers = $('optPageMarkers').checked;
+    const showNumbers = $('optPageNumbers').checked;
+    const parts = [];
+    for (const p of entry.pages){
+      if (showMarkers){
+        const label = showNumbers ? `--- ページ ${p.num} ---` : '---';
+        parts.push(p.empty ? `${label}(テキストなし)` : label);
+      }
+      if (!p.empty) parts.push(p.text);
+    }
+    return parts.join('\n\n').trim();
+  }
+
+  // ---------- ファイル一覧 ----------
+  const fileListEl = $('fileList');
+  const fileListLabel = $('fileListLabel');
+  function renderFileList(){
+    fileListLabel.textContent = `読み込んだPDF(${files.length}件)`;
+    fileListEl.innerHTML = '';
+    for (const entry of files){
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'file-item';
+      item.setAttribute('aria-pressed', entry.id === activeFileId ? 'true' : 'false');
+
+      const fname = document.createElement('div');
+      fname.className = 'fname';
+      fname.textContent = entry.name;
+      item.appendChild(fname);
+
+      const fmeta = document.createElement('div');
+      fmeta.className = 'fmeta';
+      if (entry.status === 'loading'){
+        fmeta.textContent = entry.pageCount ? `解析中… (${entry.pages.length}/${entry.pageCount}ページ)` : '読み込み中…';
+      } else if (entry.status === 'error'){
+        fmeta.textContent = entry.errorMsg;
+        fmeta.classList.add('warn');
+      } else {
+        fmeta.textContent = `${entry.pageCount}ページ中${entry.textPageCount}ページでテキストを検出`;
+        if (entry.textPageCount === 0) fmeta.classList.add('warn');
+      }
+      item.appendChild(fmeta);
+
+      item.addEventListener('click', () => { activeFileId = entry.id; renderFileList(); renderViewer(); updateButtons(); });
+      fileListEl.appendChild(item);
+
+      const rm = document.createElement('button');
+      rm.type = 'button';
+      rm.className = 'fremove';
+      rm.textContent = '削除';
+      rm.addEventListener('click', (e) => { e.stopPropagation(); removeFile(entry.id); });
+      item.appendChild(rm);
+    }
+  }
+
+  function removeFile(id){
+    const idx = files.findIndex(f => f.id === id);
+    if (idx === -1) return;
+    files.splice(idx, 1);
+    if (activeFileId === id) activeFileId = files.length ? files[0].id : null;
+    renderFileList(); renderViewer(); updateButtons();
+  }
+
+  // ---------- ビューア ----------
+  const viewerHead = $('viewerHead');
+  const viewerEmpty = $('viewerEmpty');
+  const textOut = $('textOut');
+  function renderViewer(){
+    const entry = fileById(activeFileId);
+    if (!entry){
+      viewerHead.style.display = 'none';
+      viewerEmpty.style.display = 'flex';
+      textOut.style.display = 'none';
+      return;
+    }
+    viewerHead.style.display = 'flex';
+    $('viewerFileName').textContent = entry.name;
+    const metaEl = $('viewerMeta');
+    if (entry.status === 'loading') metaEl.textContent = '解析中…';
+    else if (entry.status === 'error') metaEl.textContent = entry.errorMsg;
+    else metaEl.textContent = `${entry.pageCount}ページ中${entry.textPageCount}ページでテキストを検出`;
+
+    if (entry.status === 'done'){
+      viewerEmpty.style.display = 'none';
+      textOut.style.display = 'block';
+      textOut.value = composeText(entry);
+    } else {
+      viewerEmpty.style.display = 'flex';
+      viewerEmpty.textContent = entry.status === 'error' ? entry.errorMsg : '解析中…';
+      textOut.style.display = 'none';
+    }
+  }
+
+  $('optPageMarkers').addEventListener('change', renderViewer);
+  $('optPageNumbers').addEventListener('change', renderViewer);
+
+  // ---------- ボタン類 ----------
+  function updateButtons(){
+    const entry = fileById(activeFileId);
+    const hasText = entry && entry.status === 'done';
+    $('copyBtn').disabled = !hasText;
+    $('downloadTxtBtn').disabled = !hasText;
+    $('downloadZipBtn').disabled = files.filter(f => f.status === 'done').length < 2;
+    $('clearAllBtn').disabled = files.length === 0;
+  }
+
+  function baseName(name){ return name.replace(/\.pdf$/i, ''); }
+
+  $('copyBtn').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(textOut.value);
+      setStatus('クリップボードにコピーしました。');
+    } catch (err){
+      textOut.select();
+      document.execCommand('copy');
+      setStatus('クリップボードにコピーしました。');
+    }
+  });
+
+  function downloadBlob(blob, filename){
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  $('downloadTxtBtn').addEventListener('click', () => {
+    const entry = fileById(activeFileId);
+    if (!entry || entry.status !== 'done') return;
+    const blob = new Blob([textOut.value], { type: 'text/plain;charset=utf-8' });
+    downloadBlob(blob, `${baseName(entry.name)}.txt`);
+    setStatus(`${baseName(entry.name)}.txt をダウンロードしました。`);
+  });
+
+  $('downloadZipBtn').addEventListener('click', async () => {
+    const done = files.filter(f => f.status === 'done');
+    if (done.length < 2) return;
+    const zip = new JSZip();
+    const usedNames = new Set();
+    for (const entry of done){
+      let name = `${baseName(entry.name)}.txt`;
+      let i = 2;
+      while (usedNames.has(name)){ name = `${baseName(entry.name)}_${i++}.txt`; }
+      usedNames.add(name);
+      zip.file(name, composeText(entry));
+    }
+    const blob = await zip.generateAsync({ type: 'blob' });
+    downloadBlob(blob, 'pdf-text-extract.zip');
+    setStatus(`${done.length}件のテキストをZIPでダウンロードしました。`);
+  });
+
+  $('clearAllBtn').addEventListener('click', () => {
+    if (!files.length) return;
+    if (!confirm('読み込んだすべてのPDFを消去します。よろしいですか?')) return;
+    files.length = 0;
+    activeFileId = null;
+    renderFileList(); renderViewer(); updateButtons();
+    setStatus('すべて消去しました。');
+  });
+
+  // ---------- ファイル選択・ドラッグ&ドロップ ----------
+  const dropzone = $('dropzone');
+  const fileInput = $('fileInput');
+  function handleFiles(fileListObj){
+    const list = [...fileListObj].filter(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+    if (!list.length){ setStatus('PDFファイルを選択してください。', true); return; }
+    for (const f of list) loadFile(f);
+  }
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); fileInput.click(); } });
+  fileInput.addEventListener('change', () => { handleFiles(fileInput.files); fileInput.value = ''; });
+  ['dragenter', 'dragover'].forEach(ev => dropzone.addEventListener(ev, e => {
+    e.preventDefault(); dropzone.classList.add('drag-over');
+  }));
+  ['dragleave', 'drop'].forEach(ev => dropzone.addEventListener(ev, e => {
+    e.preventDefault(); dropzone.classList.remove('drag-over');
+  }));
+  dropzone.addEventListener('drop', e => {
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+  });
+  // ページ全体へのドロップでもブラウザ既定の「ファイルを開く」動作に飛ばないようにする
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => { if (e.target === document.body || e.target === document.documentElement) e.preventDefault(); });
+
+  setStatus('PDFを選択またはドロップしてください。');
+})();
+</script>
+</body>
+</html>
