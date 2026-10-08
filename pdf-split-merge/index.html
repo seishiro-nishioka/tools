@@ -38,8 +38,8 @@ header{
 }
 .header-row{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
 .header-row h1{flex:1; min-width:0}
-.header-action{margin-left:auto; font-size:13px; white-space:nowrap}
-.header-action2{font-size:13px; white-space:nowrap}
+.header-actions{display:flex; align-items:center; gap:10px; margin-left:auto}
+.header-action, .header-action2{font-size:13px; white-space:nowrap}
 h1{
   margin:0; font-size:22px; font-weight:700; letter-spacing:.02em;
   display:flex; align-items:center; gap:10px;
@@ -65,10 +65,12 @@ main > section.box{min-height:0; overflow-y:auto}
 }
 @media (max-width:640px){
   /* 画面が狭いと、タイトル(h1)とヘッダーボタンが同じ行で幅を奪い合い、
-     タイトルの文字が1文字ずつ折り返される崩れ方をするため、縦積みにする */
+     タイトルの文字が1文字ずつ折り返される崩れ方をするため、タイトルの行とボタンの行を分ける。
+     ボタン3つ(セキュリティ/ライセンス/ダウンロード)自体は横並びのまま維持する */
   .header-row{flex-direction:column; align-items:flex-start}
   .header-row h1{flex:none; min-width:0; width:100%}
-  .header-action{margin-left:0}
+  .header-actions{margin-left:0; width:100%; gap:6px}
+  .header-action, .header-action2{font-size:12px; padding-left:8px; padding-right:8px; flex:1; text-align:center}
 }
 
 section.box{
@@ -318,9 +320,11 @@ button:disabled{opacity:.45; cursor:not-allowed}
 <header>
   <div class="header-row">
     <h1><span class="mark" aria-hidden="true"></span>PDF分割・結合ツール</h1>
-    <button id="securityInfoBtn" class="ghost-btn header-action">🔒 セキュリティ</button>
-    <button id="licenseInfoBtn" class="ghost-btn header-action2">📄 ライセンス</button>
-    <button id="downloadToolBtn" class="ghost-btn header-action2">⬇ ダウンロード</button>
+    <div class="header-actions">
+      <button id="securityInfoBtn" class="ghost-btn header-action">🔒 セキュリティ</button>
+      <button id="licenseInfoBtn" class="ghost-btn header-action2">📄 ライセンス</button>
+      <button id="downloadToolBtn" class="ghost-btn header-action2">⬇ ダウンロード</button>
+    </div>
   </div>
   <p>PDFをページ単位に分解して並べ替え、PDF・PNG・JPGとして書き出します。ファイルはサーバーに送信されず、処理はすべてお使いの端末のブラウザ内で行われます。</p>
 </header>
