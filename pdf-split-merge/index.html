@@ -283,6 +283,9 @@ button:disabled{opacity:.45; cursor:not-allowed}
 .ghost-btn{background:transparent}
 
 .export-bar{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+.export-section{display:flex; flex-direction:column; gap:8px; padding-top:10px; border-top:1px solid var(--line)}
+.export-section:first-of-type{padding-top:0; border-top:0}
+.export-section-label{margin:0; font-size:13px; font-weight:700; color:var(--ink)}
 .export-submit{
   width:100%; box-sizing:border-box; margin-top:auto;
   padding:16px; font-size:17px; border-radius:8px;
@@ -334,16 +337,22 @@ button:disabled{opacity:.45; cursor:not-allowed}
   </section>
 
   <section class="export-panel box">
-    <h2><span class="step-badge">3</span>書き出し形式</h2>
-    <div class="export-bar">
+    <h2><span class="step-badge">3</span>書き出し条件</h2>
+
+    <div class="export-section">
+      <p class="export-section-label">ファイル形式</p>
+      <div class="export-bar">
         <div class="seg" id="format" role="group" aria-label="書き出し形式">
           <button data-f="pdf" aria-pressed="true">PDF</button>
           <button data-f="png" aria-pressed="false">PNG</button>
           <button data-f="jpg" aria-pressed="false">JPG</button>
         </div>
       </div>
+    </div>
+
+    <div class="export-section" id="compressSection">
+      <p class="export-section-label">画像の圧縮</p>
       <div class="export-bar" id="compressRow">
-        <span style="font-size:13.5px; color:var(--sub)">画像を圧縮</span>
         <select id="compressLevel">
           <option value="off" selected>しない(元のまま)</option>
           <option value="light">弱め</option>
@@ -352,67 +361,72 @@ button:disabled{opacity:.45; cursor:not-allowed}
         </select>
         <span style="font-size:12.5px; color:var(--sub)">PDF内の写真・スキャン画像(JPEG)を再圧縮し、見た目はほぼそのままに容量を減らします</span>
       </div>
+    </div>
 
-      <details class="box" id="advancedBox">
-        <summary>詳細設定(PDFのプロパティ)</summary>
-        <div class="details-body">
-          <!-- 署名・スタンプ機能: 一時的に無効化中。再適用する場合はこのdisplay:noneを外す -->
-          <div style="display:none">
-            <p class="modal-hint" style="margin-bottom:8px">署名・スタンプ用の画像(PNG推奨、背景透過に対応)をここに登録しておくと、各ページの🖋ボタンから配置できます。</p>
-            <div class="stamp-lib" id="stampLib">
-              <button type="button" class="stamp-lib-add" id="stampLibAddBtn" aria-label="署名・スタンプ画像を追加" title="画像を追加">+</button>
-            </div>
-            <input type="file" id="stampLibInput" accept="image/*" multiple class="sr">
-          </div>
-          <!-- 透かし機能: 一時的に無効化中。再適用する場合はこのdisplay:noneを外す -->
-          <div class="modal-row" style="display:none">
-            <label class="check-row"><input type="checkbox" id="wmEnable"> 透かしを追加する</label>
-          </div>
-          <div class="field-grid" id="wmFields" style="display:none">
-            <div class="field">
-              <label for="wmText">透かしの文字</label>
-              <input type="text" id="wmText" placeholder="例: DRAFT、社外秘など" maxlength="40">
-            </div>
-            <div class="field">
-              <label for="wmSize">大きさ</label>
-              <select id="wmSize">
-                <option value="small">小さめ</option>
-                <option value="medium" selected>標準</option>
-                <option value="large">大きめ</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="wmOpacity">濃さ</label>
-              <select id="wmOpacity">
-                <option value="0.12">うすめ</option>
-                <option value="0.2" selected>標準</option>
-                <option value="0.35">こいめ</option>
-              </select>
-            </div>
-          </div>
-          <div class="modal-row">
-            <label class="check-row"><input type="checkbox" id="wmRemoveEnable"> 透かしの文字を検出して消す</label>
-          </div>
-          <div class="field-grid" id="wmRemoveFields" style="display:none">
-            <div class="field">
-              <label for="wmRemoveText">消したい透かしの文字(手入力)</label>
-              <input type="text" id="wmRemoveText" placeholder="例: DRAFT、社外秘など" maxlength="60">
-            </div>
-          </div>
-          <button type="button" class="ghost-sm" id="wmAutoDetectBtn" style="display:none; align-self:flex-start">🔍 候補を自動検出</button>
-          <div id="wmCandidateList" class="wm-candidate-list" style="display:none"></div>
-          <p class="modal-hint" id="wmRemoveHint" style="display:none; margin:-4px 0 0">指定した文字を含むテキストを検出します。<b>PDF書き出し</b>ではコンテンツストリームから該当する描画命令そのものを取り除く「真の削除」を行います(白く塗りつぶすのではなく、PDF内部のデータとしても文字情報が無くなります)。<b>PNG/JPG画像として書き出す場合</b>は出力がラスタ画像(文字データを持たない)になるため、該当範囲を白で塗りつぶす方式になります。画像だけで構成された透かし(スキャン画像に焼き込まれたものなど)は検出できません。構造が複雑なページでは一部削除できない場合があります。「候補を自動検出」は、回転角度・文字色の薄さ・不透明度・複数ページへの繰り返し出現などから透かしらしい文字列を提案します(あくまで候補で、実際に消すかはチェックで選択してください。誤検出の可能性があります)。</p>
-          <div id="metaFields">
-            <p class="modal-hint" style="margin-bottom:8px">PDFのプロパティ(ファイル情報)。空欄の項目は変更しません。PDF書き出し時のみ有効です。<b>ここに入力した内容はPDFファイル自体に埋め込まれます。</b>本文のように隠れているわけではなく、ファイルを受け取った人が「ドキュメントのプロパティ」(Adobe Acrobat等のメニュー)やPDF編集ツールから誰でも閲覧できます。本名・所属・社内限定の情報など、公開したくない内容を入力しないようご注意ください。</p>
-            <div class="field-grid">
-              <div class="field"><label for="metaTitle">タイトル</label><input type="text" id="metaTitle"></div>
-              <div class="field"><label for="metaAuthor">作成者</label><input type="text" id="metaAuthor"></div>
-              <div class="field"><label for="metaSubject">件名</label><input type="text" id="metaSubject"></div>
-              <div class="field"><label for="metaKeywords">キーワード(カンマ区切り)</label><input type="text" id="metaKeywords"></div>
-            </div>
-          </div>
+    <div class="export-section">
+      <p class="export-section-label">透かし文字の削除</p>
+      <div class="modal-row">
+        <label class="check-row"><input type="checkbox" id="wmRemoveEnable"> 透かしの文字を検出して消す</label>
+      </div>
+      <button type="button" class="ghost-sm" id="wmAutoDetectBtn" style="display:none; align-self:flex-start">🔍 候補を自動検出</button>
+      <div id="wmCandidateList" class="wm-candidate-list" style="display:none"></div>
+      <p class="modal-hint" id="wmRemoveHint" style="display:none; margin:-4px 0 0">「候補を自動検出」で、回転角度・文字色の薄さ・不透明度・複数ページへの繰り返し出現などから透かしらしい文字列を提案します(あくまで候補で、実際に消すかはチェックで選択してください。誤検出の可能性があります)。<b>PDF書き出し</b>ではコンテンツストリームから該当する描画命令そのものを取り除く「真の削除」を行います(白く塗りつぶすのではなく、PDF内部のデータとしても文字情報が無くなります)。<b>PNG/JPG画像として書き出す場合</b>は出力がラスタ画像(文字データを持たない)になるため、該当範囲を白で塗りつぶす方式になります。画像だけで構成された透かし(スキャン画像に焼き込まれたものなど)は検出できません。構造が複雑なページでは一部削除できない場合があります。</p>
+    </div>
+
+    <div class="export-section">
+      <p class="export-section-label">プロパティ</p>
+      <div id="metaFields">
+        <p class="modal-hint" style="margin-bottom:8px">PDFのプロパティ(ファイル情報)。空欄の項目は変更しません。PDF書き出し時のみ有効です。<b>ここに入力した内容はPDFファイル自体に埋め込まれます。</b>本文のように隠れているわけではなく、ファイルを受け取った人が「ドキュメントのプロパティ」(Adobe Acrobat等のメニュー)やPDF編集ツールから誰でも閲覧できます。本名・所属・社内限定の情報など、公開したくない内容を入力しないようご注意ください。</p>
+        <div class="field-grid">
+          <div class="field"><label for="metaTitle">タイトル</label><input type="text" id="metaTitle"></div>
+          <div class="field"><label for="metaAuthor">作成者</label><input type="text" id="metaAuthor"></div>
+          <div class="field"><label for="metaSubject">件名</label><input type="text" id="metaSubject"></div>
+          <div class="field"><label for="metaKeywords">キーワード(カンマ区切り)</label><input type="text" id="metaKeywords"></div>
         </div>
-      </details>
+      </div>
+    </div>
+
+    <!-- 署名・スタンプ機能: 一時的に無効化中。再適用する場合はこのdisplay:noneを外す -->
+    <div style="display:none">
+      <p class="modal-hint" style="margin-bottom:8px">署名・スタンプ用の画像(PNG推奨、背景透過に対応)をここに登録しておくと、各ページの🖋ボタンから配置できます。</p>
+      <div class="stamp-lib" id="stampLib">
+        <button type="button" class="stamp-lib-add" id="stampLibAddBtn" aria-label="署名・スタンプ画像を追加" title="画像を追加">+</button>
+      </div>
+      <input type="file" id="stampLibInput" accept="image/*" multiple class="sr">
+    </div>
+    <!-- 透かし追加機能: 一時的に無効化中。再適用する場合はこのdisplay:noneを外す -->
+    <div class="modal-row" style="display:none">
+      <label class="check-row"><input type="checkbox" id="wmEnable"> 透かしを追加する</label>
+    </div>
+    <div class="field-grid" id="wmFields" style="display:none">
+      <div class="field">
+        <label for="wmText">透かしの文字</label>
+        <input type="text" id="wmText" placeholder="例: DRAFT、社外秘など" maxlength="40">
+      </div>
+      <div class="field">
+        <label for="wmSize">大きさ</label>
+        <select id="wmSize">
+          <option value="small">小さめ</option>
+          <option value="medium" selected>標準</option>
+          <option value="large">大きめ</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="wmOpacity">濃さ</label>
+        <select id="wmOpacity">
+          <option value="0.12">うすめ</option>
+          <option value="0.2" selected>標準</option>
+          <option value="0.35">こいめ</option>
+        </select>
+      </div>
+    </div>
+    <!-- 透かし削除の手入力欄: 無効化中。再適用する場合はこのdisplay:noneを外す -->
+    <div class="field-grid" id="wmRemoveFields" style="display:none">
+      <div class="field">
+        <label for="wmRemoveText">消したい透かしの文字(手入力)</label>
+        <input type="text" id="wmRemoveText" placeholder="例: DRAFT、社外秘など" maxlength="60">
+      </div>
+    </div>
 
     <div class="progress" id="prog"><i></i></div>
     <p id="status">メディアプールのファイルを編集領域へドラッグすると、ページごとに並びます。</p>
@@ -1911,7 +1925,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
   const wmAutoDetectBtn = $('wmAutoDetectBtn'), wmCandidateListEl = $('wmCandidateList');
   wmRemoveEnableChk.addEventListener('change', () => {
     const show = wmRemoveEnableChk.checked;
-    wmRemoveFieldsEl.style.display = show ? '' : 'none';
+    // wmRemoveFieldsEl(透かし文字の手入力欄)は無効化中のため、ここでは表示切り替えしない
     wmRemoveHintEl.style.display = show ? '' : 'none';
     wmAutoDetectBtn.style.display = show ? '' : 'none';
     if (!show){ wmCandidates = []; renderWmCandidates(); }
