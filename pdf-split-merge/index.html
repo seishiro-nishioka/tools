@@ -63,6 +63,13 @@ main > section.box{min-height:0; overflow-y:auto}
   main{grid-template-columns:1fr; flex:none}
   main > section.box{overflow-y:visible}
 }
+@media (max-width:640px){
+  /* 画面が狭いと、タイトル(h1)とヘッダーボタンが同じ行で幅を奪い合い、
+     タイトルの文字が1文字ずつ折り返される崩れ方をするため、縦積みにする */
+  .header-row{flex-direction:column; align-items:flex-start}
+  .header-row h1{flex:none; min-width:0; width:100%}
+  .header-action{margin-left:0}
+}
 
 section.box{
   background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:14px 16px;
@@ -294,6 +301,8 @@ button:disabled{opacity:.45; cursor:not-allowed}
 .seg button{border:0; border-radius:0; padding:7px 16px}
 .seg button+button{border-left:1px solid var(--line)}
 .seg button[aria-pressed="true"]{background:var(--red); color:#fff; font-weight:700}
+.seg-compress{width:100%}
+.seg-compress button{flex:1; padding:7px 4px; font-size:12.5px; text-align:center}
 
 .progress{height:6px; background:var(--line); border-radius:3px; overflow:hidden; margin-top:2px; display:none}
 .progress > i{display:block; height:100%; width:0; background:var(--red); transition:width .15s ease}
@@ -359,14 +368,14 @@ button:disabled{opacity:.45; cursor:not-allowed}
     <div class="export-section" id="compressSection">
       <p class="export-section-label">画像の圧縮</p>
       <div class="export-bar" id="compressRow">
-        <select id="compressLevel">
-          <option value="off" selected>しない(元のまま)</option>
-          <option value="light">弱め</option>
-          <option value="standard">標準(おすすめ)</option>
-          <option value="strong">強め</option>
-        </select>
-        <span style="font-size:12.5px; color:var(--sub)">PDF内の写真・スキャン画像(JPEG)を再圧縮し、見た目はほぼそのままに容量を減らします</span>
+        <div class="seg seg-compress" id="compressLevel" role="group" aria-label="画像の圧縮">
+          <button type="button" data-level="off" aria-pressed="true" title="元のまま(圧縮しない)">しない</button>
+          <button type="button" data-level="light" aria-pressed="false" title="弱め">弱め</button>
+          <button type="button" data-level="standard" aria-pressed="false" title="標準(おすすめ)">標準</button>
+          <button type="button" data-level="strong" aria-pressed="false" title="強め">強め</button>
+        </div>
       </div>
+      <span style="font-size:12.5px; color:var(--sub)">PDF内の写真・スキャン画像(JPEG)を再圧縮し、見た目はほぼそのままに容量を減らします(「標準」がおすすめです)</span>
     </div>
 
     <div class="export-section">
@@ -376,7 +385,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
       </div>
       <button type="button" class="ghost-sm" id="wmAutoDetectBtn" style="display:none; align-self:flex-start">🔍 候補を自動検出</button>
       <div id="wmCandidateList" class="wm-candidate-list" style="display:none"></div>
-      <p class="modal-hint" id="wmRemoveHint" style="display:none; margin:-4px 0 0">「候補を自動検出」で、回転角度・文字色の薄さ・不透明度・複数ページへの繰り返し出現などから透かしらしい文字列を提案します(あくまで候補で、実際に消すかはチェックで選択してください。誤検出の可能性があります)。<b>PDF書き出し</b>ではコンテンツストリームから該当する描画命令そのものを取り除く「真の削除」を行います(白く塗りつぶすのではなく、PDF内部のデータとしても文字情報が無くなります)。<b>PNG/JPG画像として書き出す場合</b>は出力がラスタ画像(文字データを持たない)になるため、該当範囲を白で塗りつぶす方式になります。画像だけで構成された透かし(スキャン画像に焼き込まれたものなど)は検出できません。構造が複雑なページでは一部削除できない場合があります。</p>
+      <p class="modal-hint" id="wmRemoveHint" style="display:none; margin:-4px 0 0">「候補を自動検出」で、回転角度・文字色の薄さ・不透明度・複数ページへの繰り返し出現などから透かしらしい文字列を提案します(あくまで候補で、実際に消すかはチェックで選択してください。誤検出の可能性があります)。<b>PDF・PNG・JPGいずれの書き出しでも</b>、コンテンツストリームから該当する描画命令そのものを取り除く「真の削除」を行ってから書き出します(白く塗りつぶして周辺の内容を隠すのではなく、透かし自体のデータが無くなります)。画像だけで構成された透かし(スキャン画像に焼き込まれたものなど)は検出できません。構造が複雑なページでは一部削除できない場合があります。</p>
     </div>
 
     <div class="export-section">
@@ -560,7 +569,12 @@ button:disabled{opacity:.45; cursor:not-allowed}
   const mediaListEl = $('mediaList'), mediaPoolEl = $('mediaPool');
   const deckGrid = $('deckGrid'), deckCountEl = $('deckCount'), clearDeckBtn = $('clearDeck');
   const exportBtn = $('exportBtn'), progEl = $('prog'), statusEl = $('status');
-  const compressRow = $('compressRow'), compressLevelSel = $('compressLevel');
+  const compressRow = $('compressRow');
+  let compressLevel = 'off';
+  document.querySelectorAll('#compressLevel button').forEach(b => b.addEventListener('click', () => {
+    compressLevel = b.dataset.level;
+    document.querySelectorAll('#compressLevel button').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
+  }));
 
   const COMPRESS_PRESETS = {
     light:    { quality: 0.82, maxDim: null },
@@ -2203,30 +2217,6 @@ button:disabled{opacity:.45; cursor:not-allowed}
     wmAutoDetectBtn.disabled = false;
   });
 
-  // item.transformの(a,b,c,d)は「回転・スキュー」だけでなく「フォントサイズによる拡大」も
-  // 織り込まれた行列だが、item.width/heightは既に最終的なユーザー空間単位(pt)で表現されている。
-  // そのためwidth/heightをtransformでそのまま変換すると、フォントサイズ分を二重に掛けてしまい
-  // 座標が大きくずれる(実機テストで発覚)。回転方向だけを表す単位ベクトルを(a,b)/(c,d)から
-  // 正規化して取り出し、それをwidth/heightという「既にスケール済みの長さ」に掛ける。
-  function wmItemAxes(item){
-    const [a, b, c, d] = item.transform;
-    const sx = Math.hypot(a, b) || 1;
-    const sy = Math.hypot(c, d) || 1;
-    return { ux: a / sx, uy: b / sx, vx: c / sy, vy: d / sy };
-  }
-  // テキストアイテムのローカル座標系(x:0..w, y:0..h、ベースライン=y:0)にパディングを加えたうえで、
-  // 回転方向の単位ベクトルを使ってページ座標へ変換した4隅の点を返す(画像書き出し用)。
-  function wmItemCorners(item, padRatio){
-    const [, , , , e, f] = item.transform;
-    const w = item.width || 0;
-    const h = item.height || Math.hypot(item.transform[2], item.transform[3]) || 10;
-    const { ux, uy, vx, vy } = wmItemAxes(item);
-    const padX = w * padRatio, padY = h * padRatio;
-    const local = [[-padX, -padY], [w + padX, -padY], [w + padX, h + padY], [-padX, h + padY]];
-    return local.map(([lx, ly]) => ({ x: e + lx * ux + ly * vx, y: f + lx * uy + ly * vy }));
-  }
-  const WM_REMOVE_PAD = 0.08;
-
   // ---------- 透かしの「真の削除」(PDF書き出し時: コンテンツストリームから描画命令そのものを除去) ----------
   // PDFのページ内容(コンテンツストリーム)を自前の最小限なトークナイザで解析し、テキスト行列(Tm/Td/TD/T*)・
   // CTM(cm/q/Q)・フォントサイズ(Tf)を追跡しながら、各Tj/TJ/'/"命令が実際に描画される位置(テキスト
@@ -2710,7 +2700,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
     if (metaKeywords) outDoc.setKeywords(metaKeywords.split(',').map(s => s.trim()).filter(Boolean));
 
     let compressResult = null;
-    const level = compressLevelSel.value;
+    const level = compressLevel;
     if (level !== 'off'){
       setStatus('画像を圧縮しています…');
       compressResult = await compressPdfImages(outDoc, COMPRESS_PRESETS[level], (done, total) => {
@@ -2744,12 +2734,48 @@ button:disabled{opacity:.45; cursor:not-allowed}
     setStatus(msg);
   }
 
+  // 画像書き出し用に、透かし削除が指定されている場合はPDF書き出しと同じ「真の削除」
+  // (コンテンツストリームから描画命令そのものを除去)を適用してから描画する。
+  // 白い矩形で覆う方式だと、透かしと重なる・近接する他の内容まで隠してしまう懸念があるため、
+  // 該当ページだけの一時PDFを作ってwmTrueRemoveFromPageで削除し、それをpdf.jsで
+  // 再読み込みしたものを描画対象にする(PDF書き出しの結果をそのまま画像化するのと同じ状態)。
+  // mediaIdごとのlibDoc、(mediaId+pageIndex+対象文字列)ごとの削除済みpdf.jsページを
+  // キャッシュし、複数ページ書き出し時の重複処理を避ける。
+  async function getRenderPdfjsPage(media, entry, needles, wmCache){
+    const sourcePdfjsPage = await media.pdfjsDoc.getPage(entry.pageIndex + 1);
+    if (!needles.length) return sourcePdfjsPage;
+
+    const cacheKey = `${entry.mediaId}:${entry.pageIndex}:${needles.join('')}`;
+    if (wmCache.pages.has(cacheKey)) return wmCache.pages.get(cacheKey);
+
+    let resultPage = sourcePdfjsPage; // 失敗時は元のページ(透かし付き)にフォールバックする
+    try {
+      let libDoc = wmCache.libDocs.get(entry.mediaId);
+      if (!libDoc){
+        libDoc = await loadLibDocForMedia(media);
+        wmCache.libDocs.set(entry.mediaId, libDoc);
+      }
+      const tmpDoc = await PDFLib.PDFDocument.create();
+      const [copiedPage] = await tmpDoc.copyPages(libDoc, [entry.pageIndex]);
+      tmpDoc.addPage(copiedPage);
+      await wmTrueRemoveFromPage(tmpDoc.context, copiedPage, sourcePdfjsPage, needles);
+      const bytes = await tmpDoc.save();
+      const tmpPdfjsDoc = await pdfjsLib.getDocument({ data: bytes }).promise;
+      resultPage = await tmpPdfjsDoc.getPage(1);
+    } catch (err){
+      console.error('画像書き出し用の透かし削除に失敗しました(このページは元のまま描画します):', err);
+    }
+    wmCache.pages.set(cacheKey, resultPage);
+    return resultPage;
+  }
+
   // 1ページぶんを、回転・クロップ・透かしをすべて反映した最終的なcanvasとして描画する。
   // クロップは「回転込みのビューポート上でのピクセル範囲」に変換してから元画像を切り出す方式。
   // (クロップ範囲自体はページ本来の向きの座標で保存されているが、見た目は追加回転後の状態で
   // 切り取る必要があるため、viewport.convertToViewportPoint()で回転込みの座標へ変換する)
-  async function renderEditedPageCanvas(media, entry, scale, fillWhite){
-    const page = await media.pdfjsDoc.getPage(entry.pageIndex + 1);
+  async function renderEditedPageCanvas(media, entry, scale, fillWhite, wmCache){
+    const wmRemoveNeedles = getWatermarkRemoveNeedles();
+    const page = await getRenderPdfjsPage(media, entry, wmRemoveNeedles, wmCache);
     const totalRotation = ((page.rotate || 0) + entry.rotation) % 360;
     const viewport = page.getViewport({ scale, rotation: totalRotation });
     const fullCanvas = document.createElement('canvas');
@@ -2758,24 +2784,6 @@ button:disabled{opacity:.45; cursor:not-allowed}
     const fullCtx = fullCanvas.getContext('2d');
     if (fillWhite){ fullCtx.fillStyle = '#fff'; fullCtx.fillRect(0, 0, fullCanvas.width, fullCanvas.height); }
     await page.render({ canvasContext: fullCtx, viewport }).promise;
-
-    // 透かしの削除: 検出した文字の範囲を白い矩形で覆って見えなくする(スタンプより先に行うことで、
-    // ユーザーが意図的に配置したスタンプが後からマスクで隠れてしまうことがないようにする)。
-    const wmRemoveNeedles = getWatermarkRemoveNeedles();
-    if (wmRemoveNeedles.length){
-      const items = await findWatermarkTextItems(page, wmRemoveNeedles);
-      fullCtx.save();
-      fullCtx.fillStyle = '#fff';
-      for (const item of items){
-        const corners = wmItemCorners(item, WM_REMOVE_PAD).map(p => viewport.convertToViewportPoint(p.x, p.y));
-        fullCtx.beginPath();
-        fullCtx.moveTo(corners[0][0], corners[0][1]);
-        for (let i = 1; i < corners.length; i++) fullCtx.lineTo(corners[i][0], corners[i][1]);
-        fullCtx.closePath();
-        fullCtx.fill();
-      }
-      fullCtx.restore();
-    }
 
     // 署名・スタンプ: クロップより先に(回転込みの)フルページ座標へ描画しておくことで、
     // クロップ処理が通常のページ内容と同様に正しく切り取ってくれる。
@@ -2814,13 +2822,14 @@ button:disabled{opacity:.45; cursor:not-allowed}
   async function exportImages(format){
     const ext = format === 'png' ? 'png' : 'jpg';
     const mime = format === 'png' ? 'image/png' : 'image/jpeg';
+    const wmCache = { libDocs: new Map(), pages: new Map() };
 
     // ページが1枚だけのときはZIPにまとめず、画像ファイルを直接ダウンロードする
     if (deck.length === 1){
       const entry = deck[0];
       const media = mediaById(entry.mediaId);
       setStatus('画像を作成しています…');
-      const canvas = await renderEditedPageCanvas(media, entry, EXPORT_SCALE, format === 'jpg');
+      const canvas = await renderEditedPageCanvas(media, entry, EXPORT_SCALE, format === 'jpg', wmCache);
       const blob = await new Promise(res => canvas.toBlob(res, mime, format === 'jpg' ? 0.92 : undefined));
       const baseName = media ? media.name.replace(/\.pdf$/i, '') : 'page';
       downloadBlob(blob, `${baseName}_p${entry.pageIndex + 1}.${ext}`);
@@ -2832,7 +2841,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
     for (let i = 0; i < deck.length; i++){
       const entry = deck[i];
       const media = mediaById(entry.mediaId);
-      const canvas = await renderEditedPageCanvas(media, entry, EXPORT_SCALE, format === 'jpg');
+      const canvas = await renderEditedPageCanvas(media, entry, EXPORT_SCALE, format === 'jpg', wmCache);
       const blob = await new Promise(res => canvas.toBlob(res, mime, format === 'jpg' ? 0.92 : undefined));
       zip.file(`page-${String(i + 1).padStart(3, '0')}.${ext}`, blob);
       setStatus(`書き出し中… ${i + 1}/${deck.length}`);
