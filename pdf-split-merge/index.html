@@ -393,7 +393,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
               <input type="text" id="wmRemoveText" placeholder="例: DRAFT、社外秘など" maxlength="60">
             </div>
           </div>
-          <p class="modal-hint" id="wmRemoveHint" style="display:none; margin:-4px 0 0">指定した文字を含むテキストを検出し、白い矩形で覆って見えなくします。PDF内部のデータとして文字情報自体が残る場合があります(完全な削除ではありません)。画像だけで構成された透かし(スキャン画像に焼き込まれたものなど)は検出できません。透かしが本文と近接・重なっている場合、周辺の文字まで一緒に隠れることがあります。</p>
+          <p class="modal-hint" id="wmRemoveHint" style="display:none; margin:-4px 0 0">指定した文字を含むテキストを検出します。<b>PDF書き出し</b>ではコンテンツストリームから該当する描画命令そのものを取り除く「真の削除」を行います(白く塗りつぶすのではなく、PDF内部のデータとしても文字情報が無くなります)。<b>PNG/JPG画像として書き出す場合</b>は出力がラスタ画像(文字データを持たない)になるため、該当範囲を白で塗りつぶす方式になります。画像だけで構成された透かし(スキャン画像に焼き込まれたものなど)は検出できません。構造が複雑なページでは一部削除できない場合があります。</p>
           <div id="metaFields">
             <p class="modal-hint" style="margin-bottom:8px">PDFのプロパティ(ファイル情報)。空欄の項目は変更しません。PDF書き出し時のみ有効です。</p>
             <div class="field-grid">
@@ -1942,20 +1942,221 @@ button:disabled{opacity:.45; cursor:not-allowed}
     const local = [[-padX, -padY], [w + padX, -padY], [w + padX, h + padY], [-padX, h + padY]];
     return local.map(([lx, ly]) => ({ x: e + lx * ux + ly * vx, y: f + lx * uy + ly * vy }));
   }
-  // 同じテキストアイテムから、pdf-libのdrawRectangle(回転はx,y基準の1点を軸に行われる)向けの
-  // 矩形情報(基準点・幅・高さ・回転角)を算出する(PDF書き出し用)。
-  function wmItemPdfRect(item, padRatio){
-    const [a, b, , , e, f] = item.transform;
-    const w = item.width || 0;
-    const h = item.height || Math.hypot(item.transform[2], item.transform[3]) || 10;
-    const { ux, uy, vx, vy } = wmItemAxes(item);
-    const padX = w * padRatio, padY = h * padRatio;
-    const angleRad = Math.atan2(b, a); // 角度はスケールに依存しないのでtransformから直接求めてよい
-    const x = e + (-padX) * ux + (-padY) * vx;
-    const y = f + (-padX) * uy + (-padY) * vy;
-    return { x, y, width: w + padX * 2, height: h + padY * 2, angleRad };
-  }
   const WM_REMOVE_PAD = 0.08;
+
+  // ---------- 透かしの「真の削除」(PDF書き出し時: コンテンツストリームから描画命令そのものを除去) ----------
+  // PDFのページ内容(コンテンツストリーム)を自前の最小限なトークナイザで解析し、テキスト行列(Tm/Td/TD/T*)・
+  // CTM(cm/q/Q)・フォントサイズ(Tf)を追跡しながら、各Tj/TJ/'/"命令が実際に描画される位置(テキスト
+  // 描画行列Trm)を計算する。これはpdf.jsのtextContentアイテムが返すtransformと同じ定義のため、
+  // 検出した透かしアイテムの位置と数値的に一致する描画命令を特定し、その命令(オペランド+演算子)の
+  // バイト範囲だけをストリームから切り出して取り除く。周囲のバイトは一切変更しないため、フォント
+  // エンコーディングや文字の意味を一切解釈せずに安全に(文字そのものを)削除できる。
+  function wmBytesToLatin1(bytes, start, end){
+    let s = '';
+    for (let i = start; i < end; i++) s += String.fromCharCode(bytes[i]);
+    return s;
+  }
+  function wmTokenizeContentStream(bytes){
+    const tokens = [];
+    const n = bytes.length;
+    let i = 0;
+    const isWs = c => c===0x20||c===0x0A||c===0x0D||c===0x09||c===0x0C||c===0;
+    const isDelim = c => c===0x28||c===0x29||c===0x3C||c===0x3E||c===0x5B||c===0x5D||c===0x7B||c===0x7D||c===0x2F||c===0x25;
+    while (i < n){
+      const c = bytes[i];
+      if (isWs(c)){ i++; continue; }
+      if (c === 0x25){ while (i<n && bytes[i]!==0x0A && bytes[i]!==0x0D) i++; continue; } // % コメント
+      if (c === 0x28){ // ( リテラル文字列(エスケープ・ネスト括弧を考慮)
+        const start = i; i++; let depth = 1;
+        while (i<n && depth>0){
+          const ch = bytes[i];
+          if (ch === 0x5C){ i += 2; continue; }
+          if (ch === 0x28) depth++; else if (ch === 0x29) depth--;
+          i++;
+        }
+        tokens.push({ type:'string', start, end:i });
+        continue;
+      }
+      if (c === 0x3C){ // < 16進文字列 or << 辞書開始
+        if (bytes[i+1] === 0x3C){ tokens.push({type:'dictstart', start:i, end:i+2}); i+=2; continue; }
+        const start = i; i++;
+        while (i<n && bytes[i]!==0x3E) i++;
+        i++;
+        tokens.push({ type:'string', start, end:i });
+        continue;
+      }
+      if (c === 0x3E && bytes[i+1] === 0x3E){ tokens.push({type:'dictend', start:i, end:i+2}); i+=2; continue; }
+      if (c === 0x5B){ tokens.push({type:'arrstart', start:i, end:i+1}); i++; continue; }
+      if (c === 0x5D){ tokens.push({type:'arrend', start:i, end:i+1}); i++; continue; }
+      if (c === 0x2F){ // /Name
+        const start = i; i++;
+        while (i<n && !isWs(bytes[i]) && !isDelim(bytes[i])) i++;
+        tokens.push({ type:'name', start, end:i });
+        continue;
+      }
+      if (c === 0x7B || c === 0x7D){ i++; continue; } // { } (PostScript計算関数、通常は出現しない)
+      const start = i;
+      while (i<n && !isWs(bytes[i]) && !isDelim(bytes[i])) i++;
+      if (i === start){ i++; continue; }
+      const word = wmBytesToLatin1(bytes, start, i);
+      if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(word)){
+        tokens.push({ type:'num', value: parseFloat(word), start, end:i });
+      } else if (word === 'BI'){ // インライン画像: ID〜EIのバイナリ本体はトークン化せずそのまま保持する
+        let j = i;
+        while (j < n){
+          if (bytes[j]===0x49 && bytes[j+1]===0x44 && (j===0||isWs(bytes[j-1])) && (j+2>=n||isWs(bytes[j+2]))) break;
+          j++;
+        }
+        j += 2;
+        if (j<n && isWs(bytes[j])) j++;
+        while (j < n){
+          if (bytes[j]===0x45 && bytes[j+1]===0x49 && (j===0||isWs(bytes[j-1])) && (j+2>=n||isWs(bytes[j+2]))) break;
+          j++;
+        }
+        j += 2;
+        tokens.push({ type:'inlineimage', start, end:j });
+        i = j;
+        continue;
+      } else {
+        tokens.push({ type:'op', value: word, start, end:i });
+      }
+    }
+    return tokens;
+  }
+  // PDFの3x2アフィン行列(行ベクトル規約)の合成。「Aを適用してからBを適用する」結果を返す。
+  function wmMatMul(A, B){
+    const [a1,b1,c1,d1,e1,f1] = A, [a2,b2,c2,d2,e2,f2] = B;
+    return [
+      a1*a2 + b1*c2, a1*b2 + b1*d2,
+      c1*a2 + d1*c2, c1*b2 + d1*d2,
+      e1*a2 + f1*c2 + e2, e1*b2 + f1*d2 + f2,
+    ];
+  }
+  // コンテンツストリームのバイト列から、targetsのtransformに一致するTj/TJ/'/"命令を検出して除去する。
+  // 戻り値: 成功時は{newBytes, removedCount}、トークナイザが想定外の構造に出会った場合はnull
+  // (呼び出し側はnullの場合そのページへの適用を諦め、元のまま残す)。
+  function wmTrueRemoveFromBytes(combined, targets, EPS){
+    const tokens = wmTokenizeContentStream(combined);
+    let ctm = [1,0,0,1,0,0];
+    const ctmStack = [];
+    let tm = [1,0,0,1,0,0], tlm = [1,0,0,1,0,0];
+    let tfSize = 1, th = 1, trise = 0, tl = 0;
+    const excludeRanges = [];
+    let removedCount = 0;
+
+    function matches(trm){
+      for (const t of targets){
+        let ok = true;
+        for (let k = 0; k < 6; k++){ if (Math.abs(trm[k] - t[k]) > EPS){ ok = false; break; } }
+        if (ok) return true;
+      }
+      return false;
+    }
+
+    const operandStack = [];
+    let pendingStart = null;
+    for (const tok of tokens){
+      if (tok.type !== 'op'){
+        if (pendingStart === null) pendingStart = tok.start;
+        operandStack.push(tok);
+        continue;
+      }
+      const op = tok.value;
+      const opStart = pendingStart !== null ? pendingStart : tok.start;
+      const opEnd = tok.end;
+      const nums = () => operandStack.filter(t => t.type === 'num').map(t => t.value);
+
+      switch (op){
+        case 'q': ctmStack.push(ctm); break;
+        case 'Q': if (ctmStack.length) ctm = ctmStack.pop(); break;
+        case 'cm': { const v = nums(); if (v.length === 6) ctm = wmMatMul(v, ctm); break; }
+        case 'BT': tm = [1,0,0,1,0,0]; tlm = [1,0,0,1,0,0]; break;
+        case 'ET': break;
+        case 'Tf': { const v = nums(); if (v.length >= 1) tfSize = v[v.length - 1]; break; }
+        case 'Tz': { const v = nums(); if (v.length) th = v[v.length - 1] / 100; break; }
+        case 'Ts': { const v = nums(); if (v.length) trise = v[v.length - 1]; break; }
+        case 'TL': { const v = nums(); if (v.length) tl = v[v.length - 1]; break; }
+        case 'Tm': { const v = nums(); if (v.length === 6){ tm = v.slice(); tlm = v.slice(); } break; }
+        case 'Td': { const v = nums(); if (v.length === 2){ tlm = wmMatMul([1,0,0,1,v[0],v[1]], tlm); tm = tlm.slice(); } break; }
+        case 'TD': { const v = nums(); if (v.length === 2){ tl = -v[1]; tlm = wmMatMul([1,0,0,1,v[0],v[1]], tlm); tm = tlm.slice(); } break; }
+        case "T*": { tlm = wmMatMul([1,0,0,1,0,-tl], tlm); tm = tlm.slice(); break; }
+        case 'Tj': case "'": case '"': {
+          if (op !== 'Tj'){ tlm = wmMatMul([1,0,0,1,0,-tl], tlm); tm = tlm.slice(); }
+          const fontMat = [tfSize * th, 0, 0, tfSize, 0, trise];
+          const trm = wmMatMul(wmMatMul(fontMat, tm), ctm);
+          if (matches(trm)){ excludeRanges.push([opStart, opEnd]); removedCount++; }
+          break;
+        }
+        case 'TJ': {
+          const fontMat = [tfSize * th, 0, 0, tfSize, 0, trise];
+          const trm = wmMatMul(wmMatMul(fontMat, tm), ctm);
+          if (matches(trm)){ excludeRanges.push([opStart, opEnd]); removedCount++; }
+          break;
+        }
+        default: break;
+      }
+      operandStack.length = 0;
+      pendingStart = null;
+    }
+
+    if (!excludeRanges.length) return { newBytes: combined, removedCount: 0 };
+    excludeRanges.sort((a, b) => a[0] - b[0]);
+    const out = [];
+    let cursor = 0;
+    for (const [s, e] of excludeRanges){
+      if (s > cursor) out.push(combined.subarray(cursor, s));
+      cursor = Math.max(cursor, e);
+    }
+    if (cursor < combined.length) out.push(combined.subarray(cursor));
+    const totalOutLen = out.reduce((s, c) => s + c.length, 0);
+    const newBytes = new Uint8Array(totalOutLen);
+    { let off = 0; for (const c of out){ newBytes.set(c, off); off += c.length; } }
+    return { newBytes, removedCount };
+  }
+  // ページのコンテンツストリームを丸ごと読み出し(複数ストリームに分かれていれば連結し)、
+  // 一致する描画命令を除去して、1本のストリームに差し替える。
+  async function wmTrueRemoveFromPage(context, page, pdfjsPage, needle){
+    const items = await findWatermarkTextItems(pdfjsPage, needle);
+    if (!items.length) return { matched: 0, removed: 0 };
+    const targets = items.map(it => it.transform);
+
+    const contentsKey = PDFLib.PDFName.of('Contents');
+    const contentsObj = page.node.get(contentsKey);
+    let refs;
+    if (contentsObj instanceof PDFLib.PDFRef) refs = [contentsObj];
+    else refs = context.lookup(contentsObj, PDFLib.PDFArray).asArray();
+
+    const chunks = [];
+    for (const ref of refs){
+      const raw = context.lookup(ref);
+      const decoded = PDFLib.decodePDFRawStream(raw).decode();
+      chunks.push(decoded, new Uint8Array([0x0A]));
+    }
+    const totalLen = chunks.reduce((s, c) => s + c.length, 0);
+    const combined = new Uint8Array(totalLen);
+    { let off = 0; for (const c of chunks){ combined.set(c, off); off += c.length; } }
+
+    const { newBytes, removedCount } = wmTrueRemoveFromBytes(combined, targets, 0.6);
+    if (!removedCount) return { matched: items.length, removed: 0 };
+
+    const firstRef = refs[0];
+    const firstRaw = context.lookup(firstRef);
+    const newDict = firstRaw.dict.clone(context);
+    newDict.delete(PDFLib.PDFName.of('Filter'));
+    newDict.delete(PDFLib.PDFName.of('DecodeParms'));
+    newDict.set(PDFLib.PDFName.of('Length'), PDFLib.PDFNumber.of(newBytes.length));
+    context.assign(firstRef, PDFLib.PDFRawStream.of(newDict, newBytes));
+    for (let i = 1; i < refs.length; i++){
+      const raw = context.lookup(refs[i]);
+      const emptyDict = raw.dict.clone(context);
+      emptyDict.delete(PDFLib.PDFName.of('Filter'));
+      emptyDict.delete(PDFLib.PDFName.of('DecodeParms'));
+      emptyDict.set(PDFLib.PDFName.of('Length'), PDFLib.PDFNumber.of(0));
+      context.assign(refs[i], PDFLib.PDFRawStream.of(emptyDict, new Uint8Array(0)));
+    }
+    if (!(contentsObj instanceof PDFLib.PDFRef)) page.node.set(contentsKey, firstRef);
+    return { matched: items.length, removed: removedCount };
+  }
 
   // 透かし文字をcanvasへ描画する(ページ用/画像書き出し用で共通利用)。
   // ページ全体にページ幅基準のフォントサイズで対角線上に1回だけ描く、最もシンプルな構成。
@@ -2145,20 +2346,24 @@ button:disabled{opacity:.45; cursor:not-allowed}
       }
     }
 
-    // 透かしの削除: ページ本来の座標系(pdf.jsのtextContentと同じ)で検出した矩形を、
-    // 白い矩形(不透明)で覆って見えなくする。回転・クロップを適用した後のpageに対して描画するが、
-    // 矩形自体はページ本来の向きの座標なので、/Rotateの影響は受けず正しい位置に描画される。
+    // 透かしの削除(PDF書き出し): コンテンツストリームから該当するTj/TJ命令そのものを取り除く
+    // 「真の削除」。白で覆うのではなく、PDF内部のデータとしても文字情報が無くなる。
     const wmRemoveText = getWatermarkRemoveText();
+    let wmRemoveMatched = 0, wmRemoveRemoved = 0, wmRemoveFailedPages = 0;
     if (wmRemoveText){
-      setStatus('透かしを検出しています…');
+      setStatus('透かしを検出・削除しています…');
       for (const { page, entry } of addedPages){
         const media = mediaById(entry.mediaId);
         if (!media) continue;
-        const pdfjsPage = await media.pdfjsDoc.getPage(entry.pageIndex + 1);
-        const items = await findWatermarkTextItems(pdfjsPage, wmRemoveText);
-        for (const item of items){
-          const r = wmItemPdfRect(item, WM_REMOVE_PAD);
-          page.drawRectangle({ x: r.x, y: r.y, width: r.width, height: r.height, rotate: PDFLib.degrees(r.angleRad * 180 / Math.PI), color: PDFLib.rgb(1, 1, 1), borderWidth: 0 });
+        try {
+          const pdfjsPage = await media.pdfjsDoc.getPage(entry.pageIndex + 1);
+          const { matched, removed } = await wmTrueRemoveFromPage(outDoc.context, page, pdfjsPage, wmRemoveText);
+          wmRemoveMatched += matched;
+          wmRemoveRemoved += removed;
+          if (matched > removed) wmRemoveFailedPages++;
+        } catch (err){
+          console.error('透かしの削除に失敗しました(このページは元のまま残します):', err);
+          wmRemoveFailedPages++;
         }
       }
     }
@@ -2238,6 +2443,15 @@ button:disabled{opacity:.45; cursor:not-allowed}
     }
     if (autoDecryptedNames.length){
       msg += `編集・印刷が制限されていたPDF(${autoDecryptedNames.join('、')})の制限を解除しました。`;
+    }
+    if (wmRemoveText){
+      if (wmRemoveMatched === 0){
+        msg += `「${wmRemoveText}」に一致する透かしは見つかりませんでした。`;
+      } else if (wmRemoveFailedPages === 0){
+        msg += `透かし「${wmRemoveText}」を${wmRemoveRemoved}箇所削除しました。`;
+      } else {
+        msg += `透かし「${wmRemoveText}」を${wmRemoveRemoved}/${wmRemoveMatched}箇所削除しました(一部は構造が複雑なため安全に削除できず、元のまま残っています)。`;
+      }
     }
     setStatus(msg);
   }
