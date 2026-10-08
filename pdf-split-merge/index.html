@@ -389,7 +389,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
       </div>
       <button type="button" class="ghost-sm" id="wmAutoDetectBtn" style="display:none; align-self:flex-start">🔍 候補を自動検出</button>
       <div id="wmCandidateList" class="wm-candidate-list" style="display:none"></div>
-      <p class="modal-hint" id="wmRemoveHint" style="display:none; margin:-4px 0 0">「候補を自動検出」で、回転角度・文字色の薄さ・不透明度・複数ページへの繰り返し出現などから透かしらしい文字列を提案します(あくまで候補で、実際に消すかはチェックで選択してください。誤検出の可能性があります)。<b>PDF・PNG・JPGいずれの書き出しでも</b>、コンテンツストリームから該当する描画命令そのものを取り除く「真の削除」を行ってから書き出します(白く塗りつぶして周辺の内容を隠すのではなく、透かし自体のデータが無くなります)。画像だけで構成された透かし(スキャン画像に焼き込まれたものなど)は検出できません。構造が複雑なページでは一部削除できない場合があります。</p>
+      <p class="modal-hint" id="wmRemoveHint" style="display:none; margin:-4px 0 0">「候補を自動検出」で、回転角度・文字色の薄さ・不透明度・複数ページへの繰り返し出現などから透かしらしい文字列を提案します。</p>
     </div>
 
     <div class="export-section">
@@ -2107,18 +2107,25 @@ button:disabled{opacity:.45; cursor:not-allowed}
 
   // 編集領域に並んでいる全ページを走査し、出現文字列ごとに集約してスコアリングする
   async function wmAutoDetectCandidates(){
-    const libDocCache = new Map();
+    const libDocCache = new Map(); // mediaId -> libDoc(成功時) または Error(失敗時。同じmediaの他ページで読み込みを再試行しないためのキャッシュ)
     const candidateMap = new Map();
+    const failedMediaNames = new Set();
     let pagesScanned = 0;
+    let pagesFailed = 0;
 
     for (const entry of deck){
       const media = mediaById(entry.mediaId);
       if (!media) continue;
       let libDoc = libDocCache.get(entry.mediaId);
+      if (libDoc instanceof Error){ pagesFailed++; failedMediaNames.add(media.name); continue; }
       if (!libDoc){
-        try { libDoc = await loadLibDocForMedia(media); }
-        catch (err){ console.error('透かし候補スキャン用の読み込みに失敗しました:', media.name, err); continue; }
-        libDocCache.set(entry.mediaId, libDoc);
+        try { libDoc = await loadLibDocForMedia(media); libDocCache.set(entry.mediaId, libDoc); }
+        catch (err){
+          console.error('透かし候補スキャン用の読み込みに失敗しました:', media.name, err);
+          libDocCache.set(entry.mediaId, err);
+          pagesFailed++; failedMediaNames.add(media.name);
+          continue;
+        }
       }
       let results;
       try {
@@ -2127,6 +2134,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
         results = await wmScanPageForCandidates(libDoc.context, page, pdfjsPage);
       } catch (err){
         console.error('透かし候補のスキャンに失敗しました(このページはスキップします):', err);
+        pagesFailed++; failedMediaNames.add(media.name);
         continue;
       }
       pagesScanned++;
@@ -2168,7 +2176,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
       candidates.push({ text: c.text, score, isRotated, isLight, isTransparent, isRepeatedAcrossPages, isTiled, pageCount, totalCount: c.count, angleDeg, opacity });
     }
     candidates.sort((a, b) => b.score - a.score);
-    return { candidates, pagesScanned };
+    return { candidates, pagesScanned, pagesFailed, failedMediaNames: [...failedMediaNames] };
   }
 
   function renderWmCandidates(){
@@ -2210,10 +2218,13 @@ button:disabled{opacity:.45; cursor:not-allowed}
     wmAutoDetectBtn.disabled = true;
     setStatus('透かし候補を検出しています…');
     try {
-      const { candidates, pagesScanned } = await wmAutoDetectCandidates();
+      const { candidates, pagesScanned, pagesFailed, failedMediaNames } = await wmAutoDetectCandidates();
       wmCandidates = candidates.map(c => ({ ...c, selected: c.score >= 4 }));
       renderWmCandidates();
-      setStatus(candidates.length ? `${pagesScanned}ページを走査し、候補を${candidates.length}件検出しました。可能性の高いものに自動でチェックを入れています。` : `${pagesScanned}ページを走査しましたが、透かしらしい候補は見つかりませんでした。`);
+      const failNote = pagesFailed
+        ? ` (${pagesFailed}ページは読み込みに失敗したためスキップしました: ${failedMediaNames.join('、')}。対応していない暗号化方式や、破損したPDFの可能性があります)`
+        : '';
+      setStatus((candidates.length ? `${pagesScanned}ページを走査し、候補を${candidates.length}件検出しました。可能性の高いものに自動でチェックを入れています。` : `${pagesScanned}ページを走査しましたが、透かしらしい候補は見つかりませんでした。`) + failNote, !!pagesFailed && !pagesScanned);
     } catch (err){
       console.error('透かし候補の検出に失敗しました:', err);
       setStatus('透かし候補の検出に失敗しました。', true);
