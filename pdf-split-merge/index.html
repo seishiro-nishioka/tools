@@ -395,7 +395,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
           </div>
           <p class="modal-hint" id="wmRemoveHint" style="display:none; margin:-4px 0 0">指定した文字を含むテキストを検出します。<b>PDF書き出し</b>ではコンテンツストリームから該当する描画命令そのものを取り除く「真の削除」を行います(白く塗りつぶすのではなく、PDF内部のデータとしても文字情報が無くなります)。<b>PNG/JPG画像として書き出す場合</b>は出力がラスタ画像(文字データを持たない)になるため、該当範囲を白で塗りつぶす方式になります。画像だけで構成された透かし(スキャン画像に焼き込まれたものなど)は検出できません。構造が複雑なページでは一部削除できない場合があります。</p>
           <div id="metaFields">
-            <p class="modal-hint" style="margin-bottom:8px">PDFのプロパティ(ファイル情報)。空欄の項目は変更しません。PDF書き出し時のみ有効です。</p>
+            <p class="modal-hint" style="margin-bottom:8px">PDFのプロパティ(ファイル情報)。空欄の項目は変更しません。PDF書き出し時のみ有効です。<b>ここに入力した内容はPDFファイル自体に埋め込まれます。</b>本文のように隠れているわけではなく、ファイルを受け取った人が「ドキュメントのプロパティ」(Adobe Acrobat等のメニュー)やPDF編集ツールから誰でも閲覧できます。本名・所属・社内限定の情報など、公開したくない内容を入力しないようご注意ください。</p>
             <div class="field-grid">
               <div class="field"><label for="metaTitle">タイトル</label><input type="text" id="metaTitle"></div>
               <div class="field"><label for="metaAuthor">作成者</label><input type="text" id="metaAuthor"></div>
