@@ -193,6 +193,12 @@ h2{font-size:14.5px; margin:0; font-weight:700; display:flex; align-items:center
 }
 .modal h3{margin:0; font-size:16px}
 .modal p.modal-hint{margin:0; font-size:12.5px; color:var(--sub)}
+.wm-candidate-list{
+  display:flex; flex-direction:column; gap:6px; max-height:220px; overflow:auto;
+  padding:8px; border:1px solid var(--line); border-radius:6px; background:var(--bg);
+}
+.wm-candidate-list .check-row{gap:8px}
+.wm-candidate-list .vmeta{font-size:11.5px}
 .crop-stage{
   position:relative; align-self:center; background:#333; border-radius:4px; overflow:hidden;
   touch-action:none; cursor:crosshair; line-height:0;
@@ -389,11 +395,13 @@ button:disabled{opacity:.45; cursor:not-allowed}
           </div>
           <div class="field-grid" id="wmRemoveFields" style="display:none">
             <div class="field">
-              <label for="wmRemoveText">消したい透かしの文字</label>
+              <label for="wmRemoveText">消したい透かしの文字(手入力)</label>
               <input type="text" id="wmRemoveText" placeholder="例: DRAFT、社外秘など" maxlength="60">
             </div>
           </div>
-          <p class="modal-hint" id="wmRemoveHint" style="display:none; margin:-4px 0 0">指定した文字を含むテキストを検出します。<b>PDF書き出し</b>ではコンテンツストリームから該当する描画命令そのものを取り除く「真の削除」を行います(白く塗りつぶすのではなく、PDF内部のデータとしても文字情報が無くなります)。<b>PNG/JPG画像として書き出す場合</b>は出力がラスタ画像(文字データを持たない)になるため、該当範囲を白で塗りつぶす方式になります。画像だけで構成された透かし(スキャン画像に焼き込まれたものなど)は検出できません。構造が複雑なページでは一部削除できない場合があります。</p>
+          <button type="button" class="ghost-sm" id="wmAutoDetectBtn" style="display:none; align-self:flex-start">🔍 候補を自動検出</button>
+          <div id="wmCandidateList" class="wm-candidate-list" style="display:none"></div>
+          <p class="modal-hint" id="wmRemoveHint" style="display:none; margin:-4px 0 0">指定した文字を含むテキストを検出します。<b>PDF書き出し</b>ではコンテンツストリームから該当する描画命令そのものを取り除く「真の削除」を行います(白く塗りつぶすのではなく、PDF内部のデータとしても文字情報が無くなります)。<b>PNG/JPG画像として書き出す場合</b>は出力がラスタ画像(文字データを持たない)になるため、該当範囲を白で塗りつぶす方式になります。画像だけで構成された透かし(スキャン画像に焼き込まれたものなど)は検出できません。構造が複雑なページでは一部削除できない場合があります。「候補を自動検出」は、回転角度・文字色の薄さ・不透明度・複数ページへの繰り返し出現などから透かしらしい文字列を提案します(あくまで候補で、実際に消すかはチェックで選択してください。誤検出の可能性があります)。</p>
           <div id="metaFields">
             <p class="modal-hint" style="margin-bottom:8px">PDFのプロパティ(ファイル情報)。空欄の項目は変更しません。PDF書き出し時のみ有効です。<b>ここに入力した内容はPDFファイル自体に埋め込まれます。</b>本文のように隠れているわけではなく、ファイルを受け取った人が「ドキュメントのプロパティ」(Adobe Acrobat等のメニュー)やPDF編集ツールから誰でも閲覧できます。本名・所属・社内限定の情報など、公開したくない内容を入力しないようご注意ください。</p>
             <div class="field-grid">
@@ -1900,25 +1908,282 @@ button:disabled{opacity:.45; cursor:not-allowed}
   // ---------- 透かし削除(検出したテキストを白い矩形で覆って見えなくする)設定UI ----------
   const wmRemoveEnableChk = $('wmRemoveEnable'), wmRemoveFieldsEl = $('wmRemoveFields');
   const wmRemoveTextInput = $('wmRemoveText'), wmRemoveHintEl = $('wmRemoveHint');
+  const wmAutoDetectBtn = $('wmAutoDetectBtn'), wmCandidateListEl = $('wmCandidateList');
   wmRemoveEnableChk.addEventListener('change', () => {
     const show = wmRemoveEnableChk.checked;
     wmRemoveFieldsEl.style.display = show ? '' : 'none';
     wmRemoveHintEl.style.display = show ? '' : 'none';
+    wmAutoDetectBtn.style.display = show ? '' : 'none';
+    if (!show){ wmCandidates = []; renderWmCandidates(); }
   });
-  function getWatermarkRemoveText(){
-    if (!wmRemoveEnableChk.checked) return '';
-    return wmRemoveTextInput.value.trim();
+  // 手入力の文字列 + 自動検出で選択されたテキストを、重複排除したうえで配列として返す
+  function getWatermarkRemoveNeedles(){
+    if (!wmRemoveEnableChk.checked) return [];
+    const needles = [];
+    const manual = wmRemoveTextInput.value.trim();
+    if (manual) needles.push(manual);
+    for (const c of wmCandidates) if (c.selected) needles.push(c.text);
+    return [...new Set(needles)];
   }
 
-  // pdf.jsのtextContentアイテムから、指定文字列を含むものを検出する(大文字小文字を区別しない部分一致)。
-  // ウォーターマーク生成ツールの多くは1回のテキスト描画命令で文字列全体を描くため、
-  // アイテム単位の部分一致で実用上は十分カバーできる(複数アイテムにまたがる分割までは追跡しない)。
-  async function findWatermarkTextItems(pdfjsPage, needle){
-    if (!needle) return [];
-    const needleLower = needle.toLowerCase();
+  // pdf.jsのtextContentアイテムから、指定文字列群のいずれかを含むものを検出する
+  // (大文字小文字を区別しない部分一致)。ウォーターマーク生成ツールの多くは1回の
+  // テキスト描画命令で文字列全体を描くため、アイテム単位の部分一致で実用上は十分
+  // カバーできる(複数アイテムにまたがる分割までは追跡しない)。
+  async function findWatermarkTextItems(pdfjsPage, needles){
+    if (!needles || !needles.length) return [];
+    const lowerNeedles = needles.map(n => n.toLowerCase());
     const content = await pdfjsPage.getTextContent();
-    return content.items.filter(it => it.str && it.str.toLowerCase().includes(needleLower));
+    return content.items.filter(it => it.str && lowerNeedles.some(nl => it.str.toLowerCase().includes(nl)));
   }
+
+  // ---------- 透かし候補の自動検出 ----------
+  // pdf.jsのtextContent(文字・座標)と、コンテンツストリームを自前のトークナイザで解析して得た
+  // 色・不透明度・文字レンダリングモードを組み合わせて「透かしらしさ」をスコアリングする。
+  // あくまで候補の提示までで、実際に消すかどうかは必ずユーザーが選択する(自動では消さない)。
+  let wmCandidates = [];
+
+  function wmColorLuminance(rgb){ return 0.299*rgb[0] + 0.587*rgb[1] + 0.114*rgb[2]; }
+  function wmCmykToRgb(c, m, y, k){ return [(1-c)*(1-k), (1-m)*(1-k), (1-y)*(1-k)]; }
+
+  // 1ページぶん、各テキストアイテムに回転角・塗り色・不透明度・可視性を対応付ける。
+  // 透かし削除(wmTrueRemoveFromPage)と同様にTm/CTM/フォントサイズを追跡してTrmを計算し、
+  // pdf.jsのtextContentアイテムの位置と数値的に一致するものへ属性を割り当てる。
+  async function wmScanPageForCandidates(context, page, pdfjsPage){
+    const content = await pdfjsPage.getTextContent();
+    const items = content.items.filter(it => it.str && it.str.trim());
+    if (!items.length) return [];
+
+    const contentsKey = PDFLib.PDFName.of('Contents');
+    let combined;
+    try {
+      const contentsObj = page.node.get(contentsKey);
+      const refs = contentsObj instanceof PDFLib.PDFRef ? [contentsObj] : context.lookup(contentsObj, PDFLib.PDFArray).asArray();
+      const chunks = [];
+      for (const ref of refs){
+        const raw = context.lookup(ref);
+        const decoded = PDFLib.decodePDFRawStream(raw).decode();
+        chunks.push(decoded, new Uint8Array([0x0A]));
+      }
+      const totalLen = chunks.reduce((s, c) => s + c.length, 0);
+      combined = new Uint8Array(totalLen);
+      let off = 0; for (const c of chunks){ combined.set(c, off); off += c.length; }
+    } catch (err){
+      return []; // 解析できないページはスキャン対象から静かに除外する(候補提示が失敗しても致命的ではないため)
+    }
+
+    let extGState = null;
+    try { extGState = page.node.Resources().lookupMaybe(PDFLib.PDFName.of('ExtGState'), PDFLib.PDFDict); } catch (err){}
+    function gsOpacity(name){
+      if (!extGState) return null;
+      try {
+        const gsDict = extGState.lookupMaybe(PDFLib.PDFName.of(name), PDFLib.PDFDict);
+        if (!gsDict) return null;
+        const ca = gsDict.lookupMaybe(PDFLib.PDFName.of('ca'), PDFLib.PDFNumber);
+        return ca ? ca.asNumber() : null;
+      } catch (err){ return null; }
+    }
+
+    const tokens = wmTokenizeContentStream(combined);
+    let ctm = [1,0,0,1,0,0];
+    const stateStack = [];
+    let tm = [1,0,0,1,0,0], tlm = [1,0,0,1,0,0];
+    let tfSize = 1, th = 1, trise = 0, tl = 0;
+    let fillColor = [0,0,0], opacity = 1, renderMode = 0;
+    const EPS = 0.6;
+    const results = [];
+
+    function findMatchingItem(trm){
+      for (const it of items){
+        const t = it.transform;
+        let ok = true;
+        for (let k = 0; k < 6; k++){ if (Math.abs(trm[k] - t[k]) > EPS){ ok = false; break; } }
+        if (ok) return it;
+      }
+      return null;
+    }
+
+    const operandStack = [];
+    let pendingStart = null;
+    for (const tok of tokens){
+      if (tok.type !== 'op'){ if (pendingStart === null) pendingStart = tok.start; operandStack.push(tok); continue; }
+      const op = tok.value;
+      const nums = () => operandStack.filter(t => t.type === 'num').map(t => t.value);
+      const nameToks = () => operandStack.filter(t => t.type === 'name');
+
+      switch (op){
+        case 'q': stateStack.push({ ctm, fillColor, opacity }); break;
+        case 'Q': if (stateStack.length){ const s = stateStack.pop(); ctm = s.ctm; fillColor = s.fillColor; opacity = s.opacity; } break;
+        case 'cm': { const v = nums(); if (v.length === 6) ctm = wmMatMul(v, ctm); break; }
+        case 'BT': tm = [1,0,0,1,0,0]; tlm = [1,0,0,1,0,0]; break;
+        case 'ET': break;
+        case 'Tf': { const v = nums(); if (v.length >= 1) tfSize = v[v.length - 1]; break; }
+        case 'Tz': { const v = nums(); if (v.length) th = v[v.length - 1] / 100; break; }
+        case 'Ts': { const v = nums(); if (v.length) trise = v[v.length - 1]; break; }
+        case 'TL': { const v = nums(); if (v.length) tl = v[v.length - 1]; break; }
+        case 'Tr': { const v = nums(); if (v.length) renderMode = v[v.length - 1]; break; }
+        case 'Tm': { const v = nums(); if (v.length === 6){ tm = v.slice(); tlm = v.slice(); } break; }
+        case 'Td': { const v = nums(); if (v.length === 2){ tlm = wmMatMul([1,0,0,1,v[0],v[1]], tlm); tm = tlm.slice(); } break; }
+        case 'TD': { const v = nums(); if (v.length === 2){ tl = -v[1]; tlm = wmMatMul([1,0,0,1,v[0],v[1]], tlm); tm = tlm.slice(); } break; }
+        case "T*": { tlm = wmMatMul([1,0,0,1,0,-tl], tlm); tm = tlm.slice(); break; }
+        case 'g': { const v = nums(); if (v.length >= 1){ const gr = v[v.length - 1]; fillColor = [gr,gr,gr]; } break; }
+        case 'rg': { const v = nums(); if (v.length >= 3) fillColor = v.slice(-3); break; }
+        case 'k': { const v = nums(); if (v.length >= 4) fillColor = wmCmykToRgb(...v.slice(-4)); break; }
+        case 'sc': case 'scn': {
+          const v = nums();
+          if (v.length === 1){ const gr = v[0]; fillColor = [gr,gr,gr]; }
+          else if (v.length === 3) fillColor = v.slice(-3);
+          else if (v.length === 4) fillColor = wmCmykToRgb(...v.slice(-4));
+          break;
+        }
+        case 'gs': {
+          const nm = nameToks();
+          if (nm.length){
+            const last = nm[nm.length - 1];
+            const nameStr = wmBytesToLatin1(combined, last.start + 1, last.end);
+            const o = gsOpacity(nameStr);
+            if (o != null) opacity = o;
+          }
+          break;
+        }
+        case 'Tj': case "'": case '"': {
+          if (op !== 'Tj'){ tlm = wmMatMul([1,0,0,1,0,-tl], tlm); tm = tlm.slice(); }
+          const fontMat = [tfSize * th, 0, 0, tfSize, 0, trise];
+          const trm = wmMatMul(wmMatMul(fontMat, tm), ctm);
+          const m = findMatchingItem(trm);
+          if (m) results.push({ item: m, angleDeg: Math.atan2(trm[1], trm[0]) * 180 / Math.PI, color: fillColor.slice(), opacity, invisible: renderMode === 3 || renderMode === 7 });
+          break;
+        }
+        case 'TJ': {
+          const fontMat = [tfSize * th, 0, 0, tfSize, 0, trise];
+          const trm = wmMatMul(wmMatMul(fontMat, tm), ctm);
+          const m = findMatchingItem(trm);
+          if (m) results.push({ item: m, angleDeg: Math.atan2(trm[1], trm[0]) * 180 / Math.PI, color: fillColor.slice(), opacity, invisible: renderMode === 3 || renderMode === 7 });
+          break;
+        }
+        default: break;
+      }
+      operandStack.length = 0;
+      pendingStart = null;
+    }
+    return results;
+  }
+
+  // 編集領域に並んでいる全ページを走査し、出現文字列ごとに集約してスコアリングする
+  async function wmAutoDetectCandidates(){
+    const libDocCache = new Map();
+    const candidateMap = new Map();
+    let pagesScanned = 0;
+
+    for (const entry of deck){
+      const media = mediaById(entry.mediaId);
+      if (!media) continue;
+      let libDoc = libDocCache.get(entry.mediaId);
+      if (!libDoc){
+        try { libDoc = await loadLibDocForMedia(media); }
+        catch (err){ console.error('透かし候補スキャン用の読み込みに失敗しました:', media.name, err); continue; }
+        libDocCache.set(entry.mediaId, libDoc);
+      }
+      let results;
+      try {
+        const page = libDoc.getPage(entry.pageIndex);
+        const pdfjsPage = await media.pdfjsDoc.getPage(entry.pageIndex + 1);
+        results = await wmScanPageForCandidates(libDoc.context, page, pdfjsPage);
+      } catch (err){
+        console.error('透かし候補のスキャンに失敗しました(このページはスキップします):', err);
+        continue;
+      }
+      pagesScanned++;
+      for (const r of results){
+        if (r.invisible) continue; // OCRテキスト層など、見えない文字は候補から除外する
+        const text = r.item.str.trim();
+        if (text.length < 2) continue; // 1文字だけはノイズになりやすいため除外
+        let c = candidateMap.get(text);
+        if (!c){ c = { text, count: 0, pages: new Set(), angles: [], colors: [], opacities: [] }; candidateMap.set(text, c); }
+        c.count++;
+        c.pages.add(`${entry.mediaId}:${entry.pageIndex}`);
+        c.angles.push(r.angleDeg);
+        c.colors.push(r.color);
+        c.opacities.push(r.opacity);
+      }
+    }
+
+    const candidates = [];
+    for (const c of candidateMap.values()){
+      const angleDeg = c.angles[0];
+      const normAngle = ((angleDeg % 90) + 90) % 90;
+      const isRotated = Math.min(normAngle, 90 - normAngle) > 2;
+      const avgLum = c.colors.reduce((s, col) => s + wmColorLuminance(col), 0) / c.colors.length;
+      const isLight = avgLum > 0.55;
+      const opacity = Math.min(...c.opacities);
+      const isTransparent = opacity < 0.95;
+      const pageCount = c.pages.size;
+      const isRepeatedAcrossPages = pageCount >= 2 && (pageCount / pagesScanned) >= 0.5;
+      const isTiled = c.count > pageCount;
+
+      let score = 0;
+      if (isRotated) score += 2;
+      if (isLight) score += 2;
+      if (isTransparent) score += 2;
+      if (isRepeatedAcrossPages) score += 2;
+      if (isTiled) score += 1;
+      if (c.text.length <= 3) score -= 2;
+
+      candidates.push({ text: c.text, score, isRotated, isLight, isTransparent, isRepeatedAcrossPages, isTiled, pageCount, totalCount: c.count, angleDeg, opacity });
+    }
+    candidates.sort((a, b) => b.score - a.score);
+    return { candidates, pagesScanned };
+  }
+
+  function renderWmCandidates(){
+    wmCandidateListEl.innerHTML = '';
+    if (!wmCandidates.length){ wmCandidateListEl.style.display = 'none'; return; }
+    wmCandidateListEl.style.display = 'flex';
+    for (const c of wmCandidates){
+      const row = document.createElement('label');
+      row.className = 'check-row';
+      row.style.alignItems = 'flex-start';
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.checked = c.selected;
+      chk.addEventListener('change', () => { c.selected = chk.checked; });
+      row.appendChild(chk);
+
+      const textEl = document.createElement('div');
+      const tier = c.score >= 4 ? '可能性: 高' : c.score >= 2 ? '可能性: 中' : '可能性: 低';
+      const strong = document.createElement('b');
+      strong.textContent = c.text;
+      textEl.appendChild(strong);
+      const details = [];
+      if (c.isRotated) details.push(`回転${Math.round(c.angleDeg)}°`);
+      if (c.isLight) details.push('薄い色');
+      if (c.isTransparent) details.push(`不透明度${c.opacity.toFixed(2)}`);
+      details.push(`${c.pageCount}ページに出現(計${c.totalCount}回)`);
+      const sub = document.createElement('div');
+      sub.className = 'vmeta';
+      sub.style.color = 'var(--sub)';
+      sub.textContent = `[${tier}] ${details.join('、')}`;
+      textEl.appendChild(sub);
+      row.appendChild(textEl);
+      wmCandidateListEl.appendChild(row);
+    }
+  }
+
+  wmAutoDetectBtn.addEventListener('click', async () => {
+    if (!deck.length){ setStatus('編集領域にページがありません。', true); return; }
+    wmAutoDetectBtn.disabled = true;
+    setStatus('透かし候補を検出しています…');
+    try {
+      const { candidates, pagesScanned } = await wmAutoDetectCandidates();
+      wmCandidates = candidates.map(c => ({ ...c, selected: c.score >= 4 }));
+      renderWmCandidates();
+      setStatus(candidates.length ? `${pagesScanned}ページを走査し、候補を${candidates.length}件検出しました。可能性の高いものに自動でチェックを入れています。` : `${pagesScanned}ページを走査しましたが、透かしらしい候補は見つかりませんでした。`);
+    } catch (err){
+      console.error('透かし候補の検出に失敗しました:', err);
+      setStatus('透かし候補の検出に失敗しました。', true);
+    }
+    wmAutoDetectBtn.disabled = false;
+  });
 
   // item.transformの(a,b,c,d)は「回転・スキュー」だけでなく「フォントサイズによる拡大」も
   // 織り込まれた行列だが、item.width/heightは既に最終的なユーザー空間単位(pt)で表現されている。
@@ -2115,8 +2380,8 @@ button:disabled{opacity:.45; cursor:not-allowed}
   }
   // ページのコンテンツストリームを丸ごと読み出し(複数ストリームに分かれていれば連結し)、
   // 一致する描画命令を除去して、1本のストリームに差し替える。
-  async function wmTrueRemoveFromPage(context, page, pdfjsPage, needle){
-    const items = await findWatermarkTextItems(pdfjsPage, needle);
+  async function wmTrueRemoveFromPage(context, page, pdfjsPage, needles){
+    const items = await findWatermarkTextItems(pdfjsPage, needles);
     if (!items.length) return { matched: 0, removed: 0 };
     const targets = items.map(it => it.transform);
 
@@ -2277,6 +2542,23 @@ button:disabled{opacity:.45; cursor:not-allowed}
     return media ? media.name.replace(/\.pdf$/i, '') + '_edited.pdf' : null;
   }
 
+  // 印刷・編集制限のみ(閲覧パスワードなし)で暗号化されたPDFも多いため、その場合は無視して読み込み、
+  // 明示的に復号する(ignoreEncryptionはチェックを素通りさせるだけで実際には復号しないため、
+  // そのままだとページ内容が暗号文のままになる)。exportPdf()と透かし候補の自動検出の両方で使う。
+  async function loadLibDocForMedia(media, autoDecryptedNames){
+    const libDoc = await PDFLib.PDFDocument.load(media.arrayBuffer, { ignoreEncryption: true });
+    if (libDoc.isEncrypted){
+      try{
+        await PdfDecryptLib.decryptPdfLibDocument(libDoc);
+        if (autoDecryptedNames) autoDecryptedNames.push(media.name);
+      }catch(err){
+        const reason = (err instanceof PdfPasswordRequiredError) ? '閲覧パスワードで保護されている' : 'この暗号化方式に対応していない';
+        throw new Error(`"${media.name}" は${reason}ため読み込めません。`);
+      }
+    }
+    return libDoc;
+  }
+
   async function exportPdf(){
     setStatus('PDFを作成しています…');
     const outDoc = await PDFLib.PDFDocument.create();
@@ -2299,18 +2581,10 @@ button:disabled{opacity:.45; cursor:not-allowed}
       let libDoc = libDocCache.get(mediaId);
       if (!libDoc){
         const media = mediaById(mediaId);
-        // 印刷・編集制限のみ(閲覧パスワードなし)で暗号化されたPDFも多いため、その場合は無視して読み込む
-        libDoc = await PDFLib.PDFDocument.load(media.arrayBuffer, { ignoreEncryption: true });
-        if (libDoc.isEncrypted){
-          // ignoreEncryptionはチェックを素通りさせるだけで実際には復号しないため、
-          // そのままだとページ内容が暗号文のままコピーされ白紙になる。ここで明示的に復号する。
-          try{
-            await PdfDecryptLib.decryptPdfLibDocument(libDoc);
-            autoDecryptedNames.push(media.name);
-          }catch(err){
-            const reason = (err instanceof PdfPasswordRequiredError) ? '閲覧パスワードで保護されている' : 'この暗号化方式に対応していない';
-            throw new Error(`"${media.name}" は${reason}ため、PDFとして書き出せません。`);
-          }
+        try {
+          libDoc = await loadLibDocForMedia(media, autoDecryptedNames);
+        } catch (err){
+          throw new Error(err.message.replace('読み込めません', 'PDFとして書き出せません'));
         }
         libDocCache.set(mediaId, libDoc);
       }
@@ -2343,16 +2617,16 @@ button:disabled{opacity:.45; cursor:not-allowed}
 
     // 透かしの削除(PDF書き出し): コンテンツストリームから該当するTj/TJ命令そのものを取り除く
     // 「真の削除」。白で覆うのではなく、PDF内部のデータとしても文字情報が無くなる。
-    const wmRemoveText = getWatermarkRemoveText();
+    const wmRemoveNeedles = getWatermarkRemoveNeedles();
     let wmRemoveMatched = 0, wmRemoveRemoved = 0, wmRemoveFailedPages = 0;
-    if (wmRemoveText){
+    if (wmRemoveNeedles.length){
       setStatus('透かしを検出・削除しています…');
       for (const { page, entry } of addedPages){
         const media = mediaById(entry.mediaId);
         if (!media) continue;
         try {
           const pdfjsPage = await media.pdfjsDoc.getPage(entry.pageIndex + 1);
-          const { matched, removed } = await wmTrueRemoveFromPage(outDoc.context, page, pdfjsPage, wmRemoveText);
+          const { matched, removed } = await wmTrueRemoveFromPage(outDoc.context, page, pdfjsPage, wmRemoveNeedles);
           wmRemoveMatched += matched;
           wmRemoveRemoved += removed;
           if (matched > removed) wmRemoveFailedPages++;
@@ -2439,13 +2713,14 @@ button:disabled{opacity:.45; cursor:not-allowed}
     if (autoDecryptedNames.length){
       msg += `編集・印刷が制限されていたPDF(${autoDecryptedNames.join('、')})の制限を解除しました。`;
     }
-    if (wmRemoveText){
+    if (wmRemoveNeedles.length){
+      const label = wmRemoveNeedles.map(n => `「${n}」`).join('、');
       if (wmRemoveMatched === 0){
-        msg += `「${wmRemoveText}」に一致する透かしは見つかりませんでした。`;
+        msg += `${label} に一致する透かしは見つかりませんでした。`;
       } else if (wmRemoveFailedPages === 0){
-        msg += `透かし「${wmRemoveText}」を${wmRemoveRemoved}箇所削除しました。`;
+        msg += `透かし${label}を${wmRemoveRemoved}箇所削除しました。`;
       } else {
-        msg += `透かし「${wmRemoveText}」を${wmRemoveRemoved}/${wmRemoveMatched}箇所削除しました(一部は構造が複雑なため安全に削除できず、元のまま残っています)。`;
+        msg += `透かし${label}を${wmRemoveRemoved}/${wmRemoveMatched}箇所削除しました(一部は構造が複雑なため安全に削除できず、元のまま残っています)。`;
       }
     }
     setStatus(msg);
@@ -2468,9 +2743,9 @@ button:disabled{opacity:.45; cursor:not-allowed}
 
     // 透かしの削除: 検出した文字の範囲を白い矩形で覆って見えなくする(スタンプより先に行うことで、
     // ユーザーが意図的に配置したスタンプが後からマスクで隠れてしまうことがないようにする)。
-    const wmRemoveText = getWatermarkRemoveText();
-    if (wmRemoveText){
-      const items = await findWatermarkTextItems(page, wmRemoveText);
+    const wmRemoveNeedles = getWatermarkRemoveNeedles();
+    if (wmRemoveNeedles.length){
+      const items = await findWatermarkTextItems(page, wmRemoveNeedles);
       fullCtx.save();
       fullCtx.fillStyle = '#fff';
       for (const item of items){
