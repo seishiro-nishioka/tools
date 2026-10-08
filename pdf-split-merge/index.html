@@ -297,7 +297,11 @@ button:disabled{opacity:.45; cursor:not-allowed}
 
 .progress{height:6px; background:var(--line); border-radius:3px; overflow:hidden; margin-top:2px; display:none}
 .progress > i{display:block; height:100%; width:0; background:var(--red); transition:width .15s ease}
-#status{font-size:13px; color:var(--sub); margin:0; min-height:1.4em}
+#status{
+  font-size:13px; color:var(--sub); margin:0; min-height:1.4em; flex:none;
+  padding:0 22px 10px;
+}
+#status:empty{display:none}
 .sr{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0)}
 </style>
 </head>
@@ -311,6 +315,8 @@ button:disabled{opacity:.45; cursor:not-allowed}
   </div>
   <p>PDFをページ単位に分解して並べ替え、PDF・PNG・JPGとして書き出します。ファイルはサーバーに送信されず、処理はすべてお使いの端末のブラウザ内で行われます。</p>
 </header>
+
+<p id="status"></p>
 
 <main>
   <section class="pool box" id="mediaPool">
@@ -428,7 +434,6 @@ button:disabled{opacity:.45; cursor:not-allowed}
     </div>
 
     <div class="progress" id="prog"><i></i></div>
-    <p id="status"></p>
     <button class="primary export-submit" id="exportBtn" disabled>書き出す</button>
   </section>
 </main>
