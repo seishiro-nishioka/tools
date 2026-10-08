@@ -384,6 +384,16 @@ button:disabled{opacity:.45; cursor:not-allowed}
               </select>
             </div>
           </div>
+          <div class="modal-row">
+            <label class="check-row"><input type="checkbox" id="wmRemoveEnable"> 透かしの文字を検出して消す</label>
+          </div>
+          <div class="field-grid" id="wmRemoveFields" style="display:none">
+            <div class="field">
+              <label for="wmRemoveText">消したい透かしの文字</label>
+              <input type="text" id="wmRemoveText" placeholder="例: DRAFT、社外秘など" maxlength="60">
+            </div>
+          </div>
+          <p class="modal-hint" id="wmRemoveHint" style="display:none; margin:-4px 0 0">指定した文字を含むテキストを検出し、白い矩形で覆って見えなくします。PDF内部のデータとして文字情報自体が残る場合があります(完全な削除ではありません)。画像だけで構成された透かし(スキャン画像に焼き込まれたものなど)は検出できません。透かしが本文と近接・重なっている場合、周辺の文字まで一緒に隠れることがあります。</p>
           <div id="metaFields">
             <p class="modal-hint" style="margin-bottom:8px">PDFのプロパティ(ファイル情報)。空欄の項目は変更しません。PDF書き出し時のみ有効です。</p>
             <div class="field-grid">
@@ -1887,6 +1897,66 @@ button:disabled{opacity:.45; cursor:not-allowed}
     return { text, sizeRatio: sizeMap[wmSizeSel.value] || sizeMap.medium, opacity: parseFloat(wmOpacitySel.value) || 0.2 };
   }
 
+  // ---------- 透かし削除(検出したテキストを白い矩形で覆って見えなくする)設定UI ----------
+  const wmRemoveEnableChk = $('wmRemoveEnable'), wmRemoveFieldsEl = $('wmRemoveFields');
+  const wmRemoveTextInput = $('wmRemoveText'), wmRemoveHintEl = $('wmRemoveHint');
+  wmRemoveEnableChk.addEventListener('change', () => {
+    const show = wmRemoveEnableChk.checked;
+    wmRemoveFieldsEl.style.display = show ? '' : 'none';
+    wmRemoveHintEl.style.display = show ? '' : 'none';
+  });
+  function getWatermarkRemoveText(){
+    if (!wmRemoveEnableChk.checked) return '';
+    return wmRemoveTextInput.value.trim();
+  }
+
+  // pdf.jsのtextContentアイテムから、指定文字列を含むものを検出する(大文字小文字を区別しない部分一致)。
+  // ウォーターマーク生成ツールの多くは1回のテキスト描画命令で文字列全体を描くため、
+  // アイテム単位の部分一致で実用上は十分カバーできる(複数アイテムにまたがる分割までは追跡しない)。
+  async function findWatermarkTextItems(pdfjsPage, needle){
+    if (!needle) return [];
+    const needleLower = needle.toLowerCase();
+    const content = await pdfjsPage.getTextContent();
+    return content.items.filter(it => it.str && it.str.toLowerCase().includes(needleLower));
+  }
+
+  // item.transformの(a,b,c,d)は「回転・スキュー」だけでなく「フォントサイズによる拡大」も
+  // 織り込まれた行列だが、item.width/heightは既に最終的なユーザー空間単位(pt)で表現されている。
+  // そのためwidth/heightをtransformでそのまま変換すると、フォントサイズ分を二重に掛けてしまい
+  // 座標が大きくずれる(実機テストで発覚)。回転方向だけを表す単位ベクトルを(a,b)/(c,d)から
+  // 正規化して取り出し、それをwidth/heightという「既にスケール済みの長さ」に掛ける。
+  function wmItemAxes(item){
+    const [a, b, c, d] = item.transform;
+    const sx = Math.hypot(a, b) || 1;
+    const sy = Math.hypot(c, d) || 1;
+    return { ux: a / sx, uy: b / sx, vx: c / sy, vy: d / sy };
+  }
+  // テキストアイテムのローカル座標系(x:0..w, y:0..h、ベースライン=y:0)にパディングを加えたうえで、
+  // 回転方向の単位ベクトルを使ってページ座標へ変換した4隅の点を返す(画像書き出し用)。
+  function wmItemCorners(item, padRatio){
+    const [, , , , e, f] = item.transform;
+    const w = item.width || 0;
+    const h = item.height || Math.hypot(item.transform[2], item.transform[3]) || 10;
+    const { ux, uy, vx, vy } = wmItemAxes(item);
+    const padX = w * padRatio, padY = h * padRatio;
+    const local = [[-padX, -padY], [w + padX, -padY], [w + padX, h + padY], [-padX, h + padY]];
+    return local.map(([lx, ly]) => ({ x: e + lx * ux + ly * vx, y: f + lx * uy + ly * vy }));
+  }
+  // 同じテキストアイテムから、pdf-libのdrawRectangle(回転はx,y基準の1点を軸に行われる)向けの
+  // 矩形情報(基準点・幅・高さ・回転角)を算出する(PDF書き出し用)。
+  function wmItemPdfRect(item, padRatio){
+    const [a, b, , , e, f] = item.transform;
+    const w = item.width || 0;
+    const h = item.height || Math.hypot(item.transform[2], item.transform[3]) || 10;
+    const { ux, uy, vx, vy } = wmItemAxes(item);
+    const padX = w * padRatio, padY = h * padRatio;
+    const angleRad = Math.atan2(b, a); // 角度はスケールに依存しないのでtransformから直接求めてよい
+    const x = e + (-padX) * ux + (-padY) * vx;
+    const y = f + (-padX) * uy + (-padY) * vy;
+    return { x, y, width: w + padX * 2, height: h + padY * 2, angleRad };
+  }
+  const WM_REMOVE_PAD = 0.08;
+
   // 透かし文字をcanvasへ描画する(ページ用/画像書き出し用で共通利用)。
   // ページ全体にページ幅基準のフォントサイズで対角線上に1回だけ描く、最もシンプルな構成。
   // ブラウザに読み込み済みのWebフォント("Zen Kaku Gothic New")でそのまま描画するため、
@@ -2075,6 +2145,24 @@ button:disabled{opacity:.45; cursor:not-allowed}
       }
     }
 
+    // 透かしの削除: ページ本来の座標系(pdf.jsのtextContentと同じ)で検出した矩形を、
+    // 白い矩形(不透明)で覆って見えなくする。回転・クロップを適用した後のpageに対して描画するが、
+    // 矩形自体はページ本来の向きの座標なので、/Rotateの影響は受けず正しい位置に描画される。
+    const wmRemoveText = getWatermarkRemoveText();
+    if (wmRemoveText){
+      setStatus('透かしを検出しています…');
+      for (const { page, entry } of addedPages){
+        const media = mediaById(entry.mediaId);
+        if (!media) continue;
+        const pdfjsPage = await media.pdfjsDoc.getPage(entry.pageIndex + 1);
+        const items = await findWatermarkTextItems(pdfjsPage, wmRemoveText);
+        for (const item of items){
+          const r = wmItemPdfRect(item, WM_REMOVE_PAD);
+          page.drawRectangle({ x: r.x, y: r.y, width: r.width, height: r.height, rotate: PDFLib.degrees(r.angleRad * 180 / Math.PI), color: PDFLib.rgb(1, 1, 1), borderWidth: 0 });
+        }
+      }
+    }
+
     // 透かし: ページ全体(MediaBox全体)に対して描画してから、必要ならクロップで切り取られる形になる
     // (= クロップ範囲外の透かしは単に表示されないだけで、挙動として自然)。
     const wmOpts = getWatermarkOptions();
@@ -2168,6 +2256,24 @@ button:disabled{opacity:.45; cursor:not-allowed}
     const fullCtx = fullCanvas.getContext('2d');
     if (fillWhite){ fullCtx.fillStyle = '#fff'; fullCtx.fillRect(0, 0, fullCanvas.width, fullCanvas.height); }
     await page.render({ canvasContext: fullCtx, viewport }).promise;
+
+    // 透かしの削除: 検出した文字の範囲を白い矩形で覆って見えなくする(スタンプより先に行うことで、
+    // ユーザーが意図的に配置したスタンプが後からマスクで隠れてしまうことがないようにする)。
+    const wmRemoveText = getWatermarkRemoveText();
+    if (wmRemoveText){
+      const items = await findWatermarkTextItems(page, wmRemoveText);
+      fullCtx.save();
+      fullCtx.fillStyle = '#fff';
+      for (const item of items){
+        const corners = wmItemCorners(item, WM_REMOVE_PAD).map(p => viewport.convertToViewportPoint(p.x, p.y));
+        fullCtx.beginPath();
+        fullCtx.moveTo(corners[0][0], corners[0][1]);
+        for (let i = 1; i < corners.length; i++) fullCtx.lineTo(corners[i][0], corners[i][1]);
+        fullCtx.closePath();
+        fullCtx.fill();
+      }
+      fullCtx.restore();
+    }
 
     // 署名・スタンプ: クロップより先に(回転込みの)フルページ座標へ描画しておくことで、
     // クロップ処理が通常のページ内容と同様に正しく切り取ってくれる。
