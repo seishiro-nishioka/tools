@@ -2139,22 +2139,17 @@ button:disabled{opacity:.45; cursor:not-allowed}
     const { newBytes, removedCount } = wmTrueRemoveFromBytes(combined, targets, 0.6);
     if (!removedCount) return { matched: items.length, removed: 0 };
 
-    const firstRef = refs[0];
-    const firstRaw = context.lookup(firstRef);
-    const newDict = firstRaw.dict.clone(context);
-    newDict.delete(PDFLib.PDFName.of('Filter'));
-    newDict.delete(PDFLib.PDFName.of('DecodeParms'));
+    // 重要: 既存のストリームオブジェクト(refs)は、PDFの仕様上は合法な構造として
+    // 複数のページから共有されている場合がある(実機で確認済み: テンプレートから生成された
+    // PDF等で同一のコンテンツストリームを複数ページが参照しているケースがあった)。
+    // 既存オブジェクトをcontext.assign()で直接書き換えると、そのオブジェクトを参照している
+    // 「他の」ページの内容までこのページの内容に置き換わってしまう重大な不具合になるため、
+    // 既存オブジェクトには一切手を加えず、必ず新規オブジェクトを登録してこのページの
+    // Contentsだけをそれに差し替える(他ページが元のオブジェクトを参照し続けても安全)。
+    const newDict = PDFLib.PDFDict.withContext(context);
     newDict.set(PDFLib.PDFName.of('Length'), PDFLib.PDFNumber.of(newBytes.length));
-    context.assign(firstRef, PDFLib.PDFRawStream.of(newDict, newBytes));
-    for (let i = 1; i < refs.length; i++){
-      const raw = context.lookup(refs[i]);
-      const emptyDict = raw.dict.clone(context);
-      emptyDict.delete(PDFLib.PDFName.of('Filter'));
-      emptyDict.delete(PDFLib.PDFName.of('DecodeParms'));
-      emptyDict.set(PDFLib.PDFName.of('Length'), PDFLib.PDFNumber.of(0));
-      context.assign(refs[i], PDFLib.PDFRawStream.of(emptyDict, new Uint8Array(0)));
-    }
-    if (!(contentsObj instanceof PDFLib.PDFRef)) page.node.set(contentsKey, firstRef);
+    const newRef = context.register(PDFLib.PDFRawStream.of(newDict, newBytes));
+    page.node.set(contentsKey, newRef);
     return { matched: items.length, removed: removedCount };
   }
 
