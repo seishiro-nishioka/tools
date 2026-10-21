@@ -966,6 +966,29 @@ button:disabled{opacity:.45; cursor:not-allowed}
           await decryptNode(obj, objKeyForUse(ref.objectNumber, ref.generationNumber, strCipher), strCipher, visited);
         }
       }
+
+      // オブジェクトストリーム(/Type /ObjStm)は、pdf-libが読み込み時に暗号文のまま展開しようとして
+      // 失敗し、PDFInvalidObject(生バイト列)として残っている。中に格納されたページ・フォント等が
+      // 丸ごと欠けた状態になり、copyPagesが「Expected instance of PDFDict, but got instance of undefined」
+      // で失敗するため、ここで復号してから展開し直す。オブジェクトストリーム内のオブジェクトは
+      // 個別には暗号化されていない(ストリーム全体として暗号化されている)ので、展開後の復号は不要。
+      let reparsed = false;
+      for (const [ref, obj] of context.enumerateIndirectObjects()){
+        if (!(obj instanceof PDFLib.PDFInvalidObject)) continue;
+        let stream;
+        try{ stream = PDFLib.PDFObjectParser.forBytes(obj.data, context).parseObject(); }catch(err){ continue; }
+        if (!(stream instanceof PDFRawStream)) continue;
+        if (stream.dict.lookup(PDFName.of('Type')) !== PDFName.of('ObjStm')) continue;
+        const stmKey = objKeyForUse(ref.objectNumber, ref.generationNumber, stmCipher);
+        const plain = await decryptBytes(stream.contents, stmKey, stmCipher);
+        const newDict = stream.dict.clone(context);
+        newDict.set(PDFName.of('Length'), PDFNumber.of(plain.length));
+        await PDFLib.PDFObjectStreamParser.forStream(PDFRawStream.of(newDict, plain)).parseIntoContext();
+        context.delete(ref);
+        reparsed = true;
+      }
+      // カタログ自体がオブジェクトストリーム内にあった場合、読み込み時点では参照先が無かったため取り直す
+      if (reparsed) libDoc.catalog = context.lookup(context.trailerInfo.Root, PDFLib.PDFCatalog);
     }
 
     return { decryptPdfLibDocument };
