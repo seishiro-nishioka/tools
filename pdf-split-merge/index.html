@@ -2376,7 +2376,10 @@ button:disabled{opacity:.45; cursor:not-allowed}
     if (empty) empty.classList.remove('drop-target');
   }
 
-  deckGrid.addEventListener('dragover', e => {
+  // グリッドの外側(編集パネルの余白)もドロップ先にする。最終行がちょうど埋まっていると
+  // 最後のシートの右側の空白はグリッドの外になり、そこで赤線が出ず挿入もできないため。
+  const editorPanel = deckGrid.closest('.editor');
+  editorPanel.addEventListener('dragover', e => {
     const isMedia = e.dataTransfer.types.includes('text/x-media-id');
     const isDeck = e.dataTransfer.types.includes('text/x-deck-id');
     if (!isMedia && !isDeck) return;
@@ -2392,10 +2395,10 @@ button:disabled{opacity:.45; cursor:not-allowed}
     if (idx >= cards.length) cards[cards.length - 1].classList.add('insert-after');
     else cards[idx].classList.add('insert-before');
   });
-  deckGrid.addEventListener('dragleave', e => {
-    if (!deckGrid.contains(e.relatedTarget)) clearInsertHighlights();
+  editorPanel.addEventListener('dragleave', e => {
+    if (!editorPanel.contains(e.relatedTarget)) clearInsertHighlights();
   });
-  deckGrid.addEventListener('drop', e => {
+  editorPanel.addEventListener('drop', e => {
     const isMedia = e.dataTransfer.types.includes('text/x-media-id');
     const isDeck = e.dataTransfer.types.includes('text/x-deck-id');
     if (!isMedia && !isDeck) return;
