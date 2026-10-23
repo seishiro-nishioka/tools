@@ -1000,6 +1000,304 @@ button:disabled{opacity:.45; cursor:not-allowed}
     return { decryptPdfLibDocument };
   })();
 
+  // 書き出したPDFの構文チェック。pdf.jsやブラウザは多少壊れたPDFでも黙って補正して表示してしまうため、
+  // 厳密な構文チェックを行う他システムで初めて読み込みエラーになる、という事態を書き出し時点で検出する。
+  // checkObjects: 保存前のオブジェクトグラフを検査する(pdf-libは文字列・名前・数値の中身を検証せずに
+  //   そのまま書き出すため、不正な値があると構文違反のファイルになる)。
+  // checkSavedBytes: 保存後のバイト列を、ファイル構造(ヘッダー・相互参照表のオフセット・トレーラー)と
+  //   pdf.jsの厳格モード(エラーで止まる設定)での全ページ解析の両面から検査する。
+  const PdfOutputValidator = (() => {
+    const MAX_ISSUES = 50;
+    const latin1 = (bytes, start, end) => {
+      let s = '';
+      for (let i = start; i < Math.min(end, bytes.length); i++) s += String.fromCharCode(bytes[i]);
+      return s;
+    };
+    const hasNonByteChar = (s) => /[^\x00-\xff]/.test(s);
+
+    function literalStringOk(s){
+      let depth = 0;
+      for (let i = 0; i < s.length; i++){
+        const c = s[i];
+        if (c === '\\'){ i++; if (i >= s.length) return false; continue; }
+        if (c === '(') depth++;
+        else if (c === ')'){ if (depth === 0) return false; depth--; }
+      }
+      return depth === 0;
+    }
+
+    function checkObjects(context){
+      const { PDFDict, PDFArray, PDFName, PDFString, PDFHexString, PDFNumber, PDFRef, PDFStream, PDFInvalidObject } = PDFLib;
+      const issues = [];
+      const add = (msg) => { if (issues.length < MAX_ISSUES) issues.push(msg); };
+      const visited = new WeakSet();
+
+      function checkValue(v, where){
+        if (v instanceof PDFInvalidObject){
+          add(`${where}: 解析できないオブジェクトがそのまま含まれています(元のPDFの破損部分)`);
+        } else if (v instanceof PDFNumber){
+          if (!Number.isFinite(v.asNumber())) add(`${where}: 数値が不正です(${v.asNumber()})`);
+        } else if (v instanceof PDFName){
+          const s = v.asString();
+          if (!/^\/([\x21-\x7e]|#[0-9A-Fa-f]{2})*$/.test(s) || /[\s()<>\[\]{}\/%]/.test(s.slice(1)) || /#(?![0-9A-Fa-f]{2})/.test(s)){
+            add(`${where}: 名前オブジェクトに使えない文字が含まれています(${s.slice(0, 40)})`);
+          }
+        } else if (v instanceof PDFHexString){
+          if (!/^[0-9A-Fa-f\s]*$/.test(v.value)) add(`${where}: 16進文字列に16進数以外の文字が含まれています`);
+        } else if (v instanceof PDFString){
+          if (hasNonByteChar(v.value)) add(`${where}: 文字列に1バイトで表せない文字が含まれています`);
+          else if (!literalStringOk(v.value)) add(`${where}: 文字列の括弧またはエスケープの対応が取れていません`);
+        } else if (v instanceof PDFRef){
+          if (context.lookup(v) === undefined) add(`${where}: 存在しないオブジェクト(${v.objectNumber} ${v.generationNumber} R)を参照しています`);
+        } else if (v instanceof PDFStream){
+          checkValue(v.dict, where);
+        } else if (v instanceof PDFDict){
+          if (visited.has(v)) return;
+          visited.add(v);
+          for (const [k, val] of v.entries()){
+            checkValue(k, where);
+            checkValue(val, `${where} ${k.asString()}`);
+          }
+        } else if (v instanceof PDFArray){
+          if (visited.has(v)) return;
+          visited.add(v);
+          for (let i = 0; i < v.size(); i++) checkValue(v.get(i), `${where}[${i}]`);
+        }
+      }
+
+      for (const [ref, obj] of context.enumerateIndirectObjects()){
+        checkValue(obj, `オブジェクト${ref.objectNumber} ${ref.generationNumber}`);
+      }
+      for (const key of ['Root', 'Info']){
+        const ref = context.trailerInfo[key];
+        if (ref) checkValue(ref, `トレーラーの/${key}`);
+      }
+      return issues;
+    }
+
+    // 相互参照表(従来形式・ストリーム形式の両方)を読み、各エントリの指す位置に本当にその番号の
+    // オブジェクトがあるか、ファイル内の全オブジェクトが相互参照表に載っているかを照合する。
+    function checkXref(bytes, parsedDoc, issues){
+      const { PDFRef, PDFRawStream, PDFName, PDFArray, PDFNumber } = PDFLib;
+      const tail = latin1(bytes, Math.max(0, bytes.length - 1024), bytes.length);
+      const m = /startxref\s+(\d+)\s+%%EOF\s*$/.exec(tail);
+      if (!m){ issues.push('ファイル末尾の startxref / %%EOF が見つかりません'); return; }
+      const xrefOffset = Number(m[1]);
+      if (xrefOffset >= bytes.length){ issues.push('startxref の位置がファイルの範囲外です'); return; }
+
+      const entries = new Map(); // objectNumber -> {type, offset|stmNum, gen}
+      const head = latin1(bytes, xrefOffset, xrefOffset + 64);
+      if (head.startsWith('xref')){
+        const text = latin1(bytes, xrefOffset, bytes.length);
+        const end = text.indexOf('trailer');
+        if (end < 0){ issues.push('相互参照表の後に trailer がありません'); return; }
+        const lines = text.slice(4, end).split(/\r\n|\r|\n/).map(l => l.trim()).filter(Boolean);
+        let num = 0;
+        for (const line of lines){
+          let mm;
+          if ((mm = /^(\d+) (\d+)$/.exec(line))){ num = Number(mm[1]); continue; }
+          if ((mm = /^(\d{10}) (\d{5}) ([nf])$/.exec(line))){
+            if (mm[3] === 'n') entries.set(num, { type: 1, offset: Number(mm[1]), gen: Number(mm[2]) });
+            num++;
+            continue;
+          }
+          issues.push(`相互参照表に不正な行があります(${line.slice(0, 30)})`);
+          return;
+        }
+      } else {
+        const hm = /^(\d+)\s+(\d+)\s+obj\b/.exec(head);
+        if (!hm){ issues.push('startxref の位置に相互参照表がありません'); return; }
+        // pdf-libは読み込み時に相互参照ストリーム自体をコンテキストに残さないため、バイト列から直接解析する
+        let xrefStream;
+        try{ xrefStream = PDFLib.PDFObjectParser.forBytes(bytes.subarray(xrefOffset + hm[0].length), parsedDoc.context).parseObject(); }catch(err){}
+        if (!(xrefStream instanceof PDFRawStream) || xrefStream.dict.lookup(PDFName.of('Type')) !== PDFName.of('XRef')){
+          issues.push('startxref の位置のオブジェクトが相互参照ストリームではありません'); return;
+        }
+        const dict = xrefStream.dict;
+        const W = dict.lookup(PDFName.of('W'), PDFArray).asArray().map(n => n.asNumber());
+        const size = dict.lookup(PDFName.of('Size'), PDFNumber).asNumber();
+        const indexArr = dict.lookup(PDFName.of('Index'));
+        const index = indexArr instanceof PDFArray ? indexArr.asArray().map(n => n.asNumber()) : [0, size];
+        let data;
+        try{ data = PDFLib.decodePDFRawStream(xrefStream).decode(); }
+        catch(err){ issues.push('相互参照ストリームを展開できません'); return; }
+        const rowLen = W[0] + W[1] + W[2];
+        const readField = (pos, width, dflt) => {
+          if (width === 0) return dflt;
+          let v = 0;
+          for (let i = 0; i < width; i++) v = v * 256 + data[pos + i];
+          return v;
+        };
+        let pos = 0;
+        for (let s = 0; s < index.length; s += 2){
+          for (let k = 0; k < index[s + 1]; k++){
+            if (pos + rowLen > data.length){ issues.push('相互参照ストリームのデータが不足しています'); return; }
+            const type = readField(pos, W[0], 1);
+            const f2 = readField(pos + W[0], W[1], 0);
+            const f3 = readField(pos + W[0] + W[1], W[2], 0);
+            pos += rowLen;
+            const num = index[s] + k;
+            if (type === 1) entries.set(num, { type: 1, offset: f2, gen: f3 });
+            else if (type === 2) entries.set(num, { type: 2, stmNum: f2, gen: 0 });
+          }
+        }
+      }
+
+      for (const [num, e] of entries){
+        if (issues.length >= MAX_ISSUES) return;
+        if (e.type === 1){
+          const hm = /^(\d+)\s+(\d+)\s+obj\b/.exec(latin1(bytes, e.offset, e.offset + 32));
+          if (!hm || Number(hm[1]) !== num || Number(hm[2]) !== e.gen){
+            issues.push(`相互参照表のオブジェクト${num}の位置(${e.offset}バイト目)に、そのオブジェクトがありません`);
+          }
+        } else if (e.type === 2){
+          const container = entries.get(e.stmNum);
+          if (!container || container.type !== 1) issues.push(`オブジェクト${num}の格納先オブジェクトストリーム(${e.stmNum})が相互参照表にありません`);
+          else if (parsedDoc.context.lookup(PDFRef.of(num, 0)) === undefined) issues.push(`オブジェクトストリーム内のオブジェクト${num}を読み込めません`);
+        }
+      }
+      for (const [ref] of parsedDoc.context.enumerateIndirectObjects()){
+        if (issues.length >= MAX_ISSUES) return;
+        if (!entries.has(ref.objectNumber)) issues.push(`オブジェクト${ref.objectNumber}が相互参照表に載っていません`);
+      }
+    }
+
+    // ページのコンテンツストリーム(描画命令)を字句レベルで検査する。pdf.jsはエラーで止まる設定でも
+    // 閉じていない文字列などを黙って補正するため、自前で文字列・16進文字列・配列・辞書の対応を確かめる。
+    const isWs = (c) => c === 0x20 || c === 0x0a || c === 0x0d || c === 0x09 || c === 0x0c || c === 0x00;
+    const isDelim = (c) => c === 0x28 || c === 0x29 || c === 0x3c || c === 0x3e || c === 0x5b || c === 0x5d || c === 0x7b || c === 0x7d || c === 0x2f || c === 0x25;
+    function lexContentStream(data){
+      let i = 0, arrDepth = 0, dictDepth = 0;
+      const n = data.length;
+      while (i < n){
+        const c = data[i];
+        if (isWs(c)){ i++; continue; }
+        if (c === 0x25){ while (i < n && data[i] !== 0x0a && data[i] !== 0x0d) i++; continue; } // % コメント
+        if (c === 0x28){ // ( 文字列
+          let depth = 1; i++;
+          while (i < n && depth > 0){
+            const d = data[i];
+            if (d === 0x5c) i += 2;
+            else { if (d === 0x28) depth++; else if (d === 0x29) depth--; i++; }
+          }
+          if (depth > 0) return '文字列の括弧が閉じていません';
+          continue;
+        }
+        if (c === 0x29) return '対応しない ")" があります';
+        if (c === 0x3c){
+          if (data[i + 1] === 0x3c){ dictDepth++; i += 2; continue; }
+          i++;
+          while (i < n && data[i] !== 0x3e){
+            const d = data[i];
+            if (!isWs(d) && !((d >= 0x30 && d <= 0x39) || (d >= 0x41 && d <= 0x46) || (d >= 0x61 && d <= 0x66))) return '16進文字列に16進数以外の文字があります';
+            i++;
+          }
+          if (i >= n) return '16進文字列が閉じていません';
+          i++;
+          continue;
+        }
+        if (c === 0x3e){
+          if (data[i + 1] !== 0x3e) return '対応しない ">" があります';
+          if (--dictDepth < 0) return '対応しない ">>" があります';
+          i += 2; continue;
+        }
+        if (c === 0x5b){ arrDepth++; i++; continue; }
+        if (c === 0x5d){ if (--arrDepth < 0) return '対応しない "]" があります'; i++; continue; }
+        if (c === 0x7b || c === 0x7d){ i++; continue; }
+        // 名前・数値・演算子などの通常トークン
+        const start = i;
+        i++;
+        while (i < n && !isWs(data[i]) && !isDelim(data[i])) i++;
+        if (i - start === 2 && data[start] === 0x42 && data[start + 1] === 0x49){ // BI(インライン画像)
+          // ID までは通常のトークンとして読み飛ばし、ID の後は空白+EI+区切りまでをバイナリとして飛ばす
+          let found = false;
+          while (i < n){
+            if (data[i] === 0x49 && data[i + 1] === 0x44 && isWs(data[i - 1]) && (i + 2 >= n || isWs(data[i + 2]))){ i += 3; found = true; break; }
+            i++;
+          }
+          if (!found) return 'インライン画像(BI)に ID がありません';
+          found = false;
+          while (i < n){
+            if (isWs(data[i]) && data[i + 1] === 0x45 && data[i + 2] === 0x49 && (i + 3 >= n || isWs(data[i + 3]) || isDelim(data[i + 3]))){ i += 3; found = true; break; }
+            i++;
+          }
+          if (!found) return 'インライン画像(BI)が EI で閉じていません';
+        }
+      }
+      if (arrDepth !== 0) return '配列 "[" が閉じていません';
+      if (dictDepth !== 0) return '辞書 "<<" が閉じていません';
+      return null;
+    }
+
+    function checkPageContents(parsedDoc, issues){
+      const { PDFName, PDFArray, PDFRawStream } = PDFLib;
+      parsedDoc.getPages().forEach((page, idx) => {
+        if (issues.length >= MAX_ISSUES) return;
+        const contents = page.node.Contents();
+        if (!contents) return;
+        const streams = contents instanceof PDFArray
+          ? contents.asArray().map(r => parsedDoc.context.lookup(r))
+          : [contents];
+        const parts = [];
+        for (const s of streams){
+          if (!(s instanceof PDFRawStream)){ issues.push(`${idx + 1}ページ目: コンテンツがストリームではありません`); return; }
+          try{ parts.push(PDFLib.decodePDFRawStream(s).decode()); }
+          catch(err){ issues.push(`${idx + 1}ページ目: コンテンツストリームを展開できません(${err && err.message ? err.message : err})`); return; }
+        }
+        // 複数ストリームは改行を挟んで連結したものとして解釈される
+        const total = parts.reduce((a, p) => a + p.length + 1, 0);
+        const data = new Uint8Array(total);
+        let off = 0;
+        for (const p of parts){ data.set(p, off); off += p.length; data[off++] = 0x0a; }
+        const err = lexContentStream(data);
+        if (err) issues.push(`${idx + 1}ページ目の描画命令: ${err}`);
+      });
+    }
+
+    async function checkSavedBytes(bytes, expectedPageCount, onProgress){
+      const issues = [];
+      if (!/^%PDF-\d\.\d/.test(latin1(bytes, 0, 8))) issues.push('ファイル先頭に %PDF- ヘッダーがありません');
+
+      let parsedDoc;
+      try{
+        parsedDoc = await PDFLib.PDFDocument.load(bytes, { throwOnInvalidObject: true, updateMetadata: false });
+      }catch(err){
+        issues.push(`厳格モードでの再読み込みに失敗しました(${err && err.message ? err.message : err})`);
+      }
+      if (parsedDoc){
+        checkXref(bytes, parsedDoc, issues);
+        const n = parsedDoc.getPageCount();
+        if (n !== expectedPageCount) issues.push(`ページ数が一致しません(期待値${expectedPageCount}、実際${n})`);
+        checkPageContents(parsedDoc, issues);
+      }
+
+      // pdf.jsをエラーで止まる設定で開き、全ページのページ辞書を読み込めるか確かめる
+      let pdfjsDoc;
+      try{
+        pdfjsDoc = await pdfjsLib.getDocument({
+          data: bytes.slice(), stopAtErrors: true,
+          cMapUrl: PDFJS_CMAP_URL, cMapPacked: true, standardFontDataUrl: PDFJS_FONTS_URL,
+        }).promise;
+        if (pdfjsDoc.numPages !== expectedPageCount) issues.push(`pdf.jsで数えたページ数が一致しません(期待値${expectedPageCount}、実際${pdfjsDoc.numPages})`);
+        for (let i = 1; i <= pdfjsDoc.numPages && issues.length < MAX_ISSUES; i++){
+          if (onProgress) onProgress(i, pdfjsDoc.numPages);
+          try{
+            await pdfjsDoc.getPage(i);
+          }catch(err){
+            issues.push(`${i}ページ目を解析できません(${err && err.message ? err.message : err})`);
+          }
+        }
+      }catch(err){
+        issues.push(`pdf.jsの厳格モードで開けません(${err && err.message ? err.message : err})`);
+      }finally{
+        if (pdfjsDoc) pdfjsDoc.destroy();
+      }
+      return issues;
+    }
+
+    return { checkObjects, checkSavedBytes };
+  })();
+
   /** @type {{id:string,name:string,arrayBuffer:ArrayBuffer,pdfjsDoc:any,pageCount:number}[]} */
   const mediaItems = [];
   /** @type {{id:string,mediaId:string,pageIndex:number}[]} 編集領域に並んでいるページの並び順そのもの */
@@ -2753,10 +3051,28 @@ button:disabled{opacity:.45; cursor:not-allowed}
       });
     }
 
+    setStatus('構文をチェックしています…');
+    const syntaxIssues = PdfOutputValidator.checkObjects(outDoc.context);
     const bytes = await outDoc.save();
+    syntaxIssues.push(...await PdfOutputValidator.checkSavedBytes(bytes, deck.length, (done, total) => {
+      setStatus(`構文をチェックしています…(${done}/${total}ページ)`);
+    }));
+    if (syntaxIssues.length){
+      console.error('書き出したPDFの構文チェックで見つかった問題:', syntaxIssues);
+      const shown = syntaxIssues.slice(0, 5).map(s => `・${s}`).join('\n');
+      const more = syntaxIssues.length > 5 ? `\n…ほか${syntaxIssues.length - 5}件(詳細はブラウザの開発者ツールのコンソールに出力しています)` : '';
+      const ok = confirm(`書き出したPDFの構文チェックで問題が${syntaxIssues.length}件見つかりました。他のシステムで読み込みエラーになる可能性があります。\n\n${shown}${more}\n\nそれでもダウンロードしますか?`);
+      if (!ok){
+        setStatus(`構文チェックで問題が${syntaxIssues.length}件見つかったため、書き出しを中止しました。`);
+        return;
+      }
+    }
     downloadBlob(new Blob([bytes], { type: 'application/pdf' }), singleSourceName() || 'merged.pdf');
 
     let msg = `書き出しが完了しました(${deck.length}ページのPDF)。`;
+    msg += syntaxIssues.length
+      ? `構文チェックで${syntaxIssues.length}件の問題がありましたが、指示によりそのまま書き出しました。`
+      : '構文チェックで問題は見つかりませんでした。';
     if (compressResult && compressResult.imageCount > 0){
       msg += `画像${compressResult.imageCount}枚を圧縮し、約${formatBytes(compressResult.savedBytes)}削減しました。`;
     } else if (compressResult){
