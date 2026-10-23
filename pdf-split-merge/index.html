@@ -937,10 +937,14 @@ button:disabled{opacity:.45; cursor:not-allowed}
           visited.add(node);
           const isDict = node instanceof PDFDict;
           const items = isDict ? node.entries() : Array.from({ length: node.size() }, (_, i) => [i, node.get(i)]);
-          for (const [, v] of items){
+          for (const [k, v] of items){
             if (v instanceof PDFString || v instanceof PDFHexString){
+              // pdf-libは文字列のvalueをエスケープせずそのまま (…) / <…> で書き出すため、復号後の
+              // 生バイト列をvalueに入れると、括弧・バックスラッシュや16進以外の文字で構文が壊れる。
+              // どんなバイト列でも安全に書き出せる16進文字列として置き換える。
               const plain = await decryptBytes(v.asBytes(), key, cipher);
-              v.value = Array.from(plain, b => String.fromCharCode(b)).join('');
+              const hex = Array.from(plain, b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+              node.set(k, PDFHexString.of(hex));
             } else if (v instanceof PDFDict || v instanceof PDFArray){
               await decryptNode(v, key, cipher, visited);
             }
@@ -954,8 +958,10 @@ button:disabled{opacity:.45; cursor:not-allowed}
         if (obj instanceof PDFRawStream){
           const typeObj = obj.dict.lookup(PDFName.of('Type'));
           const isXRefStream = typeObj && typeObj.asString && typeObj.asString() === '/XRef';
+          // /EncryptMetadata false の場合、XMPメタデータストリームは平文のまま格納されている
+          const isPlainMetadata = !encryptMetadata && typeObj && typeObj.asString && typeObj.asString() === '/Metadata';
           await decryptNode(obj.dict, objKeyForUse(ref.objectNumber, ref.generationNumber, strCipher), strCipher, visited);
-          if (!isXRefStream){
+          if (!isXRefStream && !isPlainMetadata){
             const stmKey = objKeyForUse(ref.objectNumber, ref.generationNumber, stmCipher);
             const plain = await decryptBytes(obj.contents, stmKey, stmCipher);
             const newDict = obj.dict.clone(context);
