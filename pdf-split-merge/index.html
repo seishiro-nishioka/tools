@@ -2356,8 +2356,12 @@ button:disabled{opacity:.45; cursor:not-allowed}
     rows.sort((a, b) => a.top - b.top);
     rows.forEach(row => row.items.sort((a, b) => a.rect.left - b.rect.left));
 
-    let targetRow = rows.find(row => clientY >= row.top && clientY <= row.bottom);
-    if (!targetRow) targetRow = clientY < rows[0].top ? rows[0] : rows[rows.length - 1];
+    // 最終行より下(カードの無い余白)にポインタがあれば、横位置に関係なく末尾に追加する。
+    // 最終行が埋まっていると右側に余白が無く、最後のカードの右半分を狙わないと末尾にならないため。
+    if (clientY > rows[rows.length - 1].bottom) return cards.length;
+    // 行と行の間の隙間では、縦方向に最も近い行を対象にする
+    const rowDist = row => clientY < row.top ? row.top - clientY : clientY > row.bottom ? clientY - row.bottom : 0;
+    const targetRow = rows.reduce((best, row) => rowDist(row) < rowDist(best) ? row : best);
 
     for (const item of targetRow.items){
       const midX = item.rect.left + item.rect.width / 2;
