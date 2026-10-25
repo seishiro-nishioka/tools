@@ -14,6 +14,9 @@ tools/
 ├─ serial-monitor/    ← シリアル通信モニター
 │   ├─ index.html
 │   └─ README.md
+├─ overlay-camera/    ← 重ね撮りカメラ
+│   ├─ index.html
+│   └─ README.md
 └─ <次のツール>/
     ├─ index.html
     └─ README.md
@@ -41,3 +44,4 @@ GitHub Pagesで公開(`main`ブランチのルートを配信)。
 | [pdf-text-extract](pdf-text-extract/) | PDFに埋め込まれた文字データだけを抽出するツール(OCRではなくテキスト層の解析、罫線表のCSV化・Excel出力にも対応) |
 | [serial-monitor](serial-monitor/) | マイコンなどのシリアルポートをポート/ボーレート指定で読み書きするツール(Web Serial API) |
 | [cad2d](cad2d/) | 点・線分・円を配置し、SolveSpaceの幾何拘束ソルバーで正確に組み立てる簡易2D CAD |
+| [overlay-camera](overlay-camera/) | 基準写真をカメラ映像に半透明で重ね、同じ角度・距離・画角で撮り直すカメラ(差分・輪郭表示、前後比較画像の書き出し) |

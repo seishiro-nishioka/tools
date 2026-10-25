@@ -1,0 +1,1151 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>重ね撮りカメラ</title>
+<meta name="description" content="基準写真を半透明で重ねながら、同じ角度・距離・画角で撮り直すカメラ">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="重ね撮り">
+<meta name="application-name" content="重ね撮り">
+<meta name="theme-color" content="#000000">
+<meta name="format-detection" content="telephone=no">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111'/%3E%3Crect x='10' y='16' width='34' height='26' rx='3' fill='none' stroke='%23FF5040' stroke-width='4'/%3E%3Crect x='20' y='24' width='34' height='26' rx='3' fill='none' stroke='%23fff' stroke-width='4' stroke-opacity='.85'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" id="touchIcon" href="">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#000; --bar:#0E1217; --panel:#1A2028; --ink:#F1F4F7; --sub:#9AA8B6; --line:#36424F;
+  --red:#FF5040; --accent:#FFC233; --blue:#5B93C9;
+  --sat:env(safe-area-inset-top,0px); --sab:env(safe-area-inset-bottom,0px);
+  --sal:env(safe-area-inset-left,0px); --sar:env(safe-area-inset-right,0px);
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%; margin:0; overflow:hidden; overscroll-behavior:none}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  font-size:14px; line-height:1.5;
+  -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent;
+  touch-action:manipulation;
+}
+button,select,input{font:inherit; color:inherit}
+button{cursor:pointer}
+[hidden]{display:none !important}
+
+/* ---------- camera screen ---------- */
+#app{
+  position:fixed; inset:0;
+  display:grid; grid-template-areas:"top" "stage" "ctrl";
+  grid-template-rows:auto minmax(0,1fr) auto; grid-template-columns:minmax(0,1fr);
+}
+.topbar{
+  grid-area:top; display:flex; align-items:center; gap:8px;
+  padding:calc(var(--sat) + 6px) calc(var(--sar) + 10px) 6px calc(var(--sal) + 10px);
+  background:var(--bar);
+}
+.stage{grid-area:stage; position:relative; overflow:hidden; background:#000; touch-action:none}
+.controls{
+  grid-area:ctrl; display:flex; flex-direction:column; gap:8px;
+  padding:8px calc(var(--sar) + 12px) calc(var(--sab) + 10px) calc(var(--sal) + 12px);
+  background:var(--bar);
+}
+@media (orientation:landscape) and (max-height:600px){
+  #app{
+    grid-template-areas:"stage top" "stage ctrl";
+    grid-template-columns:minmax(0,1fr) 248px; grid-template-rows:auto minmax(0,1fr);
+  }
+  .topbar{padding:calc(var(--sat) + 8px) calc(var(--sar) + 10px) 4px 10px; flex-wrap:wrap}
+  .controls{padding:6px calc(var(--sar) + 12px) calc(var(--sab) + 8px) 12px; justify-content:flex-end}
+  .stage{margin-left:var(--sal)}
+}
+
+.icon-btn{
+  flex:none; min-width:40px; height:40px; padding:0 10px; border-radius:20px; border:1px solid var(--line);
+  background:var(--panel); display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  font-size:13.5px; text-decoration:none; color:var(--ink);
+}
+.icon-btn:active{background:#26303B}
+.icon-btn svg{width:20px; height:20px; flex:none}
+.ref-btn{max-width:100%; min-width:0; overflow:hidden}
+.ref-btn img{width:28px; height:28px; object-fit:cover; border-radius:5px; margin-left:-6px; flex:none}
+.ref-btn span{white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.spacer{flex:1}
+
+/* frame: rectangle with the reference photo's aspect ratio, fitted into the stage */
+.frame{position:absolute; overflow:hidden; isolation:isolate; background:#111}
+.frame video{
+  position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+  transform-origin:50% 50%; display:block;
+}
+.frame .ov{position:absolute; inset:0; width:100%; height:100%; pointer-events:none; display:block}
+#refImg{object-fit:fill; image-orientation:from-image}
+.frame.m-diff #refImg{mix-blend-mode:difference}
+.frame.ov-off .ov.ref-layer{visibility:hidden}
+#grid{
+  background-image:
+    linear-gradient(to right, transparent calc(33.333% - .5px), rgba(255,255,255,.45) calc(33.333% - .5px), rgba(255,255,255,.45) calc(33.333% + .5px), transparent calc(33.333% + .5px),
+      transparent calc(66.667% - .5px), rgba(255,255,255,.45) calc(66.667% - .5px), rgba(255,255,255,.45) calc(66.667% + .5px), transparent calc(66.667% + .5px)),
+    linear-gradient(to bottom, transparent calc(33.333% - .5px), rgba(255,255,255,.45) calc(33.333% - .5px), rgba(255,255,255,.45) calc(33.333% + .5px), transparent calc(33.333% + .5px),
+      transparent calc(66.667% - .5px), rgba(255,255,255,.45) calc(66.667% - .5px), rgba(255,255,255,.45) calc(66.667% + .5px), transparent calc(66.667% + .5px));
+}
+#splitLine{
+  position:absolute; top:0; bottom:0; width:0; border-left:2px solid #fff;
+  box-shadow:0 0 0 1px rgba(0,0,0,.4); pointer-events:none;
+}
+#splitLine::after{
+  content:"◀ ▶"; position:absolute; top:50%; left:-1px; transform:translate(-50%,-50%);
+  background:rgba(0,0,0,.6); border:1.5px solid #fff; border-radius:14px; padding:2px 8px;
+  font-size:11px; letter-spacing:-.05em; white-space:nowrap;
+}
+#flash{position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none}
+#flash.on{animation:flash .35s ease-out}
+@keyframes flash{from{opacity:.85} to{opacity:0}}
+
+.badge{
+  position:absolute; padding:3px 9px; border-radius:12px; background:rgba(0,0,0,.6);
+  font-size:12px; border:1px solid rgba(255,255,255,.25); pointer-events:none; white-space:nowrap;
+}
+#zoomBadge{left:10px; bottom:10px; pointer-events:auto}
+#hideBadge{right:10px; top:10px}
+#orientHint{
+  left:50%; top:10px; transform:translateX(-50%); background:rgba(224,48,30,.85);
+  white-space:normal; text-align:center; max-width:calc(100% - 20px);
+}
+.center-msg{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:20px;
+  pointer-events:none;
+}
+.center-msg .card{
+  pointer-events:auto; background:rgba(14,18,23,.88); border:1px solid var(--line); border-radius:12px;
+  padding:18px 20px; max-width:340px; text-align:center;
+}
+.center-msg h2{margin:0 0 6px; font-size:16px}
+.center-msg p{margin:0 0 12px; color:var(--sub); font-size:13px}
+.center-msg .card button, .center-msg .card label{margin:2px}
+
+.seg{display:flex; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:2px; gap:2px}
+.seg button{
+  flex:1; min-width:0; border:0; background:transparent; border-radius:8px; padding:7px 4px;
+  font-size:13px; white-space:nowrap;
+}
+.seg button[aria-pressed="true"]{background:var(--ink); color:#111; font-weight:700}
+.seg button:disabled{opacity:.4}
+
+.row{display:flex; align-items:center; gap:10px}
+.row label.lbl{flex:none; font-size:12.5px; color:var(--sub); min-width:2.5em}
+.row output{flex:none; width:3.2em; text-align:right; font-size:12.5px; color:var(--sub); font-variant-numeric:tabular-nums}
+input[type=range]{flex:1; min-width:0; accent-color:var(--accent); height:28px}
+
+.actions{display:flex; align-items:center; justify-content:space-between; gap:12px; padding-top:2px}
+.round{
+  width:54px; height:54px; border-radius:50%; border:1px solid var(--line); background:var(--panel);
+  display:flex; align-items:center; justify-content:center; flex:none; touch-action:none;
+  -webkit-touch-callout:none;
+}
+.round svg{width:24px; height:24px}
+.round.active{background:var(--accent); color:#111; border-color:var(--accent)}
+.shutter{
+  width:72px; height:72px; border-radius:50%; border:4px solid #fff; background:transparent; padding:4px; flex:none;
+}
+.shutter span{display:block; width:100%; height:100%; border-radius:50%; background:#fff; transition:transform .1s}
+.shutter:active span{transform:scale(.9)}
+.shutter:disabled{opacity:.4}
+.round-wrap{display:flex; flex-direction:column; align-items:center; gap:2px; font-size:10.5px; color:var(--sub); width:64px}
+
+/* ---------- sheets ---------- */
+.sheet-back{position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:20; display:flex; align-items:flex-end; justify-content:center}
+.sheet{
+  width:100%; max-width:520px; max-height:88%; overflow:auto; -webkit-overflow-scrolling:touch;
+  background:var(--panel); border:1px solid var(--line); border-bottom:0; border-radius:16px 16px 0 0;
+  padding:14px 16px calc(var(--sab) + 16px); user-select:text; -webkit-user-select:text;
+}
+@media (orientation:landscape) and (max-height:600px){
+  .sheet-back{align-items:stretch; justify-content:flex-end}
+  .sheet{max-height:none; height:100%; width:360px; border-radius:0; border:0; border-left:1px solid var(--line);
+    padding:calc(var(--sat) + 14px) calc(var(--sar) + 16px) calc(var(--sab) + 16px) 16px}
+}
+.sheet h2{margin:0; font-size:16px}
+.sheet h3{margin:16px 0 6px; font-size:12.5px; color:var(--sub); font-weight:500}
+.sheet-head{display:flex; align-items:center; justify-content:space-between; gap:10px}
+.sheet select{
+  width:100%; padding:9px 10px; border-radius:8px; background:#0E1217; border:1px solid var(--line);
+}
+.chk{display:flex; align-items:center; gap:10px; padding:6px 0}
+.chk input{width:20px; height:20px; accent-color:var(--accent)}
+.chips{display:flex; gap:10px; flex-wrap:wrap}
+.chip{width:34px; height:34px; border-radius:50%; border:2px solid var(--line)}
+.chip[aria-pressed="true"]{border-color:#fff; box-shadow:0 0 0 2px var(--accent)}
+.note{color:var(--sub); font-size:12.5px; margin:4px 0 0}
+dl.meta{display:grid; grid-template-columns:auto 1fr; gap:2px 12px; margin:0; font-size:13px}
+dl.meta dt{color:var(--sub)}
+dl.meta dd{margin:0; word-break:break-all}
+.btn{
+  padding:9px 14px; border-radius:10px; border:1px solid var(--line); background:#0E1217; font-size:13.5px;
+}
+.btn.primary{background:var(--accent); border-color:var(--accent); color:#111; font-weight:700}
+.btn.danger{color:#FF8A7A}
+.btn:disabled{opacity:.45}
+.btn-row{display:flex; gap:8px; flex-wrap:wrap; margin-top:8px}
+
+/* ---------- review screen ---------- */
+#review{
+  position:fixed; inset:0; z-index:10; background:#000;
+  display:grid; grid-template-areas:"top" "stage" "ctrl";
+  grid-template-rows:auto minmax(0,1fr) auto; grid-template-columns:minmax(0,1fr);
+}
+#review .stage{display:flex; align-items:center; justify-content:center; padding:8px}
+#rvCanvas{max-width:100%; max-height:100%; display:block; touch-action:none}
+#review .controls{gap:10px}
+.lbl-inputs{display:flex; gap:8px}
+.lbl-inputs input[type=text]{
+  flex:1; min-width:0; padding:7px 9px; border-radius:8px; background:#0E1217; border:1px solid var(--line);
+  user-select:text; -webkit-user-select:text; font-size:16px;
+}
+.rv-actions{display:flex; gap:8px}
+.rv-actions .btn{flex:1; padding:12px 8px}
+#rvInfo{margin:0; color:var(--sub); font-size:12px; text-align:center}
+@media (orientation:landscape) and (max-height:600px){
+  #review{
+    grid-template-areas:"stage top" "stage ctrl";
+    grid-template-columns:minmax(0,1fr) 300px; grid-template-rows:auto minmax(0,1fr);
+  }
+  #review .controls{overflow:auto}
+}
+
+#toast{
+  position:fixed; left:50%; bottom:calc(var(--sab) + 150px); transform:translateX(-50%); z-index:40;
+  background:rgba(20,26,33,.95); border:1px solid var(--line); border-radius:10px; padding:9px 14px;
+  font-size:13px; max-width:calc(100% - 32px); text-align:center; pointer-events:none;
+  opacity:0; transition:opacity .2s;
+}
+#toast.show{opacity:1}
+#busy{position:fixed; inset:0; z-index:50; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center}
+#busy div{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 18px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="topbar">
+    <a class="icon-btn" href="../" aria-label="ツール一覧に戻る">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </a>
+    <label class="icon-btn ref-btn" id="refBtn">
+      <input type="file" id="refInput" accept="image/*" hidden>
+      <img id="refThumb" alt="" hidden>
+      <svg id="refIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg>
+      <span id="refLabel">基準写真を選ぶ</span>
+    </label>
+    <span class="spacer"></span>
+    <button class="icon-btn" id="settingsBtn" aria-label="設定">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+    </button>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="frame m-blend" id="frame" hidden>
+      <video id="video" playsinline muted autoplay></video>
+      <img id="refImg" class="ov ref-layer" alt="" hidden>
+      <canvas id="edgeCanvas" class="ov ref-layer" hidden></canvas>
+      <div id="grid" class="ov" hidden></div>
+      <div id="splitLine" class="ref-layer" hidden></div>
+      <div id="flash"></div>
+    </div>
+    <button class="badge" id="zoomBadge" hidden>1.0×</button>
+    <div class="badge" id="hideBadge" hidden>重ね表示オフ</div>
+    <div class="badge" id="orientHint" hidden></div>
+    <div class="center-msg" id="camMsg" hidden>
+      <div class="card">
+        <h2 id="camMsgTitle">カメラを起動します</h2>
+        <p id="camMsgText"></p>
+        <button class="btn primary" id="camStartBtn">カメラを開始</button>
+      </div>
+    </div>
+    <div class="center-msg" id="refMsg" hidden>
+      <div class="card">
+        <h2>基準写真を選んでください</h2>
+        <p>撮り直したい写真をアルバムから選ぶと、カメラ映像に半透明で重ねて表示します。</p>
+        <label class="btn primary" for="refInput">アルバムから選ぶ</label>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="seg" id="modeSeg" role="group" aria-label="重ね方">
+      <button data-mode="blend" aria-pressed="true">半透明</button>
+      <button data-mode="diff" aria-pressed="false">差分</button>
+      <button data-mode="edge" aria-pressed="false">輪郭</button>
+      <button data-mode="split" aria-pressed="false">分割</button>
+    </div>
+    <div class="row">
+      <label class="lbl" for="alpha">濃さ</label>
+      <input type="range" id="alpha" min="0" max="100" step="1" value="50">
+      <output id="alphaOut">50%</output>
+    </div>
+    <div class="actions">
+      <div class="round-wrap">
+        <button class="round" id="hideBtn" aria-label="重ね表示の切替(長押しで一時的に非表示)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+        <span>長押しで隠す</span>
+      </div>
+      <button class="shutter" id="shutter" aria-label="撮影" disabled><span></span></button>
+      <div class="round-wrap">
+        <button class="round" id="flipBtn" aria-label="カメラ切替">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9a2 2 0 012-2h2l2-3h6l2 3h2a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 13.5a3 3 0 015-2.2M15 12.5a3 3 0 01-5 2.2"/><path d="M14 9.5v2h-2M10 16.5v-2h2"/></svg>
+        </button>
+        <span>前面/背面</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- settings sheet -->
+<div class="sheet-back" id="settings" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="sheet-head">
+      <h2 id="settingsTitle">設定</h2>
+      <button class="btn" id="settingsClose">閉じる</button>
+    </div>
+
+    <h3>カメラ</h3>
+    <select id="camSel"></select>
+    <p class="note" id="camInfo"></p>
+
+    <h3>ズーム(画角を基準写真に合わせる)</h3>
+    <div class="row">
+      <input type="range" id="zoom" min="1" max="5" step="0.01" value="1">
+      <output id="zoomOut">1.0×</output>
+    </div>
+    <p class="note" id="zoomNote">画面を2本指でつまんでも調整できます。</p>
+
+    <h3>表示</h3>
+    <label class="chk"><input type="checkbox" id="gridChk">3分割グリッドを表示</label>
+
+    <h3>輪郭表示の色</h3>
+    <div class="chips" id="edgeColors">
+      <button class="chip" data-color="#39FF6A" style="background:#39FF6A" aria-label="緑"></button>
+      <button class="chip" data-color="#FF3B30" style="background:#FF3B30" aria-label="赤"></button>
+      <button class="chip" data-color="#FFD60A" style="background:#FFD60A" aria-label="黄"></button>
+      <button class="chip" data-color="#FF2DFF" style="background:#FF2DFF" aria-label="マゼンタ"></button>
+      <button class="chip" data-color="#FFFFFF" style="background:#FFFFFF" aria-label="白"></button>
+    </div>
+    <h3>輪郭の量</h3>
+    <div class="row">
+      <input type="range" id="edgeAmt" min="3" max="30" step="1" value="12">
+      <output id="edgeAmtOut">12%</output>
+    </div>
+
+    <h3>基準写真</h3>
+    <dl class="meta" id="refMeta"><dt>未選択</dt><dd></dd></dl>
+    <div class="btn-row">
+      <label class="btn" for="refInput">別の写真を選ぶ</label>
+      <button class="btn danger" id="refClear" disabled>基準写真を外す</button>
+    </div>
+    <p class="note">選んだ基準写真はこの端末のブラウザ内にだけ保存され、次に開いたときも使えます。どこにも送信されません。</p>
+  </div>
+</div>
+
+<!-- review screen -->
+<section id="review" hidden>
+  <div class="topbar">
+    <button class="icon-btn" id="rvBack">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      撮り直す
+    </button>
+    <span class="spacer"></span>
+    <div class="seg" id="rvTabs" style="flex:none">
+      <button data-tab="photo" aria-pressed="true">撮影写真</button>
+      <button data-tab="cmp" aria-pressed="false">前後比較</button>
+    </div>
+  </div>
+  <div class="stage" id="rvStage"><canvas id="rvCanvas"></canvas></div>
+  <div class="controls">
+    <div id="cmpOpts" hidden>
+      <div class="seg" id="cmpLayout" style="margin-bottom:8px">
+        <button data-layout="lr" aria-pressed="true">左右</button>
+        <button data-layout="tb" aria-pressed="false">上下</button>
+        <button data-layout="slider" aria-pressed="false">スライダー</button>
+      </div>
+      <div class="row" id="cmpPosRow" style="margin-bottom:6px">
+        <label class="lbl" for="cmpPos">境目</label>
+        <input type="range" id="cmpPos" min="0" max="100" step="1" value="50">
+        <output id="cmpPosOut">50%</output>
+      </div>
+      <label class="chk" style="padding-top:0"><input type="checkbox" id="cmpLabels" checked>ラベルを入れる</label>
+      <div class="lbl-inputs" id="lblInputs">
+        <input type="text" id="lbl1" aria-label="基準写真のラベル" placeholder="前">
+        <input type="text" id="lbl2" aria-label="撮影写真のラベル" placeholder="後">
+      </div>
+    </div>
+    <div class="rv-actions">
+      <button class="btn" id="useAsRef">この写真を基準に</button>
+      <button class="btn primary" id="saveBtn">保存・共有</button>
+    </div>
+    <p id="rvInfo"></p>
+  </div>
+</section>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="busy" hidden><div id="busyText">処理中…</div></div>
+
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const els = {
+  stage:$('stage'), frame:$('frame'), video:$('video'), refImg:$('refImg'), edgeCanvas:$('edgeCanvas'),
+  grid:$('grid'), splitLine:$('splitLine'), flash:$('flash'),
+  zoomBadge:$('zoomBadge'), hideBadge:$('hideBadge'), orientHint:$('orientHint'),
+  camMsg:$('camMsg'), camMsgTitle:$('camMsgTitle'), camMsgText:$('camMsgText'), camStartBtn:$('camStartBtn'),
+  refMsg:$('refMsg'), refInput:$('refInput'), refThumb:$('refThumb'), refIcon:$('refIcon'), refLabel:$('refLabel'),
+  modeSeg:$('modeSeg'), alpha:$('alpha'), alphaOut:$('alphaOut'),
+  hideBtn:$('hideBtn'), shutter:$('shutter'), flipBtn:$('flipBtn'),
+  settings:$('settings'), settingsBtn:$('settingsBtn'), settingsClose:$('settingsClose'),
+  camSel:$('camSel'), camInfo:$('camInfo'), zoom:$('zoom'), zoomOut:$('zoomOut'), zoomNote:$('zoomNote'),
+  gridChk:$('gridChk'), edgeColors:$('edgeColors'), edgeAmt:$('edgeAmt'), edgeAmtOut:$('edgeAmtOut'),
+  refMeta:$('refMeta'), refClear:$('refClear'),
+  review:$('review'), rvBack:$('rvBack'), rvTabs:$('rvTabs'), rvStage:$('rvStage'), rvCanvas:$('rvCanvas'),
+  cmpOpts:$('cmpOpts'), cmpLayout:$('cmpLayout'), cmpPosRow:$('cmpPosRow'), cmpPos:$('cmpPos'), cmpPosOut:$('cmpPosOut'),
+  cmpLabels:$('cmpLabels'), lblInputs:$('lblInputs'), lbl1:$('lbl1'), lbl2:$('lbl2'),
+  useAsRef:$('useAsRef'), saveBtn:$('saveBtn'), rvInfo:$('rvInfo'),
+  toast:$('toast'), busy:$('busy'), busyText:$('busyText'),
+};
+
+/* ---------- persisted preferences (per-viewer convenience only) ---------- */
+const PREF_KEY = 'overlay-camera:prefs';
+const prefs = Object.assign({
+  mode:'blend', alpha:{blend:50, diff:100, edge:100, split:100}, split:.5,
+  grid:false, edgeColor:'#39FF6A', edgeAmt:12, deviceId:'', cmpLayout:'lr', cmpLabels:true,
+}, (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
+const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
+
+const S = {
+  stream:null, track:null, starting:false,
+  hwZoom:null,        // {min,max,step} when the track supports zoom constraints
+  dzoom:1,            // digital zoom factor (used when hardware zoom is unavailable)
+  ref:null,           // {blob,url,w,h,meta}
+  edgeMag:null,       // {w,h,mag:Float32Array,sorted threshold source}
+  hidden:false,
+  shot:null,          // {blob,url,img,w,h,date}
+  tab:'photo', cmpBlob:null, cmpPending:0,
+};
+
+/* ---------- small helpers ---------- */
+let toastTimer = 0;
+function toast(msg, ms = 2600){
+  els.toast.textContent = msg; els.toast.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => els.toast.classList.remove('show'), ms);
+}
+function busy(on, text = '処理中…'){ els.busyText.textContent = text; els.busy.hidden = !on; }
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const pad2 = n => String(n).padStart(2, '0');
+const fmtDate = d => `${d.getFullYear()}/${pad2(d.getMonth()+1)}/${pad2(d.getDate())}`;
+const fmtTime = d => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+const stamp = d => `${d.getFullYear()}${pad2(d.getMonth()+1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+function canvasToBlob(canvas, type = 'image/jpeg', q = .95){
+  return new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('toBlob failed')), type, q));
+}
+function loadImg(url){
+  return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('画像を読み込めませんでした')); im.src = url; });
+}
+function freeCanvas(c){ c.width = 0; c.height = 0; }
+
+/* ---------- IndexedDB: keeps the reference photo between launches ---------- */
+const idb = (() => {
+  let dbp = null;
+  const open = () => dbp || (dbp = new Promise((res, rej) => {
+    const rq = indexedDB.open('overlay-camera', 1);
+    rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
+    rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error);
+  }));
+  const tx = async (mode, fn) => {
+    const db = await open();
+    return new Promise((res, rej) => {
+      const t = db.transaction('kv', mode); const r = fn(t.objectStore('kv'));
+      t.oncomplete = () => res(r && r.result); t.onerror = () => rej(t.error);
+    });
+  };
+  return {
+    get: k => tx('readonly', s => s.get(k)).catch(() => null),
+    set: (k, v) => tx('readwrite', s => s.put(v, k)).catch(() => {}),
+    del: k => tx('readwrite', s => s.delete(k)).catch(() => {}),
+  };
+})();
+
+/* ---------- EXIF (info only; orientation itself is applied by the browser) ---------- */
+async function readExif(file){
+  try {
+    const buf = await file.slice(0, 256 * 1024).arrayBuffer();
+    const dv = new DataView(buf);
+    if (dv.getUint16(0) !== 0xFFD8) return {};
+    let p = 2;
+    while (p + 4 < dv.byteLength){
+      const marker = dv.getUint16(p); const len = dv.getUint16(p + 2);
+      if (marker === 0xFFE1 && dv.getUint32(p + 4) === 0x45786966) return parseTiff(dv, p + 10);
+      if ((marker & 0xFF00) !== 0xFF00) break;
+      p += 2 + len;
+    }
+  } catch {}
+  return {};
+}
+function parseTiff(dv, t){
+  const le = dv.getUint16(t) === 0x4949;
+  const u16 = o => dv.getUint16(t + o, le), u32 = o => dv.getUint32(t + o, le);
+  const out = {};
+  const str = (off, n) => { let s = ''; for (let i = 0; i < n; i++){ const c = dv.getUint8(t + off + i); if (!c) break; s += String.fromCharCode(c); } return s.trim(); };
+  const readIfd = (off, want) => {
+    const n = u16(off);
+    for (let i = 0; i < n; i++){
+      const e = off + 2 + i * 12, tag = u16(e), type = u16(e + 2), cnt = u32(e + 4);
+      if (!(tag in want)) continue;
+      const voff = (type === 2 && cnt <= 4) ? e + 8 : u32(e + 8);
+      let v;
+      if (type === 2) v = str(cnt <= 4 ? e + 8 : voff, cnt);
+      else if (type === 3) v = u16(e + 8);
+      else if (type === 4) v = u32(e + 8);
+      else if (type === 5) v = u32(voff) / (u32(voff + 4) || 1);
+      out[want[tag]] = v;
+    }
+  };
+  readIfd(u32(4), {0x010F:'make', 0x0110:'model', 0x0112:'orientation', 0x8769:'exifPtr'});
+  if (out.exifPtr) readIfd(out.exifPtr, {0x9003:'dateTime', 0x920A:'focal', 0xA405:'focal35', 0xA434:'lens'});
+  delete out.exifPtr;
+  return out;
+}
+function exifDate(s){
+  const m = /^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2})/.exec(s || '');
+  return m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5]) : null;
+}
+
+/* ---------- reference photo ---------- */
+async function onRefFile(file){
+  if (!file) return;
+  busy(true, '基準写真を読み込み中…');
+  let url = '';
+  try {
+    const exif = await readExif(file);
+    url = URL.createObjectURL(file);
+    const im = await loadImg(url);
+    // Re-encode once so that the stored copy has EXIF orientation baked into the pixels.
+    const maxSide = 4096, s = Math.min(1, maxSide / Math.max(im.naturalWidth, im.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(im.naturalWidth * s); c.height = Math.round(im.naturalHeight * s);
+    c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+    const blob = await canvasToBlob(c, 'image/jpeg', .95);
+    freeCanvas(c);
+    const meta = {
+      name:file.name || '', w:im.naturalWidth, h:im.naturalHeight,
+      date:exifDate(exif.dateTime)?.toISOString() || (file.lastModified ? new Date(file.lastModified).toISOString() : ''),
+      dateFromExif:!!exifDate(exif.dateTime),
+      model:[exif.make, exif.model].filter(Boolean).join(' ').replace(/^(Apple) (iPhone)/, '$2'),
+      lens:exif.lens || '', focal:exif.focal || 0, focal35:exif.focal35 || 0,
+    };
+    await setRef(blob, meta);
+    idb.set('ref', {blob, meta});
+  } catch (e){
+    toast('写真を読み込めませんでした: ' + (e.message || e));
+  } finally {
+    if (url) URL.revokeObjectURL(url);
+    busy(false);
+    els.refInput.value = '';
+  }
+}
+async function setRef(blob, meta){
+  if (S.ref) URL.revokeObjectURL(S.ref.url);
+  const url = URL.createObjectURL(blob);
+  const im = await loadImg(url);
+  S.ref = {blob, url, w:im.naturalWidth, h:im.naturalHeight, meta};
+  els.refImg.src = url;
+  els.refThumb.src = url; els.refThumb.hidden = false; els.refIcon.style.display = 'none';
+  els.refLabel.textContent = '基準写真';
+  els.refClear.disabled = false;
+  buildEdges(im);
+  renderRefMeta();
+  applyOverlay(); layout();
+}
+function clearRef(){
+  if (S.ref) URL.revokeObjectURL(S.ref.url);
+  S.ref = null; S.edgeMag = null;
+  els.refImg.removeAttribute('src');
+  els.refThumb.hidden = true; els.refIcon.style.display = ''; els.refLabel.textContent = '基準写真を選ぶ';
+  els.refClear.disabled = true;
+  idb.del('ref');
+  renderRefMeta(); applyOverlay(); layout();
+}
+function renderRefMeta(){
+  const dl = els.refMeta; dl.textContent = '';
+  const add = (k, v) => { if (!v) return; const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = k; dd.textContent = v; dl.append(dt, dd); };
+  if (!S.ref){ add('未選択', ' '); return; }
+  const m = S.ref.meta;
+  add('サイズ', `${S.ref.w}×${S.ref.h}`);
+  if (m.date) add(m.dateFromExif ? '撮影日時' : '更新日時', `${fmtDate(new Date(m.date))} ${fmtTime(new Date(m.date))}`);
+  add('機種', m.model);
+  add('レンズ', m.lens);
+  if (m.focal35 || m.focal) add('焦点距離', (m.focal35 ? `35mm換算 ${m.focal35}mm` : '') + (m.focal ? `${m.focal35 ? '(' : ''}実 ${(+m.focal).toFixed(1)}mm${m.focal35 ? ')' : ''}` : ''));
+}
+
+/* edge map: Sobel magnitude of a blurred, downscaled grayscale copy */
+function buildEdges(im){
+  const maxSide = 960, s = Math.min(1, maxSide / Math.max(im.naturalWidth, im.naturalHeight));
+  const w = Math.max(2, Math.round(im.naturalWidth * s)), h = Math.max(2, Math.round(im.naturalHeight * s));
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d', {willReadFrequently:true});
+  ctx.drawImage(im, 0, 0, w, h);
+  const px = ctx.getImageData(0, 0, w, h).data;
+  freeCanvas(c);
+  const g = new Float32Array(w * h);
+  for (let i = 0, j = 0; i < g.length; i++, j += 4) g[i] = px[j] * .299 + px[j+1] * .587 + px[j+2] * .114;
+  // separable [1 2 1] blur, twice
+  const tmp = new Float32Array(w * h);
+  for (let pass = 0; pass < 2; pass++){
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
+      const i = y * w + x, l = x ? i - 1 : i, r = x < w - 1 ? i + 1 : i;
+      tmp[i] = (g[l] + 2 * g[i] + g[r]) * .25;
+    }
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
+      const i = y * w + x, u = y ? i - w : i, d = y < h - 1 ? i + w : i;
+      g[i] = (tmp[u] + 2 * tmp[i] + tmp[d]) * .25;
+    }
+  }
+  const mag = new Float32Array(w * h);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++){
+    const i = y * w + x;
+    const gx = -g[i-w-1] - 2*g[i-1] - g[i+w-1] + g[i-w+1] + 2*g[i+1] + g[i+w+1];
+    const gy = -g[i-w-1] - 2*g[i-w] - g[i-w+1] + g[i+w-1] + 2*g[i+w] + g[i+w+1];
+    mag[i] = Math.hypot(gx, gy);
+  }
+  // histogram for percentile thresholds
+  let max = 0; for (const v of mag) if (v > max) max = v;
+  const bins = 1024, hist = new Uint32Array(bins);
+  if (max > 0) for (const v of mag) hist[Math.min(bins - 1, (v / max * bins) | 0)]++;
+  S.edgeMag = {w, h, mag, hist, max};
+  renderEdges();
+}
+function renderEdges(){
+  const E = S.edgeMag; if (!E) return;
+  const total = E.w * E.h, want = total * prefs.edgeAmt / 100;
+  let acc = 0, b = E.hist.length - 1;
+  for (; b > 0; b--){ acc += E.hist[b]; if (acc >= want) break; }
+  const th = Math.max(1e-6, b / E.hist.length * E.max), soft = th * .6;
+  const c = els.edgeCanvas; c.width = E.w; c.height = E.h;
+  const ctx = c.getContext('2d'); const id = ctx.createImageData(E.w, E.h); const d = id.data;
+  const col = prefs.edgeColor, r = parseInt(col.slice(1,3),16), gg = parseInt(col.slice(3,5),16), bb = parseInt(col.slice(5,7),16);
+  for (let i = 0, j = 0; i < total; i++, j += 4){
+    const v = E.mag[i];
+    if (v <= th - soft) continue;
+    d[j] = r; d[j+1] = gg; d[j+2] = bb; d[j+3] = v >= th ? 255 : ((v - th + soft) / soft * 255) | 0;
+  }
+  ctx.putImageData(id, 0, 0);
+}
+
+/* ---------- overlay presentation ---------- */
+function applyOverlay(){
+  const m = prefs.mode, hasRef = !!S.ref;
+  els.frame.className = 'frame m-' + m + (S.hidden ? ' ov-off' : '');
+  els.refImg.hidden = !hasRef || m === 'edge';
+  els.edgeCanvas.hidden = !hasRef || m !== 'edge';
+  els.splitLine.hidden = !hasRef || m !== 'split';
+  const a = prefs.alpha[m] / 100;
+  els.refImg.style.opacity = a; els.edgeCanvas.style.opacity = a;
+  if (m === 'split'){
+    const p = prefs.split * 100;
+    els.refImg.style.clipPath = els.refImg.style.webkitClipPath = `inset(0 ${100 - p}% 0 0)`;
+    els.splitLine.style.left = p + '%';
+  } else {
+    els.refImg.style.clipPath = els.refImg.style.webkitClipPath = '';
+  }
+  els.grid.hidden = !prefs.grid;
+  els.alpha.value = prefs.alpha[m]; els.alphaOut.textContent = prefs.alpha[m] + '%';
+  for (const b of els.modeSeg.children) b.setAttribute('aria-pressed', b.dataset.mode === m);
+  els.hideBtn.classList.toggle('active', S.hidden);
+  els.hideBadge.hidden = !(S.hidden && hasRef);
+  els.refMsg.hidden = hasRef || !els.camMsg.hidden;
+  for (const ch of els.edgeColors.children) ch.setAttribute('aria-pressed', ch.dataset.color === prefs.edgeColor);
+}
+
+function frameAspect(){
+  if (S.ref) return S.ref.w / S.ref.h;
+  const v = els.video; if (v.videoWidth) return v.videoWidth / v.videoHeight;
+  return 3 / 4;
+}
+function layout(){
+  const r = els.stage.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const a = frameAspect();
+  let w = r.width, h = w / a;
+  if (h > r.height){ h = r.height; w = h * a; }
+  Object.assign(els.frame.style, {width:w + 'px', height:h + 'px', left:(r.width - w) / 2 + 'px', top:(r.height - h) / 2 + 'px'});
+  els.frame.hidden = false;
+  const v = els.video;
+  let hint = '';
+  if (S.ref && v.videoWidth){
+    const refLand = S.ref.w > S.ref.h * 1.05, refPort = S.ref.h > S.ref.w * 1.05;
+    const camLand = v.videoWidth > v.videoHeight;
+    if (refLand && !camLand) hint = '基準写真は横長です。端末を横向きにしてください';
+    else if (refPort && camLand) hint = '基準写真は縦長です。端末を縦向きにしてください';
+  }
+  els.orientHint.textContent = hint; els.orientHint.hidden = !hint;
+  updateCamInfo();
+}
+new ResizeObserver(layout).observe(els.stage);
+els.video.addEventListener('loadedmetadata', layout);
+els.video.addEventListener('resize', layout);
+
+/* ---------- camera ---------- */
+function stopCamera(){
+  if (S.stream) for (const t of S.stream.getTracks()) t.stop();
+  S.stream = S.track = null;
+  els.video.srcObject = null;
+  els.shutter.disabled = true;
+}
+function showCamMsg(title, text, btn = 'カメラを開始'){
+  els.camMsgTitle.textContent = title; els.camMsgText.textContent = text;
+  els.camStartBtn.textContent = btn; els.camStartBtn.hidden = !btn;
+  els.camMsg.hidden = false; applyOverlay();
+}
+async function startCamera(opts = {}){
+  if (S.starting) return;
+  S.starting = true;
+  stopCamera();
+  try {
+    if (!window.isSecureContext) throw Object.assign(new Error('HTTPS で開いたページでのみカメラを使えます。'), {name:'Insecure'});
+    if (!navigator.mediaDevices?.getUserMedia) throw Object.assign(new Error('このブラウザはカメラに対応していません。'), {name:'Unsupported'});
+    const base = {width:{ideal:4032}, height:{ideal:3024}, frameRate:{ideal:30}};
+    const tries = [];
+    const devId = opts.deviceId ?? prefs.deviceId;
+    if (devId) tries.push({...base, deviceId:{exact:devId}});
+    tries.push({...base, facingMode:{ideal:opts.facing || 'environment'}});
+    tries.push({facingMode:{ideal:opts.facing || 'environment'}});
+    let stream = null, err = null;
+    for (const v of tries){
+      try { stream = await navigator.mediaDevices.getUserMedia({video:v, audio:false}); break; }
+      catch (e){ err = e; if (e.name === 'NotAllowedError' || e.name === 'SecurityError') break; }
+    }
+    if (!stream) throw err;
+    S.stream = stream; S.track = stream.getVideoTracks()[0];
+    S.track.addEventListener('ended', () => { if (S.track && S.track.readyState === 'ended' && document.visibilityState === 'visible') startCamera(); });
+    els.video.srcObject = stream;
+    try { await els.video.play(); } catch {}
+    const st = S.track.getSettings ? S.track.getSettings() : {};
+    if (st.deviceId){ prefs.deviceId = st.deviceId; savePrefs(); }
+    els.camMsg.hidden = true;
+    els.shutter.disabled = false;
+    setupZoom();
+    await refreshDevices();
+    applyOverlay(); layout();
+  } catch (e){
+    const n = e && e.name;
+    if (n === 'NotAllowedError') showCamMsg('カメラの使用が許可されていません', 'ブラウザの設定でこのサイトのカメラを「許可」にしてから、もう一度お試しください。iPhone は「設定 > アプリ > Safari > カメラ」、またはアドレスバーの「ぁあ」→ Webサイトの設定 から変更できます。', '再試行');
+    else if (n === 'NotFoundError' || n === 'OverconstrainedError') showCamMsg('カメラが見つかりません', 'この端末で使えるカメラが見つかりませんでした。', '再試行');
+    else if (n === 'NotReadableError') showCamMsg('カメラを開けません', '他のアプリがカメラを使用中の可能性があります。', '再試行');
+    else showCamMsg('カメラを開始できません', (e && e.message) || String(e), (n === 'Insecure' || n === 'Unsupported') ? '' : '再試行');
+  } finally {
+    S.starting = false;
+  }
+}
+async function refreshDevices(){
+  try {
+    const list = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    const cur = S.track?.getSettings?.().deviceId || '';
+    els.camSel.textContent = '';
+    list.forEach((d, i) => {
+      const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || `カメラ ${i + 1}`;
+      if (d.deviceId === cur) o.selected = true;
+      els.camSel.append(o);
+    });
+    els.flipBtn.disabled = list.length < 2;
+  } catch {}
+}
+function updateCamInfo(){
+  const v = els.video;
+  if (!v.videoWidth){ els.camInfo.textContent = ''; return; }
+  const c = cropRect(v.videoWidth, v.videoHeight, frameAspect(), S.dzoom);
+  els.camInfo.textContent = `映像 ${v.videoWidth}×${v.videoHeight} / 保存サイズ ${Math.round(c.sw)}×${Math.round(c.sh)}` +
+    (S.ref ? '(基準写真と同じ縦横比に切り抜き)' : '');
+}
+
+/* zoom: hardware zoom constraint if available, otherwise centre-crop digital zoom */
+function setupZoom(){
+  const caps = S.track?.getCapabilities?.() || {};
+  const st = S.track?.getSettings?.() || {};
+  S.dzoom = 1;
+  if (caps.zoom && caps.zoom.max > caps.zoom.min){
+    S.hwZoom = {min:caps.zoom.min, max:Math.min(caps.zoom.max, caps.zoom.min * 10), step:caps.zoom.step || 0.01};
+    els.zoom.min = S.hwZoom.min; els.zoom.max = S.hwZoom.max; els.zoom.step = Math.max(0.01, S.hwZoom.step);
+    els.zoom.value = st.zoom ?? S.hwZoom.min;
+    els.zoomNote.textContent = '光学/センサーのズームを使います。2本指でつまんでも調整できます。';
+  } else {
+    S.hwZoom = null;
+    els.zoom.min = 1; els.zoom.max = 5; els.zoom.step = 0.01; els.zoom.value = 1;
+    els.zoomNote.textContent = 'この環境では切り抜きによるデジタルズームです(倍率を上げると保存サイズが小さくなります)。2本指でつまんでも調整できます。';
+  }
+  showZoom(+els.zoom.value);
+}
+let zoomApplyBusy = false, zoomQueued = null;
+async function setZoom(z){
+  if (S.hwZoom){
+    z = clamp(z, S.hwZoom.min, S.hwZoom.max);
+    showZoom(z);
+    if (zoomApplyBusy){ zoomQueued = z; return; }
+    zoomApplyBusy = true;
+    try { await S.track.applyConstraints({advanced:[{zoom:z}]}); } catch {}
+    zoomApplyBusy = false;
+    if (zoomQueued != null){ const q = zoomQueued; zoomQueued = null; setZoom(q); }
+  } else {
+    z = clamp(z, 1, 5);
+    S.dzoom = z; showZoom(z);
+  }
+}
+function showZoom(z){
+  els.zoom.value = z;
+  const base = S.hwZoom ? S.hwZoom.min : 1;
+  const label = (z / base).toFixed(z / base < 10 ? 1 : 0) + '×';
+  els.zoomOut.textContent = label; els.zoomBadge.textContent = label;
+  els.zoomBadge.hidden = Math.abs(z - base) < 0.005;
+  els.video.style.transform = S.dzoom !== 1 ? `scale(${S.dzoom})` : '';
+  updateCamInfo();
+}
+function currentZoom(){ return +els.zoom.value; }
+
+/* ---------- capture ---------- */
+function cropRect(vw, vh, a, z){
+  let sw = vw, sh = vw / a;
+  if (sh > vh){ sh = vh; sw = vh * a; }
+  sw /= z; sh /= z;
+  return {sx:(vw - sw) / 2, sy:(vh - sh) / 2, sw, sh};
+}
+async function capture(){
+  const v = els.video;
+  if (!v.videoWidth || els.shutter.disabled) return;
+  const r = cropRect(v.videoWidth, v.videoHeight, frameAspect(), S.dzoom);
+  const c = document.createElement('canvas');
+  c.width = Math.round(r.sw); c.height = Math.round(r.sh);
+  c.getContext('2d').drawImage(v, r.sx, r.sy, r.sw, r.sh, 0, 0, c.width, c.height);
+  els.flash.classList.remove('on'); void els.flash.offsetWidth; els.flash.classList.add('on');
+  els.shutter.disabled = true;
+  busy(true, '保存用の画像を作成中…');
+  try {
+    const blob = await canvasToBlob(c, 'image/jpeg', .95);
+    const w = c.width, h = c.height;
+    freeCanvas(c);
+    if (S.shot) URL.revokeObjectURL(S.shot.url);
+    const url = URL.createObjectURL(blob);
+    S.shot = {blob, url, img:await loadImg(url), w, h, date:new Date()};
+    openReview();
+  } catch (e){
+    toast('撮影に失敗しました: ' + (e.message || e));
+  } finally {
+    busy(false); els.shutter.disabled = !S.stream;
+  }
+}
+
+/* ---------- review / compare ---------- */
+function openReview(){
+  els.review.hidden = false;
+  const refD = S.ref?.meta?.date ? new Date(S.ref.meta.date) : null, shotD = S.shot.date;
+  const sameDay = refD && fmtDate(refD) === fmtDate(shotD);
+  els.lbl1.value = refD ? fmtDate(refD) + (sameDay ? ' ' + fmtTime(refD) : '') : '前';
+  els.lbl2.value = fmtDate(shotD) + (sameDay ? ' ' + fmtTime(shotD) : '');
+  els.rvTabs.children[1].disabled = !S.ref;
+  setTab(S.tab === 'cmp' && S.ref ? 'cmp' : 'photo');
+}
+function closeReview(){ els.review.hidden = true; S.cmpBlob = null; }
+function setTab(t){
+  S.tab = t;
+  for (const b of els.rvTabs.children) b.setAttribute('aria-pressed', b.dataset.tab === t);
+  els.cmpOpts.hidden = t !== 'cmp';
+  for (const b of els.cmpLayout.children) b.setAttribute('aria-pressed', b.dataset.layout === prefs.cmpLayout);
+  els.cmpPosRow.hidden = prefs.cmpLayout !== 'slider';
+  els.cmpLabels.checked = prefs.cmpLabels; els.lblInputs.hidden = !prefs.cmpLabels;
+  els.cmpPos.value = Math.round(prefs.split * 100); els.cmpPosOut.textContent = els.cmpPos.value + '%';
+  drawPreview();
+  if (t === 'cmp') scheduleCmpExport(0);
+  updateSaveBtn();
+}
+function cmpSize(){
+  const w = S.shot.w, h = S.shot.h, L = prefs.cmpLayout;
+  let W = L === 'lr' ? w * 2 : w, H = L === 'tb' ? h * 2 : h;
+  // keep within iOS canvas limits (≈16.7M px, 8192 px per side)
+  const s = Math.min(1, Math.sqrt(16e6 / (W * H)), 8192 / Math.max(W, H));
+  return {W:Math.round(W * s), H:Math.round(H * s)};
+}
+function drawCompare(ctx, W, H, refIm){
+  const L = prefs.cmpLayout, shot = S.shot.img;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  const panels = [];
+  if (L === 'lr'){
+    const pw = W / 2;
+    ctx.drawImage(refIm, 0, 0, pw, H); ctx.drawImage(shot, pw, 0, W - pw, H);
+    panels.push({x:0, y:0, w:pw, h:H, align:'left'}, {x:pw, y:0, w:W - pw, h:H, align:'left'});
+    const lw = Math.max(2, Math.round(W * .003));
+    ctx.fillStyle = '#fff'; ctx.fillRect(pw - lw / 2, 0, lw, H);
+  } else if (L === 'tb'){
+    const ph = H / 2;
+    ctx.drawImage(refIm, 0, 0, W, ph); ctx.drawImage(shot, 0, ph, W, H - ph);
+    panels.push({x:0, y:0, w:W, h:ph, align:'left'}, {x:0, y:ph, w:W, h:H - ph, align:'left'});
+    const lw = Math.max(2, Math.round(H * .003));
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, ph - lw / 2, W, lw);
+  } else {
+    const x = W * prefs.split;
+    ctx.drawImage(shot, 0, 0, W, H);
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, x, H); ctx.clip();
+    ctx.drawImage(refIm, 0, 0, W, H); ctx.restore();
+    const lw = Math.max(2, Math.round(Math.min(W, H) * .006));
+    ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = lw * 2;
+    ctx.fillStyle = '#fff'; ctx.fillRect(x - lw / 2, 0, lw, H); ctx.restore();
+    panels.push({x:0, y:0, w:W, h:H, align:'left'}, {x:0, y:0, w:W, h:H, align:'right'});
+  }
+  if (!prefs.cmpLabels) return;
+  [els.lbl1.value.trim(), els.lbl2.value.trim()].forEach((text, i) => {
+    if (!text) return;
+    const p = panels[i], fs = Math.round(Math.min(p.w, p.h) * .055), pad = fs * .45, m = fs * .6;
+    ctx.font = `700 ${fs}px "Hiragino Sans","Zen Kaku Gothic New",system-ui,sans-serif`;
+    ctx.textBaseline = 'middle';
+    const tw = ctx.measureText(text).width, bw = tw + pad * 2, bh = fs * 1.5;
+    const bx = p.align === 'left' ? p.x + m : p.x + p.w - m - bw, by = p.y + m;
+    ctx.fillStyle = 'rgba(0,0,0,.6)';
+    if (ctx.roundRect){ ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, fs * .3); ctx.fill(); } else ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = '#fff'; ctx.fillText(text, bx + pad, by + bh / 2 + fs * .04);
+  });
+}
+let refImCache = null;
+async function refDrawable(){
+  if (refImCache && refImCache.src === S.ref.url) return refImCache;
+  refImCache = await loadImg(S.ref.url);
+  return refImCache;
+}
+async function drawPreview(){
+  if (!S.shot) return;
+  const box = els.rvStage.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const cmp = S.tab === 'cmp' && S.ref;
+  const {W, H} = cmp ? cmpSize() : {W:S.shot.w, H:S.shot.h};
+  const bw = Math.max(50, box.width - 16), bh = Math.max(50, box.height - 16);
+  const s = Math.min(bw / W, bh / H);
+  const cw = Math.round(W * s), ch = Math.round(H * s);
+  const c = els.rvCanvas;
+  c.style.width = cw + 'px'; c.style.height = ch + 'px';
+  c.width = Math.round(cw * dpr); c.height = Math.round(ch * dpr);
+  const ctx = c.getContext('2d');
+  if (cmp) drawCompare(ctx, c.width, c.height, await refDrawable());
+  else ctx.drawImage(S.shot.img, 0, 0, c.width, c.height);
+  els.rvInfo.textContent = (cmp ? `比較画像 ${W}×${H}` : `撮影写真 ${S.shot.w}×${S.shot.h}`) +
+    (canShareFiles() ? ' ・ 共有シートの「画像を保存」で写真アプリに保存できます' : ' ・ JPEG としてダウンロードします');
+}
+// The share sheet needs a fresh user gesture, so the compare image is encoded ahead of time.
+let cmpTimer = 0;
+function scheduleCmpExport(delay = 400){
+  S.cmpBlob = null; S.cmpPending++;
+  updateSaveBtn();
+  clearTimeout(cmpTimer);
+  const ticket = S.cmpPending;
+  cmpTimer = setTimeout(async () => {
+    try {
+      const {W, H} = cmpSize();
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      drawCompare(c.getContext('2d'), W, H, await refDrawable());
+      const blob = await canvasToBlob(c, 'image/jpeg', .92);
+      freeCanvas(c);
+      if (ticket === S.cmpPending){ S.cmpBlob = blob; updateSaveBtn(); }
+    } catch (e){ toast('比較画像を作れませんでした: ' + (e.message || e)); }
+  }, delay);
+}
+function updateSaveBtn(){
+  const waiting = S.tab === 'cmp' && !S.cmpBlob;
+  els.saveBtn.disabled = waiting;
+  els.saveBtn.textContent = waiting ? '準備中…' : (canShareFiles() ? '保存・共有' : 'ダウンロード');
+}
+function canShareFiles(){
+  try { return !!(navigator.canShare && navigator.canShare({files:[new File([new Blob()], 'x.jpg', {type:'image/jpeg'})]})); } catch { return false; }
+}
+async function saveCurrent(){
+  const cmp = S.tab === 'cmp';
+  const blob = cmp ? S.cmpBlob : S.shot?.blob;
+  if (!blob) return;
+  const name = `overlay-${cmp ? 'compare-' : ''}${stamp(S.shot.date)}.jpg`;
+  const file = new File([blob], name, {type:'image/jpeg', lastModified:S.shot.date.getTime()});
+  if (navigator.canShare && navigator.canShare({files:[file]})){
+    try { await navigator.share({files:[file]}); return; }
+    catch (e){
+      if (e.name === 'AbortError') return;
+      if (e.name === 'NotAllowedError'){ toast('もう一度「保存・共有」を押してください'); return; }
+    }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast('ダウンロードしました');
+}
+
+/* ---------- events: camera screen ---------- */
+els.refInput.addEventListener('change', e => onRefFile(e.target.files && e.target.files[0]));
+els.camStartBtn.addEventListener('click', () => startCamera());
+els.modeSeg.addEventListener('click', e => {
+  const b = e.target.closest('button[data-mode]'); if (!b) return;
+  prefs.mode = b.dataset.mode; savePrefs(); applyOverlay();
+});
+els.alpha.addEventListener('input', () => {
+  prefs.alpha[prefs.mode] = +els.alpha.value; applyOverlay();
+});
+els.alpha.addEventListener('change', savePrefs);
+
+// short tap toggles the overlay, holding hides it only while pressed
+let holdStart = 0, holdWasHidden = false;
+els.hideBtn.addEventListener('pointerdown', e => {
+  e.preventDefault(); els.hideBtn.setPointerCapture?.(e.pointerId);
+  holdStart = performance.now(); holdWasHidden = S.hidden; S.hidden = true; applyOverlay();
+});
+const endHold = () => {
+  if (!holdStart) return;
+  const held = performance.now() - holdStart; holdStart = 0;
+  S.hidden = held < 300 ? !holdWasHidden : holdWasHidden; applyOverlay();
+};
+els.hideBtn.addEventListener('pointerup', endHold);
+els.hideBtn.addEventListener('pointercancel', endHold);
+els.hideBtn.addEventListener('contextmenu', e => e.preventDefault());
+
+els.shutter.addEventListener('click', capture);
+els.flipBtn.addEventListener('click', () => {
+  const st = S.track?.getSettings?.() || {};
+  const facing = st.facingMode === 'user' ? 'environment' : 'user';
+  prefs.deviceId = ''; savePrefs();
+  startCamera({facing, deviceId:''});
+});
+document.addEventListener('keydown', e => {
+  if (!els.review.hidden || !els.settings.hidden) return;
+  if (e.code === 'Space' || e.code === 'Enter'){ e.preventDefault(); capture(); }
+});
+
+// stage gestures: drag the split line, pinch to zoom
+const pointers = new Map();
+let pinch = null;
+els.stage.addEventListener('pointerdown', e => {
+  if (e.target.closest('.card, button, label')) return;
+  pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+  els.stage.setPointerCapture?.(e.pointerId);
+  if (pointers.size === 2){
+    const [a, b] = [...pointers.values()];
+    pinch = {d:Math.hypot(a.x - b.x, a.y - b.y), z:currentZoom()};
+  } else if (pointers.size === 1 && prefs.mode === 'split' && S.ref){
+    moveSplit(e.clientX);
+  }
+});
+els.stage.addEventListener('pointermove', e => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+  if (pinch && pointers.size >= 2){
+    const [a, b] = [...pointers.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pinch.d > 10) setZoom(pinch.z * d / pinch.d);
+  } else if (!pinch && prefs.mode === 'split' && S.ref){
+    moveSplit(e.clientX);
+  }
+});
+const endPointer = e => {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinch = null;
+  if (!pointers.size) savePrefs();
+};
+els.stage.addEventListener('pointerup', endPointer);
+els.stage.addEventListener('pointercancel', endPointer);
+function moveSplit(clientX){
+  const r = els.frame.getBoundingClientRect();
+  prefs.split = clamp((clientX - r.left) / r.width, 0, 1);
+  applyOverlay();
+}
+els.zoomBadge.addEventListener('click', () => setZoom(S.hwZoom ? S.hwZoom.min : 1));
+
+/* ---------- events: settings ---------- */
+els.settingsBtn.addEventListener('click', () => { refreshDevices(); updateCamInfo(); els.settings.hidden = false; });
+els.settingsClose.addEventListener('click', () => { els.settings.hidden = true; });
+els.settings.addEventListener('click', e => { if (e.target === els.settings) els.settings.hidden = true; });
+els.camSel.addEventListener('change', () => { prefs.deviceId = els.camSel.value; savePrefs(); startCamera({deviceId:els.camSel.value}); });
+els.zoom.addEventListener('input', () => setZoom(+els.zoom.value));
+els.gridChk.addEventListener('change', () => { prefs.grid = els.gridChk.checked; savePrefs(); applyOverlay(); });
+els.edgeColors.addEventListener('click', e => {
+  const b = e.target.closest('[data-color]'); if (!b) return;
+  prefs.edgeColor = b.dataset.color; savePrefs(); renderEdges(); applyOverlay();
+});
+els.edgeAmt.addEventListener('input', () => { prefs.edgeAmt = +els.edgeAmt.value; els.edgeAmtOut.textContent = prefs.edgeAmt + '%'; renderEdges(); });
+els.edgeAmt.addEventListener('change', savePrefs);
+els.refClear.addEventListener('click', () => { if (confirm('基準写真を外しますか?')) clearRef(); });
+
+/* ---------- events: review ---------- */
+els.rvBack.addEventListener('click', closeReview);
+els.rvTabs.addEventListener('click', e => {
+  const b = e.target.closest('button[data-tab]'); if (!b || b.disabled) return;
+  setTab(b.dataset.tab);
+});
+els.cmpLayout.addEventListener('click', e => {
+  const b = e.target.closest('button[data-layout]'); if (!b) return;
+  prefs.cmpLayout = b.dataset.layout; savePrefs(); setTab('cmp');
+});
+els.cmpPos.addEventListener('input', () => {
+  prefs.split = +els.cmpPos.value / 100; els.cmpPosOut.textContent = els.cmpPos.value + '%'; drawPreview();
+});
+els.cmpPos.addEventListener('change', () => { savePrefs(); scheduleCmpExport(); });
+els.cmpLabels.addEventListener('change', () => { prefs.cmpLabels = els.cmpLabels.checked; savePrefs(); setTab('cmp'); });
+for (const inp of [els.lbl1, els.lbl2]) inp.addEventListener('input', () => { drawPreview(); scheduleCmpExport(); });
+let rvDrag = false;
+const rvMove = e => {
+  const r = els.rvCanvas.getBoundingClientRect();
+  prefs.split = clamp((e.clientX - r.left) / r.width, 0, 1);
+  els.cmpPos.value = Math.round(prefs.split * 100); els.cmpPosOut.textContent = els.cmpPos.value + '%';
+  drawPreview();
+};
+els.rvCanvas.addEventListener('pointerdown', e => {
+  if (S.tab !== 'cmp' || prefs.cmpLayout !== 'slider') return;
+  rvDrag = true; els.rvCanvas.setPointerCapture?.(e.pointerId); rvMove(e);
+});
+els.rvCanvas.addEventListener('pointermove', e => { if (rvDrag) rvMove(e); });
+const rvEnd = () => { if (!rvDrag) return; rvDrag = false; savePrefs(); scheduleCmpExport(); };
+els.rvCanvas.addEventListener('pointerup', rvEnd);
+els.rvCanvas.addEventListener('pointercancel', rvEnd);
+els.saveBtn.addEventListener('click', saveCurrent);
+els.useAsRef.addEventListener('click', async () => {
+  if (!S.shot) return;
+  const meta = {name:'', w:S.shot.w, h:S.shot.h, date:S.shot.date.toISOString(), dateFromExif:true, model:'', lens:'', focal:0, focal35:0};
+  await setRef(S.shot.blob, meta);
+  idb.set('ref', {blob:S.shot.blob, meta});
+  closeReview(); toast('撮影した写真を基準写真にしました');
+});
+new ResizeObserver(() => { if (!els.review.hidden) drawPreview(); }).observe(els.rvStage);
+
+/* ---------- lifecycle ---------- */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') stopCamera();
+  else if (!S.stream) startCamera();
+});
+window.addEventListener('pagehide', stopCamera);
+
+// home-screen icon, drawn once so the page stays a single file
+(function makeTouchIcon(){
+  try {
+    const c = document.createElement('canvas'); c.width = c.height = 180;
+    const x = c.getContext('2d');
+    x.fillStyle = '#111'; x.fillRect(0, 0, 180, 180);
+    x.lineWidth = 10; x.lineJoin = 'round';
+    x.strokeStyle = '#FF5040'; x.strokeRect(28, 46, 92, 70);
+    x.strokeStyle = 'rgba(255,255,255,.9)'; x.strokeRect(60, 68, 92, 70);
+    x.fillStyle = '#FFC233'; x.beginPath(); x.arc(106, 103, 12, 0, Math.PI * 2); x.fill();
+    $('touchIcon').href = c.toDataURL('image/png');
+  } catch {}
+})();
+
+// initial UI state from prefs
+els.gridChk.checked = prefs.grid;
+els.edgeAmt.value = prefs.edgeAmt; els.edgeAmtOut.textContent = prefs.edgeAmt + '%';
+applyOverlay(); layout();
+idb.get('ref').then(v => { if (v && v.blob && !S.ref) return setRef(v.blob, v.meta || {}); }).catch(() => {});
+startCamera();
+})();
+</script>
+</body>
+</html>
