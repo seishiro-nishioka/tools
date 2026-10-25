@@ -132,6 +132,9 @@ h2{font-size:14.5px; margin:0; font-weight:700; display:flex; align-items:center
 .media-syntax summary{cursor:pointer}
 .media-syntax p,.media-syntax ul{margin:2px 0 0}
 .media-syntax ul{padding-left:16px}
+.media-annot summary{cursor:pointer}
+.media-annot p,.media-annot ul{margin:2px 0 0}
+.media-annot ul{padding-left:16px}
 
 /* ---------- 編集領域 ---------- */
 .editor,.export-panel{display:flex; flex-direction:column; gap:10px; min-width:0}
@@ -192,6 +195,11 @@ h2{font-size:14.5px; margin:0; font-weight:700; display:flex; align-items:center
 .page-crop{right:5px; bottom:5px; font-size:13px; display:none} /* クロップ機能: 一時的に無効化中 */
 .page-rotate:hover,.page-crop:hover,.page-stamp:hover{background:var(--blue)}
 .page-crop.active,.page-stamp.active{background:var(--blue)}
+/* 元PDFに注釈(スタンプ等)があるページの警告バッジ。右下(クロップボタンの位置は無効化中のため空いている) */
+.page-annot{
+  position:absolute; right:5px; bottom:5px; background:var(--red); color:#fff;
+  font-size:11px; font-weight:700; padding:1px 7px; border-radius:9px; cursor:help;
+}
 
 /* ---------- モーダル(クロップ編集) ---------- */
 .modal-backdrop{
@@ -393,6 +401,14 @@ button:disabled{opacity:.45; cursor:not-allowed}
       <button type="button" class="ghost-sm" id="wmAutoDetectBtn" style="display:none; align-self:flex-start">🔍 候補を自動検出</button>
       <div id="wmCandidateList" class="wm-candidate-list" style="display:none"></div>
       <p class="modal-hint" id="wmRemoveHint" style="display:none; margin:-4px 0 0">「候補を自動検出」で、回転角度・文字色の薄さ・不透明度・複数ページへの繰り返し出現などから透かしらしい文字列を提案します。</p>
+    </div>
+
+    <div class="export-section" id="annotFlattenSection">
+      <p class="export-section-label">注釈</p>
+      <div class="modal-row">
+        <label class="check-row"><input type="checkbox" id="annotFlatten"> 注釈をページに焼き込む(フラット化)</label>
+      </div>
+      <span style="font-size:12.5px; color:var(--sub)">スタンプ・手書き・図形・テキストボックス・ハイライト・フォーム入力欄などの見た目を、ページの内容として描き込みます。注釈が消えてしまうシステムに登録するときに使ってください。<b>フラット化した注釈は、注釈としての移動・編集・削除やフォームへの入力はできなくなります</b>(リンクはそのまま残します)。</span>
     </div>
 
     <div class="export-section">
@@ -1510,7 +1526,8 @@ button:disabled{opacity:.45; cursor:not-allowed}
         }).promise;
         const pdfMeta = await readPdfMetadata(doc);
         const encStatus = await probeEncryption(buf);
-        const mediaItem = { id: uid(), name: file.name, arrayBuffer: buf, pdfjsDoc: doc, pageCount: doc.numPages, pdfMeta, encStatus };
+        const annotInfo = await scanAnnotations(buf);
+        const mediaItem = { id: uid(), name: file.name, arrayBuffer: buf, pdfjsDoc: doc, pageCount: doc.numPages, pdfMeta, encStatus, annotInfo };
         mediaItems.push(mediaItem);
         okCount++;
         renderMediaPool();
@@ -1565,6 +1582,61 @@ button:disabled{opacity:.45; cursor:not-allowed}
       }
     }catch(err){
       return 'none'; // pdf-lib側の読み込みに失敗した場合は判定不能として無視(書き出し時に改めてエラーになる)
+    }
+  }
+
+  // ---------- 注釈(スタンプ等)の検出 ----------
+  // 社内システム等への登録時に、スタンプなどの注釈(/Annots)が消えてしまうことがあるため、
+  // 元PDFに含まれる注釈を種類・ページごとに数えて、メディアプール・編集領域に警告表示する。
+  // Popup(付箋の吹き出し部分)は親の注釈に付属するUIなので数えない。
+  const ANNOT_LABELS = {
+    Stamp: 'スタンプ', FreeText: 'テキストボックス', Ink: '手書き', Square: '四角形', Circle: '楕円',
+    Line: '線', Polygon: '多角形', PolyLine: '折れ線', Highlight: 'ハイライト', Underline: '下線',
+    StrikeOut: '取り消し線', Squiggly: '波線', Text: '付箋', Caret: '挿入記号', FileAttachment: '添付ファイル',
+    Sound: 'サウンド', Redact: '墨消し(未適用)', Watermark: '透かし注釈', Widget: 'フォーム入力欄', Link: 'リンク',
+  };
+  const ANNOT_FLAG_HIDDEN = 2, ANNOT_FLAG_NOVIEW = 32;
+  const annotLabel = subtype => ANNOT_LABELS[subtype] || subtype;
+
+  function annotNameOf(dict, key){
+    const v = dict.lookup(PDFLib.PDFName.of(key));
+    return v instanceof PDFLib.PDFName ? v.decodeText() : null;
+  }
+  function annotFlagsOf(dict){
+    const v = dict.lookup(PDFLib.PDFName.of('F'));
+    return v instanceof PDFLib.PDFNumber ? v.asNumber() : 0;
+  }
+  // 種類と件数のマップ({Stamp: 2, Link: 1} など)を「スタンプ2・リンク1」の形に整形する
+  function formatAnnotCounts(counts){
+    return Object.entries(counts).map(([t, n]) => `${annotLabel(t)}${n}`).join('・');
+  }
+
+  // 戻り値: { pages: [{Stamp: 2, ...}, ...](ページごと), totals: {...}, warnTotal, linkTotal }
+  // warnTotal は見た目に表示される注釈(リンク以外)の件数。非表示フラグ付きの注釈は数えない。
+  async function scanAnnotations(arrayBuffer){
+    try{
+      const libDoc = await PDFLib.PDFDocument.load(arrayBuffer, { ignoreEncryption: true, updateMetadata: false });
+      const pages = [], totals = {};
+      let warnTotal = 0, linkTotal = 0;
+      for (const page of libDoc.getPages()){
+        const counts = {};
+        const annots = page.node.Annots();
+        for (let i = 0; annots && i < annots.size(); i++){
+          const dict = annots.lookup(i);
+          if (!(dict instanceof PDFLib.PDFDict)) continue;
+          const subtype = annotNameOf(dict, 'Subtype');
+          if (!subtype || subtype === 'Popup') continue;
+          if (annotFlagsOf(dict) & (ANNOT_FLAG_HIDDEN | ANNOT_FLAG_NOVIEW)) continue;
+          counts[subtype] = (counts[subtype] || 0) + 1;
+          totals[subtype] = (totals[subtype] || 0) + 1;
+          if (subtype === 'Link') linkTotal++; else warnTotal++;
+        }
+        pages.push(counts);
+      }
+      return { pages, totals, warnTotal, linkTotal };
+    }catch(err){
+      console.warn('注釈の検出に失敗しました:', err);
+      return null;
     }
   }
 
@@ -1655,6 +1727,45 @@ button:disabled{opacity:.45; cursor:not-allowed}
           encEl.textContent = '🔒 この暗号化方式には対応していないため、書き出しに失敗する場合があります';
         }
         info.appendChild(encEl);
+      }
+      const ai = media.annotInfo;
+      if (ai && ai.warnTotal){
+        // 構文エラー表示と同じく、タップでも開ける折りたたみ表示にする(ツールチップにも同じ内容を出す)
+        const warnCounts = Object.fromEntries(Object.entries(ai.totals).filter(([t]) => t !== 'Link'));
+        const pageLines = [];
+        ai.pages.forEach((counts, i) => {
+          const c = Object.fromEntries(Object.entries(counts).filter(([t]) => t !== 'Link'));
+          if (Object.keys(c).length) pageLines.push(`${i + 1}ページ: ${formatAnnotCounts(c)}`);
+        });
+        const annEl = document.createElement('details');
+        annEl.className = 'media-encwarn media-annot';
+        annEl.title = `注釈 ${ai.warnTotal}件(${formatAnnotCounts(warnCounts)})\n${pageLines.join('\n')}`;
+        const sum = document.createElement('summary');
+        sum.textContent = `⚠ 注釈が${ai.warnTotal}件あります(${formatAnnotCounts(warnCounts)})`;
+        const note = document.createElement('p');
+        note.textContent = '登録先のシステムによっては注釈が消えることがあります。残したい場合は「書き出し条件」の「注釈をページに焼き込む」を使ってください。';
+        const list = document.createElement('ul');
+        for (const line of pageLines.slice(0, 10)){
+          const li = document.createElement('li');
+          li.textContent = line;
+          list.appendChild(li);
+        }
+        if (pageLines.length > 10){
+          const li = document.createElement('li');
+          li.textContent = `…ほか${pageLines.length - 10}ページ`;
+          list.appendChild(li);
+        }
+        annEl.append(sum, note, list);
+        annEl.open = !!media.annotOpen;
+        annEl.addEventListener('toggle', () => { media.annotOpen = annEl.open; });
+        annEl.addEventListener('click', e => e.stopPropagation());
+        info.appendChild(annEl);
+      }
+      if (ai && ai.linkTotal){
+        const linkEl = document.createElement('p');
+        linkEl.className = 'media-pdfmeta';
+        linkEl.textContent = `🔗 リンクが${ai.linkTotal}件あります`;
+        info.appendChild(linkEl);
       }
       if (!media.syntaxIssues){
         const synEl = document.createElement('p');
@@ -1834,6 +1945,18 @@ button:disabled{opacity:.45; cursor:not-allowed}
         stampBtn.textContent = '🖋';
         stampBtn.addEventListener('click', e => { e.stopPropagation(); openStampModal(entry.id); });
         card.appendChild(stampBtn);
+
+        const media = mediaById(entry.mediaId);
+        const pageAnnots = media && media.annotInfo ? media.annotInfo.pages[entry.pageIndex] : null;
+        const warnCounts = pageAnnots ? Object.fromEntries(Object.entries(pageAnnots).filter(([t]) => t !== 'Link')) : {};
+        const warnCount = Object.values(warnCounts).reduce((a, b) => a + b, 0);
+        if (warnCount){
+          const badge = document.createElement('span');
+          badge.className = 'page-annot';
+          badge.textContent = `⚠ 注釈${warnCount}`;
+          badge.title = `このページには注釈が${warnCount}件あります(${formatAnnotCounts(warnCounts)})`;
+          card.appendChild(badge);
+        }
 
         const del = document.createElement('button');
         del.type = 'button';
@@ -2410,12 +2533,14 @@ button:disabled{opacity:.45; cursor:not-allowed}
   });
 
   // ---------- 書き出し形式の切り替え ----------
-  const metaFieldsEl = $('metaFields');
+  const metaFieldsEl = $('metaFields'), annotFlattenSectionEl = $('annotFlattenSection');
+  const annotFlattenChk = $('annotFlatten');
   let exportFormat = 'pdf';
   document.querySelectorAll('#format button').forEach(b => b.addEventListener('click', () => {
     exportFormat = b.dataset.f;
     document.querySelectorAll('#format button').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
     compressRow.hidden = exportFormat !== 'pdf';
+    annotFlattenSectionEl.style.display = exportFormat === 'pdf' ? '' : 'none'; // 画像書き出しでは注釈も常に見た目どおり画像化される
     metaFieldsEl.style.display = exportFormat === 'pdf' ? '' : 'none'; // メタデータはPDF書き出し時のみ意味を持つ
   }));
 
@@ -3049,6 +3174,100 @@ button:disabled{opacity:.45; cursor:not-allowed}
     return { imageCount, savedBytes };
   }
 
+  // ---------- 注釈のフラット化 ----------
+  // 各注釈の通常時の外観ストリーム(/AP /N。状態を持つものは /AS で選ばれた方)を、
+  // PDF仕様(12.5.5)の手順どおり「外観の BBox を Matrix で変換した矩形」が注釈の /Rect に
+  // 収まるように配置して、ページ内容の末尾に Form XObject として描き込む。描き込んだ注釈と、
+  // それに付属する Popup は /Annots から取り除く。リンク(見た目を持たない)、非表示の注釈、
+  // 外観ストリームを持たない注釈は描き込めないため、注釈のまま残す。
+  function annotNormalAppearance(context, dict){
+    const { PDFName, PDFDict, PDFStream, PDFRef } = PDFLib;
+    const ap = dict.lookup(PDFName.of('AP'));
+    if (!(ap instanceof PDFDict)) return null;
+    let raw = ap.get(PDFName.of('N'));
+    let obj = context.lookup(raw);
+    if (obj instanceof PDFDict){
+      const as = dict.lookup(PDFName.of('AS'));
+      if (!(as instanceof PDFName)) return null;
+      raw = obj.get(as);
+      obj = context.lookup(raw);
+    }
+    if (!(obj instanceof PDFStream)) return null;
+    return { ref: raw instanceof PDFRef ? raw : context.register(obj), stream: obj };
+  }
+
+  function annotNumbers(context, arr, len){
+    const a = context.lookup(arr);
+    if (!(a instanceof PDFLib.PDFArray) || a.size() !== len) return null;
+    const nums = a.asArray().map(v => context.lookup(v)).map(v => v instanceof PDFLib.PDFNumber ? v.asNumber() : NaN);
+    return nums.every(Number.isFinite) ? nums : null;
+  }
+
+  // コンテンツストリームに書く数値。指数表記(1e-7 等)はPDFの数値として不正なため、固定小数点に丸める
+  const pdfNum = x => String(Number(x.toFixed(6)));
+
+  function flattenPageAnnotations(context, page){
+    const { PDFName, PDFDict, PDFRef } = PDFLib;
+    const annots = page.node.Annots();
+    const result = { flattened: 0, counts: {}, noAppearance: 0 };
+    if (!annots || !annots.size()) return result;
+
+    const keep = [], popups = [], ops = [];
+    const flattenedRefs = new Set();
+    for (let i = 0; i < annots.size(); i++){
+      const raw = annots.get(i);
+      const dict = annots.lookup(i);
+      if (!(dict instanceof PDFDict)){ keep.push(raw); continue; }
+      const subtype = annotNameOf(dict, 'Subtype');
+      if (subtype === 'Popup'){ popups.push({ raw, dict }); continue; }
+      if (subtype === 'Link' || (annotFlagsOf(dict) & (ANNOT_FLAG_HIDDEN | ANNOT_FLAG_NOVIEW))){ keep.push(raw); continue; }
+
+      const ap = annotNormalAppearance(context, dict);
+      const rect = annotNumbers(context, dict.get(PDFName.of('Rect')), 4);
+      const bbox = ap && annotNumbers(context, ap.stream.dict.get(PDFName.of('BBox')), 4);
+      if (!ap || !rect || !bbox){
+        if (subtype) result.noAppearance++;
+        keep.push(raw);
+        continue;
+      }
+      const m = annotNumbers(context, ap.stream.dict.get(PDFName.of('Matrix')), 6) || [1, 0, 0, 1, 0, 0];
+      const xs = [], ys = [];
+      for (const [x, y] of [[bbox[0], bbox[1]], [bbox[2], bbox[1]], [bbox[0], bbox[3]], [bbox[2], bbox[3]]]){
+        xs.push(m[0] * x + m[2] * y + m[4]);
+        ys.push(m[1] * x + m[3] * y + m[5]);
+      }
+      const bx = Math.min(...xs), by = Math.min(...ys), bw = Math.max(...xs) - bx, bh = Math.max(...ys) - by;
+      const rx = Math.min(rect[0], rect[2]), ry = Math.min(rect[1], rect[3]);
+      const rw = Math.abs(rect[2] - rect[0]), rh = Math.abs(rect[3] - rect[1]);
+      if (bw > 0 && bh > 0 && rw > 0 && rh > 0){
+        const sx = rw / bw, sy = rh / bh;
+        // 外観ストリームの中にはSubtypeを省略しているものもあるため、Doで描けるよう補っておく
+        ap.stream.dict.set(PDFName.of('Type'), PDFName.of('XObject'));
+        ap.stream.dict.set(PDFName.of('Subtype'), PDFName.of('Form'));
+        const name = page.node.newXObject('FlatAnnot', ap.ref);
+        ops.push(`q ${pdfNum(sx)} 0 0 ${pdfNum(sy)} ${pdfNum(rx - bx * sx)} ${pdfNum(ry - by * sy)} cm ${name} Do Q`);
+      }
+      // 大きさ0の外観は描く物が無いだけなので、描き込んだものとして扱う(注釈は取り除く)
+      if (raw instanceof PDFRef) flattenedRefs.add(raw.toString());
+      result.flattened++;
+      result.counts[subtype] = (result.counts[subtype] || 0) + 1;
+    }
+    for (const { raw, dict } of popups){
+      const parent = dict.get(PDFName.of('Parent'));
+      if (!(parent instanceof PDFRef && flattenedRefs.has(parent.toString()))) keep.push(raw);
+    }
+    if (!result.flattened) return result;
+
+    if (ops.length){
+      // newXObject() の時点でpdf-libが既存のページ内容を q〜Q で囲む(normalize)ため、
+      // 元の内容がグラフィックス状態を戻し忘れていても、末尾に追加する描画位置はずれない
+      page.node.addContentStream(context.register(context.flateStream(ops.join('\n') + '\n')));
+    }
+    if (keep.length) page.node.set(PDFName.of('Annots'), context.obj(keep));
+    else page.node.delete(PDFName.of('Annots'));
+    return result;
+  }
+
   function singleSourceName(){
     const ids = new Set(deck.map(d => d.mediaId));
     if (ids.size !== 1) return null;
@@ -3151,6 +3370,18 @@ button:disabled{opacity:.45; cursor:not-allowed}
       }
     }
 
+    // 注釈のフラット化: 透かし削除の後に行う(焼き込んだ注釈の中の文字が透かし削除の対象にならないように)
+    const annotFlattenTotal = { flattened: 0, counts: {}, noAppearance: 0 };
+    if (annotFlattenChk.checked){
+      setStatus('注釈をページに焼き込んでいます…');
+      for (const { page } of addedPages){
+        const r = flattenPageAnnotations(outDoc.context, page);
+        annotFlattenTotal.flattened += r.flattened;
+        annotFlattenTotal.noAppearance += r.noAppearance;
+        for (const [t, n] of Object.entries(r.counts)) annotFlattenTotal.counts[t] = (annotFlattenTotal.counts[t] || 0) + n;
+      }
+    }
+
     // 透かし: ページ全体(MediaBox全体)に対して描画してから、必要ならクロップで切り取られる形になる
     // (= クロップ範囲外の透かしは単に表示されないだけで、挙動として自然)。
     const wmOpts = getWatermarkOptions();
@@ -3244,6 +3475,16 @@ button:disabled{opacity:.45; cursor:not-allowed}
     }
     if (autoDecryptedNames.length){
       msg += `編集・印刷が制限されていたPDF(${autoDecryptedNames.join('、')})の制限を解除しました。`;
+    }
+    if (annotFlattenChk.checked){
+      if (annotFlattenTotal.flattened){
+        msg += `注釈${annotFlattenTotal.flattened}件(${formatAnnotCounts(annotFlattenTotal.counts)})をページに焼き込みました。`;
+      } else {
+        msg += '焼き込む注釈はありませんでした。';
+      }
+      if (annotFlattenTotal.noAppearance){
+        msg += `外観データを持たない注釈${annotFlattenTotal.noAppearance}件は焼き込めないため、注釈のまま残しました。`;
+      }
     }
     if (wmRemoveNeedles.length){
       const label = wmRemoveNeedles.map(n => `「${n}」`).join('、');
