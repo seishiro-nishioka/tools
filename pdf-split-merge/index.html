@@ -3268,6 +3268,156 @@ button:disabled{opacity:.45; cursor:not-allowed}
     return result;
   }
 
+  // ---------- しおり(アウトライン)の引き継ぎ ----------
+  // pdf-libのcopyPagesはページだけを複製し、文書全体に属するしおり(/Outlines)は持ってこないため、
+  // 元PDFのしおりを読み取り、行き先を書き出し後のページに付け替えて作り直す。
+  // 同じページを複数回配置した場合は最初に出てくる位置へ付け替え、行き先のページを編集領域から
+  // 削除したしおりは取り除く(子のしおりが残る場合は、行き先なしの見出しとして残す)。
+  // 複数のPDFを結合した場合は、編集領域に最初に出てくる順にファイルごとのしおりを並べる。
+  const outlineText = obj => (obj instanceof PDFLib.PDFString || obj instanceof PDFLib.PDFHexString) ? obj.decodeText() : null;
+
+  // 名前付きの行き先(旧形式の /Dests 辞書、または /Names /Dests の名前ツリー)を「名前 → 行き先の配列」のMapにする
+  function readNamedDests(libDoc){
+    const { PDFName, PDFDict, PDFArray } = PDFLib;
+    const map = new Map();
+    const destArray = v => {
+      v = libDoc.context.lookup(v);
+      if (v instanceof PDFDict) v = v.lookup(PDFName.of('D'));
+      return v instanceof PDFArray ? v : null;
+    };
+    const oldDests = libDoc.catalog.lookup(PDFName.of('Dests'));
+    if (oldDests instanceof PDFDict){
+      for (const [k, v] of oldDests.entries()){
+        const d = destArray(v);
+        if (d) map.set(k.decodeText(), d);
+      }
+    }
+    const names = libDoc.catalog.lookup(PDFName.of('Names'));
+    const visited = new Set();
+    const walk = node => {
+      if (!(node instanceof PDFDict) || visited.has(node)) return;
+      visited.add(node);
+      const arr = node.lookup(PDFName.of('Names'));
+      for (let i = 0; arr instanceof PDFArray && i + 1 < arr.size(); i += 2){
+        const key = outlineText(arr.lookup(i));
+        const d = destArray(arr.get(i + 1));
+        if (key !== null && d) map.set(key, d);
+      }
+      const kids = node.lookup(PDFName.of('Kids'));
+      for (let i = 0; kids instanceof PDFArray && i < kids.size(); i++) walk(kids.lookup(i));
+    };
+    if (names instanceof PDFDict) walk(names.lookup(PDFName.of('Dests')));
+    return map;
+  }
+
+  // 元PDFのしおりを、書き出し先に作り直すための中間形式
+  // { title, open, color, flags, dest(書き出し先の行き先配列) | action(書き出し先にコピーした動作), children }
+  // の配列として読み取る。srcPageRefs: 元PDFのページ参照(ページ番号順)、
+  // pageRefToOut: 元PDFのページ参照の文字列 → 書き出し先のページ参照、stats: 件数の集計先
+  function readOutlineItems(libDoc, outDoc, srcPageRefs, pageRefToOut, stats){
+    const { PDFName, PDFDict, PDFArray, PDFNumber, PDFRef } = PDFLib;
+    const ctx = libDoc.context, outCtx = outDoc.context;
+    const outlines = libDoc.catalog.lookup(PDFName.of('Outlines'));
+    if (!(outlines instanceof PDFDict)) return [];
+    const copier = PDFLib.PDFObjectCopier.for(ctx, outCtx);
+    let namedDests = null;
+
+    // 行き先を書き出し先のページに付け替えた配列を返す。行き先のページが無ければnull
+    const remapDest = d => {
+      d = ctx.lookup(d);
+      if (!(d instanceof PDFArray)){
+        const key = d instanceof PDFName ? d.decodeText() : outlineText(d);
+        if (key === null) return null;
+        namedDests = namedDests || readNamedDests(libDoc);
+        d = namedDests.get(key);
+        if (!d) return null;
+      }
+      if (!d.size()) return null;
+      let pageRef = d.get(0);
+      if (pageRef instanceof PDFNumber) pageRef = srcPageRefs[pageRef.asNumber()]; // ページ参照の代わりにページ番号を書く壊れたPDFへの対処
+      const outRef = pageRef instanceof PDFRef ? pageRefToOut.get(pageRef.toString()) : null;
+      if (!outRef) return null;
+      const rest = [];
+      for (let i = 1; i < d.size(); i++) rest.push(d.lookup(i)); // /XYZ 左 上 倍率 などの直接値(名前・数値・null)
+      return outCtx.obj([outRef, ...rest]);
+    };
+
+    const visited = new Set();
+    const readList = first => {
+      const items = [];
+      for (let node = ctx.lookup(first); node instanceof PDFDict && !visited.has(node); node = node.lookup(PDFName.of('Next'))){
+        visited.add(node);
+        const children = readList(node.get(PDFName.of('First')));
+        const count = node.lookup(PDFName.of('Count'));
+        const color = node.lookup(PDFName.of('C'));
+        const flags = node.lookup(PDFName.of('F'));
+        const item = {
+          title: outlineText(node.lookup(PDFName.of('Title'))) || '',
+          open: count instanceof PDFNumber && count.asNumber() > 0,
+          color: color instanceof PDFArray && color.size() === 3 ? outCtx.obj(color.asArray().map(v => ctx.lookup(v))) : null,
+          flags: flags instanceof PDFNumber ? flags : null,
+          dest: null, action: null, children,
+        };
+        const destRaw = node.get(PDFName.of('Dest'));
+        const action = node.lookup(PDFName.of('A'));
+        let hadTarget = false;
+        if (destRaw){
+          hadTarget = true;
+          item.dest = remapDest(destRaw);
+        } else if (action instanceof PDFDict){
+          hadTarget = true;
+          const s = action.lookup(PDFName.of('S'));
+          if (s instanceof PDFName && s.decodeText() === 'GoTo') item.dest = remapDest(action.get(PDFName.of('D')));
+          else item.action = copier.copy(node.get(PDFName.of('A'))); // URIなどページ以外への動作はそのまま引き継ぐ
+        }
+        if (hadTarget && !item.dest && !item.action && !children.length){
+          stats.dropped++;
+          continue;
+        }
+        stats.kept++;
+        items.push(item);
+      }
+      return items;
+    };
+    return readList(outlines.get(PDFName.of('First')));
+  }
+
+  function writeOutline(outDoc, items){
+    const { PDFName, PDFHexString, PDFNumber } = PDFLib;
+    const ctx = outDoc.context;
+    // /Count: 開いている項目は表示される子孫の数、閉じている項目はその数の負値(PDF仕様 12.3.3)
+    const visibleCount = list => list.reduce((n, it) => n + 1 + (it.open ? visibleCount(it.children) : 0), 0);
+    const build = (list, parentRef) => {
+      const refs = list.map(() => ctx.nextRef());
+      list.forEach((it, i) => {
+        const d = ctx.obj({});
+        d.set(PDFName.of('Title'), PDFHexString.fromText(it.title));
+        d.set(PDFName.of('Parent'), parentRef);
+        if (i > 0) d.set(PDFName.of('Prev'), refs[i - 1]);
+        if (i < refs.length - 1) d.set(PDFName.of('Next'), refs[i + 1]);
+        if (it.children.length){
+          const kids = build(it.children, refs[i]);
+          const c = visibleCount(it.children);
+          d.set(PDFName.of('First'), kids[0]);
+          d.set(PDFName.of('Last'), kids[kids.length - 1]);
+          d.set(PDFName.of('Count'), PDFNumber.of(it.open ? c : -c));
+        }
+        if (it.dest) d.set(PDFName.of('Dest'), it.dest);
+        else if (it.action) d.set(PDFName.of('A'), it.action);
+        if (it.color) d.set(PDFName.of('C'), it.color);
+        if (it.flags) d.set(PDFName.of('F'), it.flags);
+        ctx.assign(refs[i], d);
+      });
+      return refs;
+    };
+    const rootRef = ctx.nextRef();
+    const top = build(items, rootRef);
+    ctx.assign(rootRef, ctx.obj({
+      Type: 'Outlines', First: top[0], Last: top[top.length - 1], Count: PDFNumber.of(visibleCount(items)),
+    }));
+    outDoc.catalog.set(PDFName.of('Outlines'), rootRef);
+  }
+
   function singleSourceName(){
     const ids = new Set(deck.map(d => d.mediaId));
     if (ids.size !== 1) return null;
@@ -3334,6 +3484,35 @@ button:disabled{opacity:.45; cursor:not-allowed}
       const page = outDoc.addPage(queue[cursor]);
       cursors.set(entry.mediaId, cursor + 1);
       addedPages.push({ page, entry });
+    }
+
+    // しおり: 元PDFのしおりの行き先を、書き出し後のページに付け替えて引き継ぐ
+    const outlineStats = { kept: 0, dropped: 0 };
+    {
+      const outlineItems = [];
+      let showOutlines = false;
+      for (const mediaId of indicesByMedia.keys()){
+        const libDoc = libDocCache.get(mediaId);
+        try {
+          const srcPageRefs = libDoc.getPages().map(p => p.ref);
+          const pageRefToOut = new Map();
+          for (const { page, entry } of addedPages){
+            if (entry.mediaId !== mediaId) continue;
+            const key = srcPageRefs[entry.pageIndex].toString();
+            if (!pageRefToOut.has(key)) pageRefToOut.set(key, page.ref);
+          }
+          outlineItems.push(...readOutlineItems(libDoc, outDoc, srcPageRefs, pageRefToOut, outlineStats));
+          // 元PDFが「開いたときにしおりパネルを表示」する設定なら、書き出したPDFも同じにする
+          const pageMode = libDoc.catalog.lookup(PDFLib.PDFName.of('PageMode'));
+          if (pageMode instanceof PDFLib.PDFName && pageMode.decodeText() === 'UseOutlines') showOutlines = true;
+        } catch (err){
+          console.error(`"${mediaById(mediaId).name}" のしおりを引き継げませんでした:`, err);
+        }
+      }
+      if (outlineItems.length){
+        writeOutline(outDoc, outlineItems);
+        if (showOutlines) outDoc.catalog.set(PDFLib.PDFName.of('PageMode'), PDFLib.PDFName.of('UseOutlines'));
+      }
     }
 
     // 回転・クロップを適用する。どちらもページのMediaBox基準の座標系(/Rotateの影響を受けない)で
@@ -3475,6 +3654,12 @@ button:disabled{opacity:.45; cursor:not-allowed}
     }
     if (autoDecryptedNames.length){
       msg += `編集・印刷が制限されていたPDF(${autoDecryptedNames.join('、')})の制限を解除しました。`;
+    }
+    if (outlineStats.kept){
+      msg += `しおり${outlineStats.kept}件を引き継ぎました。`;
+    }
+    if (outlineStats.dropped){
+      msg += `削除したページを指していたしおり${outlineStats.dropped}件は除きました。`;
     }
     if (annotFlattenChk.checked){
       if (annotFlattenTotal.flattened){
