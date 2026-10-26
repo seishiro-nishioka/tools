@@ -44,6 +44,7 @@ h1{
   margin:0; font-size:22px; font-weight:700; letter-spacing:.02em;
   display:flex; align-items:center; gap:10px;
 }
+h1 .tool-version{margin-left:8px; font-size:12px; font-weight:500; color:var(--sub); white-space:nowrap}
 h1 .mark{
   width:22px; height:16px; border:2.5px solid var(--red); position:relative; display:inline-block;
 }
@@ -135,6 +136,9 @@ h2{font-size:14.5px; margin:0; font-weight:700; display:flex; align-items:center
 .media-annot summary{cursor:pointer}
 .media-annot p,.media-annot ul{margin:2px 0 0}
 .media-annot ul{padding-left:16px}
+.media-outline summary{cursor:pointer}
+.media-outline p,.media-outline ul{margin:2px 0 0}
+.media-outline ul{padding-left:16px}
 
 /* ---------- 編集領域 ---------- */
 .editor,.export-panel{display:flex; flex-direction:column; gap:10px; min-width:0}
@@ -195,11 +199,13 @@ h2{font-size:14.5px; margin:0; font-weight:700; display:flex; align-items:center
 .page-crop{right:5px; bottom:5px; font-size:13px; display:none} /* クロップ機能: 一時的に無効化中 */
 .page-rotate:hover,.page-crop:hover,.page-stamp:hover{background:var(--blue)}
 .page-crop.active,.page-stamp.active{background:var(--blue)}
-/* 元PDFに注釈(スタンプ等)があるページの警告バッジ。右下(クロップボタンの位置は無効化中のため空いている) */
-.page-annot{
-  position:absolute; right:5px; bottom:5px; background:var(--red); color:#fff;
-  font-size:11px; font-weight:700; padding:1px 7px; border-radius:9px; cursor:help;
+/* 元PDFの注釈(スタンプ等)・しおりがあるページのバッジ。右下(クロップボタンの位置は無効化中のため空いている) */
+.page-badges{position:absolute; right:5px; bottom:5px; display:flex; gap:4px}
+.page-annot,.page-outline{
+  color:#fff; font-size:11px; font-weight:700; padding:1px 7px; border-radius:9px; cursor:help;
 }
+.page-annot{background:var(--red)}
+.page-outline{background:var(--blue)}
 
 /* ---------- モーダル(クロップ編集) ---------- */
 .modal-backdrop{
@@ -330,7 +336,7 @@ button:disabled{opacity:.45; cursor:not-allowed}
 <body>
 <header>
   <div class="header-row">
-    <h1><span class="mark" aria-hidden="true"></span>PDF分割・結合ツール</h1>
+    <h1><span class="mark" aria-hidden="true"></span>PDF分割・結合ツール<span class="tool-version" title="ツールのバージョン(更新した日付)">v2026.10.26</span></h1>
     <div class="header-actions">
       <button id="securityInfoBtn" class="ghost-btn header-action">🔒 セキュリティ</button>
       <button id="licenseInfoBtn" class="ghost-btn header-action2">📄 ライセンス</button>
@@ -1532,6 +1538,13 @@ button:disabled{opacity:.45; cursor:not-allowed}
         okCount++;
         renderMediaPool();
         ensureThumb(mediaItem.id, 0).then(() => renderMediaPool());
+        // しおりは行き先ページの解決に時間がかかることがあるため、構文チェックと同様に裏で読み取る
+        scanOutlines(doc).then(info => {
+          mediaItem.outlineInfo = info;
+          if (!info) return;
+          renderMediaPool();
+          if (deck.some(d => d.mediaId === mediaItem.id)) renderDeck();
+        });
         // 元PDF自体の構文チェック(大きいファイルは数秒かかるため、読み込みを待たせずに裏で行う)
         PdfSyntaxValidator.checkSourcePdf(new Uint8Array(buf)).then(issues => {
           mediaItem.syntaxIssues = issues;
@@ -1639,6 +1652,40 @@ button:disabled{opacity:.45; cursor:not-allowed}
       return null;
     }
   }
+
+  // ---------- しおりの検出 ----------
+  // 登録先のシステムによってはしおり(ブックマーク)も消えることがあるため、元PDFのしおりを
+  // 一覧にしてメディアプール・編集領域に表示する(このツールのPDF書き出し自体はしおりを引き継ぐ)。
+  // 戻り値: { total, items: [{ title, depth, pageIndex(行き先のページ、0始まり。ページ以外ならnull) }] }、しおりが無ければnull
+  async function scanOutlines(pdfjsDoc){
+    try{
+      const outline = await pdfjsDoc.getOutline();
+      if (!outline || !outline.length) return null;
+      const items = [];
+      const walk = async (list, depth) => {
+        for (const it of list){
+          let pageIndex = null;
+          try{
+            let dest = it.dest;
+            if (typeof dest === 'string') dest = await pdfjsDoc.getDestination(dest);
+            if (Array.isArray(dest) && dest[0] != null){
+              pageIndex = typeof dest[0] === 'number' ? dest[0] : await pdfjsDoc.getPageIndex(dest[0]);
+            }
+          }catch(err){
+            pageIndex = null; // 行き先を解決できないしおりは「行き先なし」として扱う
+          }
+          items.push({ title: it.title || '', depth, pageIndex });
+          await walk(it.items || [], depth + 1);
+        }
+      };
+      await walk(outline, 0);
+      return { total: items.length, items };
+    }catch(err){
+      console.warn('しおりの読み取りに失敗しました:', err);
+      return null;
+    }
+  }
+  const outlineItemLabel = it => `${'  '.repeat(it.depth)}${it.title}${it.pageIndex != null ? `(${it.pageIndex + 1}ページ)` : ''}`;
 
   // メディアプールからPDFを削除する。編集領域で使用中の場合は、該当ページも一緒に削除されることを確認する。
   function deleteMediaItem(mediaId){
@@ -1766,6 +1813,34 @@ button:disabled{opacity:.45; cursor:not-allowed}
         linkEl.className = 'media-pdfmeta';
         linkEl.textContent = `🔗 リンクが${ai.linkTotal}件あります`;
         info.appendChild(linkEl);
+      }
+      const oi = media.outlineInfo;
+      if (oi){
+        const lines = oi.items.map(outlineItemLabel);
+        const olEl = document.createElement('details');
+        olEl.className = 'media-encwarn media-outline';
+        olEl.title = `しおり ${oi.total}件\n${lines.slice(0, 30).join('\n')}${lines.length > 30 ? `\n…ほか${lines.length - 30}件` : ''}`;
+        const sum = document.createElement('summary');
+        sum.textContent = `⚠ しおりが${oi.total}件あります`;
+        const note = document.createElement('p');
+        note.textContent = '登録先のシステムによってはしおりが消えることがあります。このツールのPDF書き出しでは、並べ替え・削除後のページに合わせてしおりを引き継ぎます。';
+        const list = document.createElement('ul');
+        for (const it of oi.items.slice(0, 15)){
+          const li = document.createElement('li');
+          li.textContent = outlineItemLabel(it).trimStart();
+          li.style.marginLeft = `${it.depth * 12}px`;
+          list.appendChild(li);
+        }
+        if (oi.items.length > 15){
+          const li = document.createElement('li');
+          li.textContent = `…ほか${oi.items.length - 15}件`;
+          list.appendChild(li);
+        }
+        olEl.append(sum, note, list);
+        olEl.open = !!media.outlineOpen;
+        olEl.addEventListener('toggle', () => { media.outlineOpen = olEl.open; });
+        olEl.addEventListener('click', e => e.stopPropagation());
+        info.appendChild(olEl);
       }
       if (!media.syntaxIssues){
         const synEl = document.createElement('p');
@@ -1950,12 +2025,25 @@ button:disabled{opacity:.45; cursor:not-allowed}
         const pageAnnots = media && media.annotInfo ? media.annotInfo.pages[entry.pageIndex] : null;
         const warnCounts = pageAnnots ? Object.fromEntries(Object.entries(pageAnnots).filter(([t]) => t !== 'Link')) : {};
         const warnCount = Object.values(warnCounts).reduce((a, b) => a + b, 0);
-        if (warnCount){
-          const badge = document.createElement('span');
-          badge.className = 'page-annot';
-          badge.textContent = `⚠ 注釈${warnCount}`;
-          badge.title = `このページには注釈が${warnCount}件あります(${formatAnnotCounts(warnCounts)})`;
-          card.appendChild(badge);
+        const pageOutlines = media && media.outlineInfo ? media.outlineInfo.items.filter(it => it.pageIndex === entry.pageIndex) : [];
+        if (warnCount || pageOutlines.length){
+          const badges = document.createElement('div');
+          badges.className = 'page-badges';
+          if (pageOutlines.length){
+            const badge = document.createElement('span');
+            badge.className = 'page-outline';
+            badge.textContent = `📑${pageOutlines.length}`;
+            badge.title = `このページを指すしおり(${pageOutlines.length}件): ${pageOutlines.map(it => it.title).join('、')}`;
+            badges.appendChild(badge);
+          }
+          if (warnCount){
+            const badge = document.createElement('span');
+            badge.className = 'page-annot';
+            badge.textContent = `⚠ 注釈${warnCount}`;
+            badge.title = `このページには注釈が${warnCount}件あります(${formatAnnotCounts(warnCounts)})`;
+            badges.appendChild(badge);
+          }
+          card.appendChild(badges);
         }
 
         const del = document.createElement('button');
