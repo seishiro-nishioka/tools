@@ -717,14 +717,23 @@ async function startCamera(opts = {}){
     if (!window.isSecureContext) throw Object.assign(new Error('HTTPS で開いたページでのみカメラを使えます。'), {name:'Insecure'});
     if (!navigator.mediaDevices?.getUserMedia) throw Object.assign(new Error('このブラウザはカメラに対応していません。'), {name:'Unsupported'});
     const base = {width:{ideal:4032}, height:{ideal:3024}, frameRate:{ideal:30}};
+    /* Phone sensors are 4:3. Without an aspect constraint a 16:9 format (e.g. 3840x2160) wins on
+       resolution, and it is a crop of the sensor, so the view is narrower than the native camera.
+       Ask for a native 4:3 format first; reject it if the browser got there by cropping. */
+    const native43 = {...base, aspectRatio:{exact:4 / 3}, resizeMode:{ideal:'none'}};
     const tries = [];
     const devId = opts.deviceId ?? prefs.deviceId;
-    if (devId) tries.push({...base, deviceId:{exact:devId}});
-    tries.push({...base, facingMode:{ideal:opts.facing || 'environment'}});
-    tries.push({facingMode:{ideal:opts.facing || 'environment'}});
+    const facing = {facingMode:{ideal:opts.facing || 'environment'}};
+    if (devId) tries.push({...native43, deviceId:{exact:devId}}, {...base, deviceId:{exact:devId}});
+    tries.push({...native43, ...facing}, {...base, ...facing}, facing);
     let stream = null, err = null;
     for (const v of tries){
-      try { stream = await navigator.mediaDevices.getUserMedia({video:v, audio:false}); break; }
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({video:v, audio:false});
+        const st = s.getVideoTracks()[0]?.getSettings?.() || {};
+        if (v.aspectRatio && st.resizeMode === 'crop-and-scale'){ for (const t of s.getTracks()) t.stop(); continue; }
+        stream = s; break;
+      }
       catch (e){ err = e; if (e.name === 'NotAllowedError' || e.name === 'SecurityError') break; }
     }
     if (!stream) throw err;
