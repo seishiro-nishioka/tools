@@ -227,6 +227,22 @@ dl.meta dd{margin:0; word-break:break-all}
 #toast.show{opacity:1}
 #busy{position:fixed; inset:0; z-index:50; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center}
 #busy div{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 18px}
+
+/* ---------- alignment guide ---------- */
+#guide{display:flex; flex-direction:column; align-items:center; justify-content:flex-end; padding:0 10px 46px}
+#guideArrow{
+  position:absolute; left:50%; top:50%; width:96px; height:96px; margin:-48px 0 0 -48px;
+  filter:drop-shadow(0 0 3px rgba(0,0,0,.75)); transition:transform .25s ease;
+}
+#guideBox{display:flex; flex-direction:column; align-items:center; gap:4px; max-width:100%}
+.g-item{
+  display:flex; align-items:center; gap:7px; padding:5px 12px 5px 8px; border-radius:12px;
+  background:rgba(0,0,0,.62); border:1px solid rgba(255,255,255,.25); font-size:14px; font-weight:700; white-space:nowrap;
+}
+.g-item svg{width:22px; height:22px; flex:none}
+.g-item small{font-size:12px; font-weight:400; color:#D5DDE5}
+.g-item.ok{background:rgba(28,150,76,.88); border-color:rgba(255,255,255,.55); font-size:17px; padding:6px 22px}
+.g-item.lost{background:rgba(0,0,0,.45); font-size:12.5px; font-weight:400; color:#C9D3DC; padding:4px 12px}
 </style>
 </head>
 <body>
@@ -253,6 +269,10 @@ dl.meta dd{margin:0; word-break:break-all}
       <img id="refImg" class="ov ref-layer" alt="" hidden>
       <canvas id="edgeCanvas" class="ov ref-layer" hidden></canvas>
       <div id="grid" class="ov" hidden></div>
+      <div id="guide" class="ov" hidden>
+        <svg id="guideArrow" viewBox="0 0 96 96" hidden><path d="M16 39h40V22l28 26-28 26V57H16z" fill="#FFC233" stroke="#111" stroke-width="3" stroke-linejoin="round"/></svg>
+        <div id="guideBox" aria-live="polite"></div>
+      </div>
       <div id="splitLine" class="ref-layer" hidden></div>
       <div id="flash"></div>
     </div>
@@ -327,6 +347,11 @@ dl.meta dd{margin:0; word-break:break-all}
     <h3>表示</h3>
     <label class="chk"><input type="checkbox" id="gridChk">3分割グリッドを表示</label>
 
+    <h3>位置合わせガイド(試作)</h3>
+    <label class="chk"><input type="checkbox" id="guideChk">ずれを推定して、向き・距離・傾きの直し方を表示</label>
+    <p class="note">基準写真とカメラ映像を端末内で照合し、矢印と文字で示します。合えば「OK」と表示します。照合のため電池の減りが早くなります。明るさや見た目が大きく違うと照合できないことがあります。</p>
+    <p class="note" id="guideFocal"></p>
+
     <h3>輪郭表示の色</h3>
     <div class="chips" id="edgeColors">
       <button class="chip" data-color="#39FF6A" style="background:#39FF6A" aria-label="緑"></button>
@@ -394,6 +419,251 @@ dl.meta dd{margin:0; word-break:break-all}
 <div id="toast" role="status" aria-live="polite"></div>
 <div id="busy" hidden><div id="busyText">処理中…</div></div>
 
+<!-- alignment guide: feature matcher, run as a Web Worker (built from this text) -->
+<script type="text/plain" id="guideWorkerSrc">
+'use strict';
+/* Shi-Tomasi corners on a contrast-normalised image pyramid, oriented BRIEF descriptors,
+   mutual nearest-neighbour matching and a RANSAC similarity fit (translation, scale, rotation). */
+const LEVELS = 4, LEVEL_SCALE = 1.25, MAX_KP = 600, MARGIN = 19, ORI_R = 15;
+const PAIRS = 256, WORDS = PAIRS / 32, ANG_BINS = 32, PAT_R = 13;
+
+// BRIEF test pattern (fixed seed) and its rotated copies
+const pattern = (() => {
+  let seed = 0x2545F491;
+  const rnd = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; };
+  const gauss = () => Math.sqrt(-2 * Math.log(rnd() + 1e-12)) * Math.cos(2 * Math.PI * rnd()) * 5.5;
+  const base = [];
+  while (base.length < PAIRS * 4){
+    const p = [gauss(), gauss(), gauss(), gauss()];
+    if (Math.hypot(p[0], p[1]) <= PAT_R && Math.hypot(p[2], p[3]) <= PAT_R) base.push(...p);
+  }
+  const rot = [];
+  for (let k = 0; k < ANG_BINS; k++){
+    const a = k / ANG_BINS * 2 * Math.PI, c = Math.cos(a), s = Math.sin(a), r = new Int8Array(PAIRS * 4);
+    for (let i = 0; i < PAIRS * 4; i += 2){ r[i] = Math.round(c * base[i] - s * base[i+1]); r[i+1] = Math.round(s * base[i] + c * base[i+1]); }
+    rot.push(r);
+  }
+  return rot;
+})();
+const circle = [];
+for (let dy = -ORI_R; dy <= ORI_R; dy++) for (let dx = -ORI_R; dx <= ORI_R; dx++) if (dx * dx + dy * dy <= ORI_R * ORI_R) circle.push(dx, dy);
+
+function gray(rgba, n){
+  const g = new Float32Array(n);
+  for (let i = 0, j = 0; i < n; i++, j += 4) g[i] = rgba[j] * .299 + rgba[j+1] * .587 + rgba[j+2] * .114;
+  return g;
+}
+// Local contrast normalisation: removes overall brightness/contrast and soft shading,
+// so that morning/evening shots of the same scene look more alike.
+function normalize(g, w, h){
+  const R = 7, W1 = w + 1, S = new Float64Array(W1 * (h + 1)), Q = new Float64Array(W1 * (h + 1));
+  for (let y = 0; y < h; y++){
+    let rs = 0, rq = 0;
+    for (let x = 0; x < w; x++){
+      const v = g[y * w + x]; rs += v; rq += v * v;
+      S[(y + 1) * W1 + x + 1] = S[y * W1 + x + 1] + rs; Q[(y + 1) * W1 + x + 1] = Q[y * W1 + x + 1] + rq;
+    }
+  }
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++){
+    const y0 = Math.max(0, y - R), y1 = Math.min(h, y + R + 1);
+    for (let x = 0; x < w; x++){
+      const x0 = Math.max(0, x - R), x1 = Math.min(w, x + R + 1), n = (x1 - x0) * (y1 - y0);
+      const s = S[y1 * W1 + x1] - S[y0 * W1 + x1] - S[y1 * W1 + x0] + S[y0 * W1 + x0];
+      const q = Q[y1 * W1 + x1] - Q[y0 * W1 + x1] - Q[y1 * W1 + x0] + Q[y0 * W1 + x0];
+      const m = s / n, sd = Math.sqrt(Math.max(0, q / n - m * m));
+      out[y * w + x] = Math.min(255, Math.max(0, 128 + 40 * (g[y * w + x] - m) / (sd + 4)));
+    }
+  }
+  return out;
+}
+function blur121(g, w, h){
+  const t = new Float32Array(w * h), o = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
+    const i = y * w + x; t[i] = (g[x ? i - 1 : i] + 2 * g[i] + g[x < w - 1 ? i + 1 : i]) * .25;
+  }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
+    const i = y * w + x; o[i] = (t[y ? i - w : i] + 2 * t[i] + t[y < h - 1 ? i + w : i]) * .25;
+  }
+  return o;
+}
+function boxBlur(a, w, h, r){
+  const t = new Float32Array(w * h), o = new Float32Array(w * h);
+  for (let y = 0; y < h; y++){
+    let acc = 0; const row = y * w;
+    for (let x = -r; x <= r; x++) acc += a[row + Math.min(w - 1, Math.max(0, x))];
+    for (let x = 0; x < w; x++){
+      t[row + x] = acc;
+      acc += a[row + Math.min(w - 1, x + r + 1)] - a[row + Math.max(0, x - r)];
+    }
+  }
+  for (let x = 0; x < w; x++){
+    let acc = 0;
+    for (let y = -r; y <= r; y++) acc += t[Math.min(h - 1, Math.max(0, y)) * w + x];
+    for (let y = 0; y < h; y++){
+      o[y * w + x] = acc;
+      acc += t[Math.min(h - 1, y + r + 1) * w + x] - t[Math.max(0, y - r) * w + x];
+    }
+  }
+  return o;
+}
+function downscale(g, w, h, f){
+  const nw = Math.max(1, Math.round(w / f)), nh = Math.max(1, Math.round(h / f)), o = new Float32Array(nw * nh);
+  for (let y = 0; y < nh; y++){
+    const sy = Math.min(h - 1.001, (y + .5) * f - .5), y0 = Math.max(0, sy | 0), fy = Math.max(0, sy - y0);
+    for (let x = 0; x < nw; x++){
+      const sx = Math.min(w - 1.001, (x + .5) * f - .5), x0 = Math.max(0, sx | 0), fx = Math.max(0, sx - x0), i = y0 * w + x0;
+      o[y * nw + x] = (g[i] * (1 - fx) + g[i + 1] * fx) * (1 - fy) + (g[i + w] * (1 - fx) + g[i + w + 1] * fx) * fy;
+    }
+  }
+  return {g:o, w:nw, h:nh};
+}
+
+function features(rgba, w, h){
+  let img = blur121(normalize(gray(rgba, w * h), w, h), w, h), lw = w, lh = h, scale = 1;
+  const xs = [], ys = [], descs = [];
+  const weights = []; for (let l = 0; l < LEVELS; l++) weights.push(Math.pow(LEVEL_SCALE, -2 * l));
+  const wsum = weights.reduce((a, b) => a + b, 0);
+  for (let l = 0; l < LEVELS; l++){
+    if (l){
+      const d = downscale(blur121(img, lw, lh), lw, lh, LEVEL_SCALE);
+      img = d.g; lw = d.w; lh = d.h; scale *= LEVEL_SCALE;
+    }
+    if (lw < 2 * MARGIN + 8 || lh < 2 * MARGIN + 8) break;
+    const budget = Math.round(MAX_KP * weights[l] / wsum);
+    for (const k of corners(img, lw, lh, budget)){
+      const x = k % lw, y = (k / lw) | 0;
+      xs.push(x * scale); ys.push(y * scale); descs.push(describe(img, lw, x, y));
+    }
+  }
+  const n = xs.length, D = new Uint32Array(n * WORDS);
+  descs.forEach((d, i) => D.set(d, i * WORDS));
+  return {n, x:Float32Array.from(xs), y:Float32Array.from(ys), d:D};
+}
+function corners(img, w, h, budget){
+  const n = w * h, xx = new Float32Array(n), yy = new Float32Array(n), xy = new Float32Array(n);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++){
+    const i = y * w + x, gx = img[i + 1] - img[i - 1], gy = img[i + w] - img[i - w];
+    xx[i] = gx * gx; yy[i] = gy * gy; xy[i] = gx * gy;
+  }
+  const A = boxBlur(xx, w, h, 2), C = boxBlur(yy, w, h, 2), B = boxBlur(xy, w, h, 2), R = new Float32Array(n);
+  let max = 0;
+  for (let i = 0; i < n; i++){
+    const a = A[i], c = C[i], b = B[i];
+    const v = (a + c) / 2 - Math.sqrt((a - c) * (a - c) / 4 + b * b);
+    R[i] = v; if (v > max) max = v;
+  }
+  const th = max * .01, cand = [];
+  for (let y = MARGIN; y < h - MARGIN; y++) for (let x = MARGIN; x < w - MARGIN; x++){
+    const i = y * w + x, v = R[i];
+    if (v <= th || v < R[i-1] || v <= R[i+1] || v < R[i-w-1] || v < R[i-w] || v < R[i-w+1] || v <= R[i+w-1] || v <= R[i+w] || v <= R[i+w+1]) continue;
+    cand.push(i);
+  }
+  cand.sort((a, b) => R[b] - R[a]);
+  // spread the keypoints over the image so that one busy area cannot dominate the fit
+  const GX = 8, GY = 8, cap = Math.max(2, Math.ceil(budget / (GX * GY) * 2)), cnt = new Uint16Array(GX * GY), out = [];
+  for (const i of cand){
+    const c = Math.min(GY - 1, ((i / w | 0) * GY / h) | 0) * GX + Math.min(GX - 1, ((i % w) * GX / w) | 0);
+    if (cnt[c] >= cap) continue;
+    cnt[c]++; out.push(i);
+    if (out.length >= budget) break;
+  }
+  return out;
+}
+function describe(img, w, x, y){
+  let m10 = 0, m01 = 0;
+  for (let k = 0; k < circle.length; k += 2){ const v = img[(y + circle[k+1]) * w + x + circle[k]]; m10 += circle[k] * v; m01 += circle[k+1] * v; }
+  const bin = ((Math.round(Math.atan2(m01, m10) / (2 * Math.PI) * ANG_BINS) % ANG_BINS) + ANG_BINS) % ANG_BINS;
+  const p = pattern[bin], d = new Uint32Array(WORDS), c = y * w + x;
+  for (let i = 0; i < PAIRS; i++){
+    const a = img[c + p[i*4+1] * w + p[i*4]], b = img[c + p[i*4+3] * w + p[i*4+2]];
+    if (a < b) d[i >> 5] |= 1 << (i & 31);
+  }
+  return d;
+}
+
+function popcnt(v){ v -= (v >>> 1) & 0x55555555; v = (v & 0x33333333) + ((v >>> 2) & 0x33333333); return (((v + (v >>> 4)) & 0x0F0F0F0F) * 0x01010101) >>> 24; }
+function match(A, B){
+  const bestA = new Int32Array(A.n).fill(-1), bestAd = new Uint16Array(A.n).fill(999), out = [];
+  const bi = new Int32Array(B.n), bd = new Uint16Array(B.n), bs = new Uint16Array(B.n);
+  for (let j = 0; j < B.n; j++){
+    let best = 999, second = 999, arg = -1;
+    for (let i = 0; i < A.n; i++){
+      let d = 0;
+      for (let k = 0; k < WORDS; k++) d += popcnt(A.d[i * WORDS + k] ^ B.d[j * WORDS + k]);
+      if (d < best){ second = best; best = d; arg = i; } else if (d < second) second = d;
+      if (d < bestAd[i]){ bestAd[i] = d; bestA[i] = j; }
+    }
+    bi[j] = arg; bd[j] = best; bs[j] = second;
+  }
+  for (let j = 0; j < B.n; j++){
+    const i = bi[j];
+    if (i >= 0 && bestA[i] === j && bd[j] <= 72 && bd[j] < .85 * bs[j]) out.push(i, j);
+  }
+  return out;
+}
+// similarity as complex numbers: cam = a * ref + b (coordinates centred on the frame)
+function fitLS(P, idx){
+  let mrx = 0, mry = 0, mcx = 0, mcy = 0;
+  for (const k of idx){ mrx += P[k*4]; mry += P[k*4+1]; mcx += P[k*4+2]; mcy += P[k*4+3]; }
+  const n = idx.length; mrx /= n; mry /= n; mcx /= n; mcy /= n;
+  let re = 0, im = 0, den = 0;
+  for (const k of idx){
+    const rx = P[k*4] - mrx, ry = P[k*4+1] - mry, cx = P[k*4+2] - mcx, cy = P[k*4+3] - mcy;
+    re += rx * cx + ry * cy; im += rx * cy - ry * cx; den += rx * rx + ry * ry;
+  }
+  if (!den) return null;
+  const ar = re / den, ai = im / den;
+  return {ar, ai, bx:mcx - (ar * mrx - ai * mry), by:mcy - (ai * mrx + ar * mry)};
+}
+function inliers(P, n, T, th2){
+  const idx = [];
+  for (let k = 0; k < n; k++){
+    const rx = P[k*4], ry = P[k*4+1];
+    const ex = T.ar * rx - T.ai * ry + T.bx - P[k*4+2], ey = T.ai * rx + T.ar * ry + T.by - P[k*4+3];
+    if (ex * ex + ey * ey < th2) idx.push(k);
+  }
+  return idx;
+}
+function ransac(R, C, M, w, h){
+  const n = M.length / 2, P = new Float32Array(n * 4), cx = w / 2, cy = h / 2;
+  for (let k = 0; k < n; k++){
+    P[k*4] = R.x[M[k*2]] - cx; P[k*4+1] = R.y[M[k*2]] - cy; P[k*4+2] = C.x[M[k*2+1]] - cx; P[k*4+3] = C.y[M[k*2+1]] - cy;
+  }
+  if (n < 4) return {n, inl:0};
+  const th = Math.max(w, h) * .013, th2 = th * th, minD2 = (Math.max(w, h) * .05) ** 2;
+  let best = [], seed = 1;
+  const rnd = m => { seed = (seed * 1103515245 + 12345) >>> 0; return (seed >>> 8) % m; };
+  for (let it = 0; it < 500; it++){
+    const i = rnd(n), j = rnd(n); if (i === j) continue;
+    const drx = P[j*4] - P[i*4], dry = P[j*4+1] - P[i*4+1], dcx = P[j*4+2] - P[i*4+2], dcy = P[j*4+3] - P[i*4+3];
+    const d2 = drx * drx + dry * dry; if (d2 < minD2) continue;
+    const ar = (dcx * drx + dcy * dry) / d2, ai = (dcy * drx - dcx * dry) / d2, s = Math.hypot(ar, ai);
+    if (s < .4 || s > 2.5) continue;
+    const T = {ar, ai, bx:P[i*4+2] - (ar * P[i*4] - ai * P[i*4+1]), by:P[i*4+3] - (ai * P[i*4] + ar * P[i*4+1])};
+    const idx = inliers(P, n, T, th2);
+    if (idx.length > best.length) best = idx;
+  }
+  if (best.length < 3) return {n, inl:best.length};
+  let T = fitLS(P, best), idx = best;
+  for (let r = 0; r < 2 && T; r++){ idx = inliers(P, n, T, th2); if (idx.length < 3) break; T = fitLS(P, idx) || T; }
+  return T ? {n, inl:idx.length, ...T} : {n, inl:0};
+}
+
+let ref = null, refKey = '';
+self.onmessage = e => {
+  const m = e.data, t0 = performance.now();
+  try {
+    const f = features(new Uint8ClampedArray(m.data), m.w, m.h);
+    if (m.type === 'ref'){ ref = f; refKey = m.key; self.postMessage({type:'ref', key:m.key, n:f.n}); return; }
+    if (!ref || m.key !== refKey){ self.postMessage({type:'est', key:m.key, ok:false, n:0, inl:0}); return; }
+    const r = ransac(ref, f, match(ref, f), m.w, m.h);
+    self.postMessage({type:'est', key:m.key, ok:r.inl > 0, ...r, nr:ref.n, nc:f.n, ms:Math.round(performance.now() - t0)});
+  } catch (err){
+    self.postMessage({type:'est', key:m.key, ok:false, n:0, inl:0, error:String(err)});
+  }
+};
+</script>
 <script>
 (() => {
 'use strict';
@@ -408,6 +678,7 @@ const els = {
   hideBtn:$('hideBtn'), shutter:$('shutter'), flipBtn:$('flipBtn'),
   settings:$('settings'), settingsBtn:$('settingsBtn'), settingsClose:$('settingsClose'),
   camSel:$('camSel'), camInfo:$('camInfo'), zoom:$('zoom'), zoomOut:$('zoomOut'), zoomNote:$('zoomNote'),
+  guide:$('guide'), guideArrow:$('guideArrow'), guideBox:$('guideBox'), guideChk:$('guideChk'), guideFocal:$('guideFocal'),
   gridChk:$('gridChk'), edgeColors:$('edgeColors'), edgeAmt:$('edgeAmt'), edgeAmtOut:$('edgeAmtOut'),
   refMeta:$('refMeta'), refClear:$('refClear'),
   review:$('review'), rvBack:$('rvBack'), rvTabs:$('rvTabs'), rvStage:$('rvStage'), rvCanvas:$('rvCanvas'),
@@ -421,7 +692,7 @@ const els = {
 const PREF_KEY = 'overlay-camera:prefs';
 const prefs = Object.assign({
   mode:'blend', alpha:{blend:50, diff:100, edge:100, split:100}, split:.5,
-  grid:false, edgeColor:'#39FF6A', edgeAmt:12, deviceId:'', cmpLayout:'lr', cmpLabels:true,
+  grid:false, guide:false, edgeColor:'#39FF6A', edgeAmt:12, deviceId:'', cmpLayout:'lr', cmpLabels:true,
 }, (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
@@ -567,6 +838,7 @@ async function setRef(blob, meta){
   els.refClear.disabled = false;
   buildEdges(im);
   renderRefMeta();
+  applyGuidePref();
   applyOverlay(); layout();
 }
 function clearRef(){
@@ -576,7 +848,7 @@ function clearRef(){
   els.refThumb.hidden = true; els.refIcon.style.display = ''; els.refLabel.textContent = '基準写真を選ぶ';
   els.refClear.disabled = true;
   idb.del('ref');
-  renderRefMeta(); applyOverlay(); layout();
+  renderRefMeta(); applyGuidePref(); applyOverlay(); layout();
 }
 function renderRefMeta(){
   const dl = els.refMeta; dl.textContent = '';
@@ -993,6 +1265,151 @@ async function saveCurrent(){
   toast('ダウンロードしました');
 }
 
+/* ---------- alignment guide (prototype) ----------
+   estimator (image matching in a worker) → error in physical terms → advice with hysteresis → overlay.
+   The error object is {yaw, pitch, roll, ls}: degrees to turn right / tilt up / rotate the phone
+   clockwise, and log of how much too large the subject looks. Other estimators (device orientation,
+   parallax) can later feed or refine the same object before guideAdvice(). */
+const GUIDE_SIZE = 320, GUIDE_INTERVAL = 200;
+const GUIDE_TH = {yaw:[1.5, .7], pitch:[1.5, .7], roll:[1.5, .7], ls:[.04, .02]};  // [show above, hide below]
+const G = {
+  worker:null, busy:false, refKey:'', refSending:false, refReady:false, lastSend:0, canvas:null,
+  filt:null, fails:0, oks:0, lost:false, active:{}, timer:0,
+};
+function guideFocal35(){ return S.ref?.meta?.focal35 || 26; }
+function guideReset(){
+  G.filt = null; G.fails = G.oks = 0; G.lost = false; G.active = {};
+  els.guide.hidden = true;
+}
+function guideStop(){
+  clearInterval(G.timer); G.timer = 0;
+  if (G.worker){ G.worker.terminate(); G.worker = null; }
+  G.refKey = ''; G.refReady = false; G.refSending = false; G.busy = false;
+  guideReset();
+}
+function guideStart(){
+  if (G.timer) return;
+  try {
+    const src = $('guideWorkerSrc').textContent;
+    G.worker = new Worker(URL.createObjectURL(new Blob([src], {type:'text/javascript'})));
+  } catch (e){
+    toast('位置合わせガイドを開始できませんでした'); prefs.guide = false; els.guideChk.checked = false; savePrefs(); return;
+  }
+  G.worker.onmessage = onGuideMsg;
+  G.timer = setInterval(guideTick, 100);
+}
+function guideDims(){
+  const a = frameAspect();
+  return a >= 1 ? {w:GUIDE_SIZE, h:Math.round(GUIDE_SIZE / a)} : {w:Math.round(GUIDE_SIZE * a), h:GUIDE_SIZE};
+}
+function guidePixels(src, sx, sy, sw, sh){
+  const {w, h} = guideDims();
+  const c = G.canvas || (G.canvas = document.createElement('canvas'));
+  if (c.width !== w || c.height !== h){ c.width = w; c.height = h; }
+  const ctx = c.getContext('2d', {willReadFrequently:true});
+  ctx.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
+  return {w, h, data:ctx.getImageData(0, 0, w, h).data.buffer};
+}
+async function guideSendRef(){
+  const key = S.ref.url;
+  G.refSending = true; G.refReady = false; G.refKey = key;
+  try {
+    const im = await refDrawable();
+    if (!G.worker || S.ref?.url !== key) return;
+    const px = guidePixels(im, 0, 0, im.naturalWidth, im.naturalHeight);
+    G.worker.postMessage({type:'ref', key, ...px}, [px.data]);
+  } catch {} finally { G.refSending = false; }
+}
+function guideTick(){
+  const v = els.video;
+  const on = prefs.guide && S.ref && S.stream && v.videoWidth && els.review.hidden && els.orientHint.hidden && document.visibilityState === 'visible';
+  if (!on){ if (!els.guide.hidden || G.filt) guideReset(); return; }
+  if (G.refKey !== S.ref.url){ if (!G.refSending) { guideReset(); guideSendRef(); } return; }
+  const now = performance.now();
+  if (!G.refReady || G.busy || now - G.lastSend < GUIDE_INTERVAL) return;
+  try {
+    const r = cropRect(v.videoWidth, v.videoHeight, frameAspect(), S.dzoom);
+    const px = guidePixels(v, r.sx, r.sy, r.sw, r.sh);
+    G.busy = true; G.lastSend = now;
+    G.worker.postMessage({type:'frame', key:S.ref.url, ...px}, [px.data]);
+  } catch { G.busy = false; }
+}
+function onGuideMsg(e){
+  const m = e.data;
+  if (m.type === 'ref'){ if (m.key === G.refKey) G.refReady = true; return; }
+  G.busy = false;
+  if (!prefs.guide || !S.ref || m.key !== S.ref.url) return;
+  const est = guideEstimate(m);
+  if (est){
+    G.fails = 0; G.oks++;
+    if (!G.filt) G.filt = est;
+    else for (const k in est) G.filt[k] += (est[k] - G.filt[k]) * .45;
+  } else { G.oks = 0; G.fails++; }
+  if (G.fails >= 3 && !G.lost){ G.lost = true; G.filt = null; G.active = {}; }
+  if (G.lost && G.oks >= 2) G.lost = false;
+  renderGuide();
+}
+// worker result (similarity in analysis pixels) → physical error, or null when not trustworthy
+function guideEstimate(m){
+  if (!m.ok || m.inl < 12 || m.inl < m.n * .2) return null;
+  const s = Math.hypot(m.ar, m.ai), rot = Math.atan2(m.ai, m.ar) * 180 / Math.PI;
+  if (s < .5 || s > 2 || Math.abs(rot) > 45) return null;
+  const {w, h} = guideDims();
+  // focal length in analysis pixels from the 35mm-equivalent focal length (diagonal 43.27mm);
+  // the camera view is s times the reference's, so its focal length is s * f
+  const f = Math.hypot(w, h) * guideFocal35() / 43.27 * s, deg = r => r * 180 / Math.PI;
+  // the reference's centre now appears at (bx, by): turn toward it
+  return {yaw:deg(Math.atan(m.bx / f)), pitch:-deg(Math.atan(m.by / f)), roll:rot, ls:Math.log(s)};
+}
+function guideAdvice(f){
+  const A = G.active;
+  for (const k in GUIDE_TH){ const [on, off] = GUIDE_TH[k]; A[k] = Math.abs(f[k]) >= (A[k] ? off : on); }
+  const items = [], deg = v => `約${Math.max(1, Math.round(Math.abs(v)))}°`;
+  if (A.yaw || A.pitch){
+    const hz = A.yaw ? (f.yaw > 0 ? '右' : '左') : '', vt = A.pitch ? (f.pitch > 0 ? '上' : '下') : '';
+    items.push({icon:'dir', angle:Math.atan2(A.pitch ? -f.pitch : 0, A.yaw ? f.yaw : 0) * 180 / Math.PI,
+      text:`${hz}${vt}を向いて`, sub:hz && vt ? `${hz} ${deg(f.yaw)}・${vt} ${deg(f.pitch)}` : deg(hz ? f.yaw : f.pitch)});
+  }
+  if (A.ls){
+    const back = f.ls > 0, pct = Math.abs(Math.exp(f.ls) - 1) * 100;
+    const amount = pct < 7.5 ? 'もう少し' : `もう${Math.round(pct / 10)}割ほど`;
+    items.push({icon:back ? 'back' : 'fwd', text:amount + (back ? '下がって' : '前に出て'), sub:`約${Math.round(pct)}%`});
+  }
+  if (A.roll) items.push({icon:f.roll > 0 ? 'cw' : 'ccw', text:`傾きを直して(${f.roll > 0 ? '時計回り' : '反時計回り'})`, sub:deg(f.roll)});
+  return items;
+}
+const GUIDE_ICONS = {
+  dir:'<path d="M4 12h15M13 6l6 6-6 6"/>',
+  cw:'<path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M19 3v4.5h-4.5"/>',
+  ccw:'<path d="M5 12a7 7 0 1 0 2.05-4.95"/><path d="M5 3v4.5h4.5"/>',
+  back:'<path d="M4 4l5 5M9 5v4H5M20 4l-5 5M15 5v4h4M4 20l5-5M5 15h4v4M20 20l-5-5M19 15h-4v4"/>',
+  fwd:'<path d="M9 9L4 4M4 8V4h4M15 9l5-5M16 4h4v4M9 15l-5 5M4 16v4h4M15 15l5 5M20 16v4h-4"/>',
+};
+function renderGuide(){
+  let html = '', arrow = null;
+  if (G.lost) html = '<div class="g-item lost">照合できません</div>';
+  else if (G.filt){
+    const items = guideAdvice(G.filt);
+    if (!items.length) html = '<div class="g-item ok">OK</div>';
+    for (const it of items){
+      const rot = it.icon === 'dir' ? ` style="transform:rotate(${it.angle.toFixed(1)}deg)"` : '';
+      html += `<div class="g-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"${rot}>${GUIDE_ICONS[it.icon]}</svg>${it.text}<small>${it.sub}</small></div>`;
+      if (it.icon === 'dir') arrow = it.angle;
+    }
+  }
+  els.guideBox.innerHTML = html;
+  els.guideArrow.toggleAttribute('hidden', arrow == null);  // SVG elements have no .hidden property
+  if (arrow != null) els.guideArrow.style.transform = `rotate(${arrow.toFixed(1)}deg)`;
+  els.guide.hidden = !html;
+}
+function applyGuidePref(){
+  els.guideChk.checked = prefs.guide;
+  const f = S.ref?.meta?.focal35;
+  els.guideFocal.textContent = !S.ref ? '' : f ? `向きの角度は基準写真の焦点距離(35mm換算 ${f}mm)から計算します。`
+    : '基準写真に焦点距離の情報がないため、iPhone の標準(1×、35mm換算 26mm)で撮ったものとして角度を計算します。';
+  if (prefs.guide) guideStart(); else guideStop();
+}
+
 /* ---------- events: camera screen ---------- */
 els.refInput.addEventListener('change', e => onRefFile(e.target.files && e.target.files[0]));
 els.camStartBtn.addEventListener('click', () => startCamera());
@@ -1078,6 +1495,7 @@ els.settings.addEventListener('click', e => { if (e.target === els.settings) els
 els.camSel.addEventListener('change', () => { prefs.deviceId = els.camSel.value; savePrefs(); startCamera({deviceId:els.camSel.value}); });
 els.zoom.addEventListener('input', () => setZoom(+els.zoom.value));
 els.gridChk.addEventListener('change', () => { prefs.grid = els.gridChk.checked; savePrefs(); applyOverlay(); });
+els.guideChk.addEventListener('change', () => { prefs.guide = els.guideChk.checked; savePrefs(); applyGuidePref(); });
 els.edgeColors.addEventListener('click', e => {
   const b = e.target.closest('[data-color]'); if (!b) return;
   prefs.edgeColor = b.dataset.color; savePrefs(); renderEdges(); applyOverlay();
@@ -1150,6 +1568,7 @@ window.addEventListener('pagehide', stopCamera);
 
 // initial UI state from prefs
 els.gridChk.checked = prefs.grid;
+applyGuidePref();
 els.edgeAmt.value = prefs.edgeAmt; els.edgeAmtOut.textContent = prefs.edgeAmt + '%';
 applyOverlay(); layout();
 idb.get('ref').then(v => { if (v && v.blob && !S.ref) return setRef(v.blob, v.meta || {}); }).catch(() => {});
