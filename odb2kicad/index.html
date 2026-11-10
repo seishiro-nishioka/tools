@@ -95,7 +95,7 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
 <body>
 <header>
   <a class="back-link" href="../">← 一覧</a>
-  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.10.4</span></h1>
+  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.10.5</span></h1>
   <p>ODB++ の基板データを KiCad で閲覧できる .kicad_pcb (KiCad 9/10 用) に変換します。ファイルはサーバーに送信されず、処理はすべてブラウザ内で完結します。</p>
 </header>
 <main>
@@ -730,6 +730,8 @@ const FIXED_LAYERS = [
   ['F.Fab', 35, 'user'], ['B.Fab', 33, 'user'],
 ];
 const MAX_USER = 45;
+const VCUT_LAYER = 'User.1'; // reserved for V-cut lines (used by JLCPCB fabrication plugins); never auto-assigned
+const AUTO_USER_FIRST = 2;
 function graphicTargets(copperCount) {
   const cu = [];
   for (let i = 0; i < copperCount; i++) cu.push(i === 0 ? 'F.Cu' : i === copperCount - 1 ? 'B.Cu' : `In${i}.Cu`);
@@ -929,9 +931,10 @@ async function loadStep(job, step, progress) {
   // default targets for auxiliary layers: User.1.. for non-empty ones
   let u = 0;
   for (const e of layers) {
-    if (e.role === 'user' && !e.target && e.count > 0) e.target = ++u <= MAX_USER ? 'User.' + u : null;
+    if (e.role === 'user' && !e.target && e.count > 0) { u++; e.target = AUTO_USER_FIRST + u - 1 <= MAX_USER ? 'User.' + (AUTO_USER_FIRST + u - 1) : null; }
   }
-  if (u > MAX_USER) warn(`補助層が ${u} 個あり、${MAX_USER} 個を超えた分は除外 (割り当てで変更可)`);
+  const slots = MAX_USER - AUTO_USER_FIRST + 1;
+  if (u > slots) warn(`補助層が ${u} 個あり、User.${AUTO_USER_FIRST}〜User.${MAX_USER} の ${slots} 個を超えた分は除外 (割り当てで変更可)`);
   if (!flat.profile.length) warn('外形 (profile) がない');
   if (!flat.nets.length) warn('ネットの情報 (eda/data) がないため、ネット名なしで変換');
   return { step, layers, profile: flat.profile, nets: flat.nets, copperCount: job.cls.copperCount, instances: flat.instances };
@@ -1063,6 +1066,7 @@ function buildBoard(st, opts = {}) {
   for (let i = 1; i <= MAX_USER; i++) {
     const t = 'User.' + i;
     if (userNames.has(t)) out.push(`\t\t(${37 + 2 * i} ${q(t)} user ${q(userNames.get(t))})`);
+    else if (t === VCUT_LAYER) out.push(`\t\t(${37 + 2 * i} ${q(t)} user)`); // always enabled for V-cut drawing
   }
   out.push('\t)', '\t(setup', '\t\t(pad_to_mask_clearance 0)', '\t\t(allow_soldermask_bridges_in_footprints no)', '\t\t(tenting front back)', '\t)');
 
@@ -1219,7 +1223,7 @@ function buildBoard(st, opts = {}) {
 }
 
 return { loadJob, loadStep, buildBoard, fileSetFromArchive, findJobs, FileSet, graphicTargets, uncompressZ, parseTar,
-  layerGeometry, fracture, area, warnings: () => warnings, resetWarnings: () => { warnings = new Map(); }, SC };
+  layerGeometry, fracture, area, VCUT_LAYER, warnings: () => warnings, resetWarnings: () => { warnings = new Map(); }, SC };
 })();
 if (typeof module !== 'undefined') module.exports = Odb;
 </script>
@@ -1331,7 +1335,7 @@ function renderLayerTable() {
     else {
       const s = document.createElement('select');
       const none = document.createElement('option'); none.value = ''; none.textContent = '(除外)'; s.appendChild(none);
-      for (const t of targets) { const o = document.createElement('option'); o.value = o.textContent = t; s.appendChild(o); }
+      for (const t of targets) { const o = document.createElement('option'); o.value = t; o.textContent = t === Odb.VCUT_LAYER ? t + ' (Vカット用)' : t; s.appendChild(o); }
       s.value = l.target || '';
       s.addEventListener('change', () => { l.target = s.value || null; $('reconvert').disabled = false; });
       td3.appendChild(s);
