@@ -745,36 +745,78 @@ async function loadJob(fs, root) {
   const stepDirs = new Set();
   for (const p of fs.list(root + 'steps/')) { const s = p.split('/')[0]; if (s) stepDirs.add(s); }
   const steps = [...stepDirs];
-  // prefer steps that have components / eda data
-  const score = s => (fs.has(root + `steps/${s}/eda/data`) ? 2 : 0) + (fs.has(root + `steps/${s}/profile`) ? 1 : 0);
-  steps.sort((a, b) => score(b) - score(a));
+  // prefer the top-level panel (a step with STEP-REPEAT that no other step uses), then single boards with eda data
+  const reps = new Map(), used = new Set();
+  for (const s of steps) {
+    const r = parseStephdr(await fs.text(root + `steps/${s}/stephdr`)).repeats;
+    reps.set(s, r.length);
+    for (const x of r) used.add(x.name);
+  }
+  const score = s => (reps.get(s) ? (used.has(s.toLowerCase()) ? 4 : 8) : 0) +
+    (fs.has(root + `steps/${s}/eda/data`) ? 2 : 0) + (fs.has(root + `steps/${s}/profile`) ? 1 : 0);
+  steps.sort((a, b) => score(b) - score(a) || a.localeCompare(b));
   return { fs, root, matrix, steps, cls: classify(matrix) };
 }
 
-async function loadStep(job, step, progress) {
-  const { fs, root, cls } = job;
-  const sp = root + `steps/${step}/`;
-  // user symbols (lazy, recursive)
-  const symCache = new Map(), symBusy = new Set();
+function parseStephdr(text) {
+  const lines = (text || '').split(/\r?\n/);
+  const k = unitsOf(lines, 'INCH') === 'MM' ? 1 : 25.4;
+  const hdr = {}, reps = [];
+  let cur = null;
+  for (const raw of lines) {
+    const l = raw.trim();
+    if (/^STEP-REPEAT\s*\{?$/i.test(l)) { cur = {}; continue; }
+    if (cur && l.startsWith('}')) { reps.push(cur); cur = null; continue; }
+    const i = l.indexOf('=');
+    if (i <= 0) continue;
+    (cur || hdr)[l.slice(0, i).trim().toUpperCase()] = l.slice(i + 1).trim();
+  }
+  const num = v => parseFloat(v || '0') || 0;
+  const yes = v => /^(YES|Y)$/i.test(v || '');
+  return {
+    datum: [num(hdr.X_DATUM) * k, num(hdr.Y_DATUM) * k],
+    repeats: reps.map(r => ({
+      name: (r.NAME || '').toLowerCase(), x: num(r.X) * k, y: num(r.Y) * k, dx: num(r.DX) * k, dy: num(r.DY) * k,
+      nx: Math.max(1, parseInt(r.NX || '1', 10) || 1), ny: Math.max(1, parseInt(r.NY || '1', 10) || 1),
+      angle: num(r.ANGLE), mirror: yes(r.MIRROR), flip: yes(r.FLIP)
+    }))
+  };
+}
+
+async function symbolLib(job) {
+  if (job.lib) return job.lib;
+  const { fs, root } = job;
+  const symCache = new Map(), symBusy = new Set(), symTexts = new Map();
   const symDirs = new Set(fs.list(root + 'symbols/').map(p => p.split('/')[0]).filter(Boolean));
-  const symTexts = new Map();
   for (const s of symDirs) { const t = await fs.text(root + `symbols/${s}/features`); if (t != null) symTexts.set(s, t); }
-  const lib = {
+  job.lib = {
     get(name) {
       const k = name.toLowerCase();
       if (symCache.has(k)) return symCache.get(k);
       if (!symTexts.has(k) || symBusy.has(k)) return null;
       symBusy.add(k);
-      const ff = parseFeatures(symTexts.get(k), lib, 'symbol ' + name);
-      const g = layerGeometry(ff);
+      const g = layerGeometry(parseFeatures(symTexts.get(k), job.lib, 'symbol ' + name));
       symBusy.delete(k);
       symCache.set(k, g);
       return g;
     }
   };
-  if (fs.has(sp + 'stephdr')) {
-    const hdr = await fs.text(sp + 'stephdr');
-    if (/STEP-REPEAT/i.test(hdr || '')) warn('ステップの繰り返し (STEP-REPEAT、面付け) は展開しない');
+  return job.lib;
+}
+
+/* One step's own data (no step-repeat expansion). */
+async function ownStep(job, step, progress) {
+  const { fs, root, cls } = job;
+  const lib = await symbolLib(job);
+  const sp = root + `steps/${step}/`;
+  const hdr = parseStephdr(await fs.text(sp + 'stephdr'));
+  const edaText = await fs.text(sp + 'eda/data');
+  const nets = [], pkgs = [];
+  if (edaText) {
+    for (const l of edaText.split(/\r?\n/)) {
+      if (l.startsWith('NET ')) nets.push(stripAttr(l.slice(4)).trim());
+      else if (l.startsWith('PKG ')) pkgs.push(stripAttr(l.slice(4)).trim().split(/\s+/)[0]);
+    }
   }
   const layers = [];
   let n = 0;
@@ -784,11 +826,12 @@ async function loadStep(job, step, progress) {
     if (l.role === 'comp') {
       const t = await fs.text(sp + `layers/${l.lname}/components`);
       e.comps = t ? parseComponents(t) : [];
+      for (const c of e.comps) c.pkgName = pkgs[c.pkg] != null ? pkgs[c.pkg] : '';
       e.count = e.comps.length;
     } else {
       const t = await fs.text(sp + `layers/${l.lname}/features`);
       if (t && /^\s*[LAPSTB]\s/m.test(t)) {
-        progress && await progress(`層を解析中 ${n}/${cls.layers.length}`);
+        progress && await progress(`層を解析中 (${step}) ${n}/${cls.layers.length}`);
         e.ff = parseFeatures(t, lib, l.name);
         e.count = e.ff.count;
         if ((l.polarity || '').toUpperCase() === 'NEGATIVE') warn('負極性の層をそのまま描画: ' + l.name);
@@ -796,24 +839,99 @@ async function loadStep(job, step, progress) {
     }
     layers.push(e);
   }
+  const profText = await fs.text(sp + 'profile');
+  const profile = profText ? layerGeometry(parseFeatures(profText, lib, 'profile')) : [];
+  return { step, layers, profile, nets, hasEda: !!edaText, datum: hdr.datum, repeats: hdr.repeats, instances: 0 };
+}
+
+/* Step-repeat: child coordinates -> parent. Mirror x first, then rotate clockwise, about the child datum. */
+function stepXform(datum, x, y, angle, mirror) {
+  const a = -angle * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  return {
+    mirror, angle,
+    pt(px, py) { px -= datum[0]; py -= datum[1]; if (mirror) px = -px; return [x + px * c - py * s, y + px * s + py * c]; },
+    paths(ps) {
+      return ps.map(p => {
+        const q = p.map(v => { const [x2, y2] = this.pt(v.X / SC, v.Y / SC); return toI(x2, y2); });
+        if (mirror) q.reverse();
+        return q;
+      });
+    },
+    padAngle(a0) { const r = (mirror ? angle - a0 : angle + a0) % 360; return r < 0 ? r + 360 : r; },
+  };
+}
+function mergeInstance(out, child, T, sfx, netOffset) {
+  child.layers.forEach((cl, li) => {
+    const ol = out.layers[li];
+    if (cl.role === 'comp') {
+      for (const c of cl.comps) {
+        const [x, y] = T.pt(c.x, c.y);
+        ol.comps.push(Object.assign({}, c, {
+          x, y, ref: c.ref + sfx,
+          pins: c.pins.map(p => { const [px, py] = T.pt(p.x, p.y); return Object.assign({}, p, { x: px, y: py, net: (p.net >= 0 && p.net < child.nets.length) ? p.net + netOffset : -1 }); })
+        }));
+      }
+      ol.count = ol.comps.length;
+      return;
+    }
+    if (!cl.ff) return;
+    if (!ol.ff) ol.ff = { items: [], pads: [], lines: [], count: 0 };
+    if (!ol.ff.pre) ol.ff.pre = [];
+    // child's layer is merged as its finished geometry (one positive item, drawn before the parent's own features)
+    ol.ff.pre.push({ pol: 'P', paths: T.paths(layerGeometry(cl.ff)) });
+    if (cl.role === 'copper' || cl.role === 'drill') {
+      for (const p of cl.ff.pads) {
+        const [x, y] = T.pt(p.x, p.y);
+        ol.ff.pads.push(Object.assign({}, p, { x, y, angle: T.padAngle(p.angle), mirror: p.mirror !== T.mirror, paths: p.paths ? T.paths(p.paths) : null }));
+      }
+      for (const ln of cl.ff.lines) {
+        const [x1, y1] = T.pt(ln.x1, ln.y1), [x2, y2] = T.pt(ln.x2, ln.y2);
+        ol.ff.lines.push(Object.assign({}, ln, { x1, y1, x2, y2 }));
+      }
+    }
+    ol.ff.count += cl.ff.count;
+    ol.count = ol.ff.count;
+  });
+  out.profile.push(...T.paths(child.profile));
+}
+async function flatStep(job, step, progress, stack, cache) {
+  if (cache.has(step)) return cache.get(step);
+  if (stack.includes(step)) { warn('面付けの参照が循環している: ' + step); return null; }
+  const out = await ownStep(job, step, progress);
+  let inst = 0;
+  for (const r of out.repeats) {
+    const name = job.steps.find(s => s.toLowerCase() === r.name);
+    if (!name) { warn('面付けの子ステップが見つからない: ' + r.name); continue; }
+    const child = await flatStep(job, name, progress, stack.concat(step), cache);
+    if (!child) continue;
+    if (r.flip) warn('表裏反転 (FLIP) の面付けは反転せずに配置');
+    progress && await progress(`面付けを展開中 (${name} × ${r.nx * r.ny})`);
+    for (let j = 0; j < r.ny; j++) for (let i = 0; i < r.nx; i++) {
+      inst++;
+      const netOffset = out.nets.length;
+      const sfx = '_P' + inst;
+      out.nets.push(...child.nets.map(n => (!n || n === '$NONE$') ? n : n + sfx));
+      mergeInstance(out, child, stepXform(child.datum, r.x + i * r.dx, r.y + j * r.dy, r.angle, r.mirror), sfx, netOffset);
+      out.instances += child.instances || 1; // count leaf boards
+    }
+  }
+  for (const l of out.layers) if (l.ff && l.ff.pre) { l.ff.items = l.ff.pre.concat(l.ff.items); delete l.ff.pre; delete l.ff._geom; }
+  cache.set(step, out);
+  return out;
+}
+
+async function loadStep(job, step, progress) {
+  const flat = await flatStep(job, step, progress, [], new Map());
+  const layers = flat.layers.map(l => Object.assign({}, l));
   // default targets for auxiliary layers: User.1.. for non-empty ones
   let u = 0;
   for (const e of layers) {
     if (e.role === 'user' && !e.target && e.count > 0) e.target = ++u <= MAX_USER ? 'User.' + u : null;
   }
   if (u > MAX_USER) warn(`補助層が ${u} 個あり、${MAX_USER} 個を超えた分は除外 (割り当てで変更可)`);
-  const profText = await fs.text(sp + 'profile');
-  const profile = profText ? layerGeometry(parseFeatures(profText, lib, 'profile')) : [];
-  if (!profile.length) warn('外形 (profile) がない');
-  const edaText = await fs.text(sp + 'eda/data');
-  const nets = [], pkgs = [];
-  if (edaText) {
-    for (const l of edaText.split(/\r?\n/)) {
-      if (l.startsWith('NET ')) nets.push(stripAttr(l.slice(4)).trim());
-      else if (l.startsWith('PKG ')) pkgs.push(stripAttr(l.slice(4)).trim().split(/\s+/)[0]);
-    }
-  } else warn('eda/data がないため、ネット名なしで変換');
-  return { step, layers, profile, nets, pkgs, copperCount: cls.copperCount };
+  if (!flat.profile.length) warn('外形 (profile) がない');
+  if (!flat.nets.length) warn('ネットの情報 (eda/data) がないため、ネット名なしで変換');
+  return { step, layers, profile: flat.profile, nets: flat.nets, copperCount: job.cls.copperCount, instances: flat.instances };
 }
 
 function parseComponents(text) {
@@ -934,7 +1052,7 @@ function buildBoard(st, opts = {}) {
   /* header */
   out.push('(kicad_pcb', '\t(version 20241229)', '\t(generator "odb2kicad")', '\t(generator_version "9.0")',
     '\t(general', '\t\t(thickness 1.6)', '\t\t(legacy_teardrops no)', '\t)', '\t(paper "A4")', '\t(layers');
-  const ncu = Math.max(2, st.copperCount);
+  const ncu = Math.max(2, st.copperCount + (st.copperCount % 2)); // KiCad needs an even copper count
   out.push('\t\t(0 "F.Cu" signal)');
   for (let i = 1; i < ncu - 1; i++) out.push(`\t\t(${2 + 2 * i} "In${i}.Cu" signal)`);
   out.push('\t\t(2 "B.Cu" signal)');
@@ -1011,7 +1129,7 @@ function buildBoard(st, opts = {}) {
       }
       L.push(`${indent}\t)`);
       if (opts.check) padCheck.push({ number, x, y, bbox: bbox(geomPaths) });
-    } else stats.padsNoCopper++;
+    } else if (!(hole && hole.npth)) stats.padsNoCopper++;
     L.push(`${indent}\t(uuid ${q(uuid())})`, `${indent})`);
     return L.join('\n');
   }
@@ -1026,7 +1144,7 @@ function buildBoard(st, opts = {}) {
     const side = cl.side;
     const sideCu = side === 'B' ? 'B.Cu' : 'F.Cu', fab = side === 'B' ? 'B.Fab' : 'F.Fab';
     for (const c of cl.comps) {
-      const fpName = (st.pkgs[c.pkg] != null) ? st.pkgs[c.pkg] : '';
+      const fpName = c.pkgName || '';
       const L = [`\t(footprint ${q(fpName)}`, `\t\t(layer ${q(sideCu)})`, `\t\t(uuid ${q(uuid())})`, `\t\t(at ${f6(c.x)} ${f6(-c.y)})`,
         textProp('Reference', c.ref, fab, false, side === 'B'), textProp('Value', c.value, fab, true, side === 'B')];
       c.pins.forEach((pin, i) => {
@@ -1225,7 +1343,7 @@ async function convert() {
     if (downloadUrl) URL.revokeObjectURL(downloadUrl);
     downloadUrl = URL.createObjectURL(new Blob([result.text], { type: 'text/plain' }));
     const s = result.stats;
-    const rows = [['部品', s.components], ['パッド', s.pads], ['ネット', s.nets], ['ビア', s.vias], ['その他の穴', s.holes], ['塗りポリゴン', s.polygons],
+    const rows = [...(st.instances ? [['面付け', st.instances + ' 枚']] : []), ['部品', s.components], ['パッド', s.pads], ['ネット', s.nets], ['ビア', s.vias], ['その他の穴', s.holes], ['塗りポリゴン', s.polygons],
       ['ファイルサイズ', (result.text.length / 1048576).toFixed(1) + ' MB']];
     $('stats').innerHTML = '';
     for (const [k, v] of rows) { const a = document.createElement('span'); a.textContent = k; const b = document.createElement('b'); b.textContent = v; $('stats').append(a, b); }
@@ -1303,8 +1421,8 @@ function draw() {
   const mx = view === 'B' ? -1 : 1;
   // screen = center + s * (mirror x, flip y)
   ctx.setTransform(dpr * cam.s * mx, 0, 0, -dpr * cam.s, dpr * (r.width / 2 - mx * cam.s * cam.x), dpr * (r.height / 2 + cam.s * cam.y));
-  const fill = (p, c, a = 1) => { if (!p) return; ctx.globalAlpha = a; ctx.fillStyle = c; ctx.fill(p, 'evenodd'); };
-  fill(paths.edge, '#1e2a22');
+  const fill = (p, c, a = 1, rule = 'evenodd') => { if (!p) return; ctx.globalAlpha = a; ctx.fillStyle = c; ctx.fill(p, rule); };
+  fill(paths.edge, '#1e2a22', 1, 'nonzero');
   if (view === 'F') { fill(paths.BCu, '#3a5bd0', .3); fill(paths.FCu, '#d8483a', .9); fill(paths.FMask, '#40b050', .22); fill(paths.FSilk, '#f2f2f2'); }
   else { fill(paths.FCu, '#d8483a', .25); fill(paths.BCu, '#4a6be0', .9); fill(paths.BMask, '#40b050', .22); fill(paths.BSilk, '#f2f2f2'); }
   fill(paths.holes, '#000000');
