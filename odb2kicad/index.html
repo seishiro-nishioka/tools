@@ -1,0 +1,1348 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ODB++ → KiCad 変換</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/clipper-lib@6.4.2/clipper.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<style>
+:root{
+  --bg:#EEF1F4; --panel:#FFFFFF; --ink:#1B2733; --sub:#5A6878; --line:#CBD4DE;
+  --red:#E0301E; --blue:#2B5C8A; --warn:#B26A00;
+  box-sizing:border-box;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141A21; --panel:#1C242D; --ink:#E6ECF2; --sub:#9AA8B6; --line:#33404D;
+    --red:#FF5040; --blue:#5B93C9; --warn:#E0A040;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#141A21; --panel:#1C242D; --ink:#E6ECF2; --sub:#9AA8B6; --line:#33404D;
+  --red:#FF5040; --blue:#5B93C9; --warn:#E0A040;
+}
+*,*::before,*::after{box-sizing:inherit}
+html,body{height:100%}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  font-size:14.5px; line-height:1.5;
+  display:flex; flex-direction:column; min-height:100vh;
+}
+header{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; padding:12px 18px 6px}
+.back-link{
+  flex:none; font-size:12.5px; color:var(--sub); text-decoration:none;
+  padding:4px 9px; border-radius:5px; border:1px solid var(--line); order:-1;
+}
+.back-link:hover{border-color:var(--blue); color:var(--ink)}
+h1{margin:0; font-size:19px; font-weight:700; letter-spacing:.02em}
+header p{margin:0; color:var(--sub); font-size:12.5px}
+main{
+  display:grid; grid-template-columns:360px minmax(0,1fr); gap:1px;
+  background:var(--line); flex:1; min-height:0;
+}
+@media (max-width: 860px){ main{grid-template-columns:1fr} }
+.panel{background:var(--panel); min-width:0; display:flex; flex-direction:column}
+.pad{padding:12px; display:flex; flex-direction:column; gap:10px}
+.dropzone{
+  border:2px dashed var(--line); border-radius:8px; padding:18px 10px; text-align:center;
+  color:var(--sub); font-size:12.5px; cursor:pointer;
+}
+.dropzone:hover,.dropzone.drag-over{background:var(--bg); border-color:var(--blue)}
+.dropzone b{display:block; color:var(--ink); font-size:13.5px; margin-bottom:2px}
+.label{font-size:11px; color:var(--sub); font-weight:700; letter-spacing:.03em; margin:4px 0 0}
+hr.sep{border:0; border-top:1px solid var(--line); margin:2px 0; width:100%}
+button{font:inherit}
+.btn-row{display:flex; gap:6px; flex-wrap:wrap}
+button.ghost{
+  font-size:12.5px; padding:6px 9px; border-radius:5px; border:1px solid var(--line);
+  background:var(--panel); color:var(--ink); cursor:pointer;
+}
+button.ghost:hover{border-color:var(--blue)}
+button.ghost[aria-pressed="true"]{border-color:var(--blue); box-shadow:0 0 0 1px var(--blue)}
+button.primary{
+  font-size:13px; padding:8px 10px; border-radius:6px; border:1px solid var(--red);
+  background:var(--red); color:#fff; cursor:pointer; font-weight:700;
+}
+button:disabled{opacity:.4; cursor:not-allowed}
+.stats{font-size:12.5px; display:grid; grid-template-columns:auto 1fr; gap:1px 10px}
+.stats b{font-variant-numeric:tabular-nums}
+.layer-table{width:100%; border-collapse:collapse; font-size:12px}
+.layer-table td,.layer-table th{padding:3px 4px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle}
+.layer-table th{color:var(--sub); font-weight:500}
+.layer-table td.name{word-break:break-all}
+.layer-table td.type{color:var(--sub); font-size:11px}
+.layer-table select{font:inherit; font-size:12px; max-width:120px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:4px}
+.layer-scroll{max-height:40vh; overflow:auto}
+ul.warns{margin:0; padding-left:18px; font-size:12px; color:var(--warn)}
+select.step{font:inherit; font-size:12.5px}
+.viewer{display:flex; flex-direction:column; min-height:60vh; height:100%}
+.viewer-head{flex:none; padding:8px 12px; border-bottom:1px solid var(--line); display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+.viewer-head .hint{font-size:11.5px; color:var(--sub)}
+.canvas-wrap{flex:1; position:relative; min-height:300px; background:#101418}
+canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:none; cursor:grab}
+.empty{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#8a97a5; font-size:13px; text-align:center; padding:20px}
+#status{flex:none; padding:6px 14px; font-size:12.5px; color:var(--sub); min-height:1.6em; background:var(--panel); border-top:1px solid var(--line)}
+#status.error{color:var(--red)}
+.sr{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+<header>
+  <a class="back-link" href="../">← 一覧</a>
+  <h1>ODB++ → KiCad 変換</h1>
+  <p>ODB++ の基板データを KiCad で閲覧できる .kicad_pcb (KiCad 9/10 用) に変換します。ファイルはサーバーに送信されず、処理はすべてブラウザ内で完結します。</p>
+</header>
+<main>
+  <section class="panel">
+    <div class="pad">
+      <div class="dropzone" id="dropzone" tabindex="0" role="button">
+        <b>ODB++ をドロップ</b>
+        zip / tgz / tar、またはフォルダ
+      </div>
+      <div class="btn-row">
+        <button type="button" class="ghost" id="pickFile">ファイルを選ぶ</button>
+        <button type="button" class="ghost" id="pickDir">フォルダを選ぶ</button>
+      </div>
+      <input type="file" id="fileInput" class="sr" accept=".zip,.tgz,.gz,.tar">
+      <input type="file" id="dirInput" class="sr" webkitdirectory multiple>
+      <div id="stepRow" style="display:none"><span class="label">ステップ</span> <select class="step" id="stepSel"></select></div>
+      <div id="result" style="display:none">
+        <p class="label">結果</p>
+        <div class="stats" id="stats"></div>
+        <div class="btn-row" style="margin-top:8px">
+          <button type="button" class="primary" id="download">.kicad_pcb をダウンロード</button>
+        </div>
+      </div>
+      <div id="layersBox" style="display:none">
+        <hr class="sep">
+        <p class="label">層の割り当て (空の層は省略)</p>
+        <div class="layer-scroll"><table class="layer-table"><thead><tr><th>ODB++ 層</th><th>種類</th><th>KiCad 層</th></tr></thead><tbody id="layerRows"></tbody></table></div>
+        <div class="btn-row" style="margin-top:6px"><button type="button" class="ghost" id="reconvert" disabled>割り当てを反映して再変換</button></div>
+      </div>
+      <div id="warnBox" style="display:none">
+        <hr class="sep">
+        <p class="label">警告</p>
+        <ul class="warns" id="warns"></ul>
+      </div>
+    </div>
+  </section>
+  <section class="panel">
+    <div class="viewer">
+      <div class="viewer-head">
+        <button type="button" class="ghost" id="viewTop" aria-pressed="true">表</button>
+        <button type="button" class="ghost" id="viewBot" aria-pressed="false">裏 (裏から見た向き)</button>
+        <button type="button" class="ghost" id="viewFit">全体表示</button>
+        <span class="hint">ホイール / ピンチで拡大、ドラッグで移動</span>
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="view"></canvas>
+        <div class="empty" id="empty">ODB++ を読み込むと、ここにプレビューを表示します。</div>
+      </div>
+    </div>
+  </section>
+</main>
+<div id="status"></div>
+
+<script id="core">
+'use strict';
+/* ODB++ -> KiCad core (no DOM). Units: mm, ODB++ Y-up; KiCad output Y-down. */
+const Odb = (() => {
+const C = (typeof ClipperLib !== 'undefined') ? ClipperLib : globalThis.ClipperLib;
+const SC = 1e4;          // clipper integer units per mm
+const QS = 16;           // segments per quarter circle
+const MIN_W = 0.1;       // width for zero-width strokes (mm)
+const TOL = 0.002;       // max chord deviation for circles/arcs (mm)
+const NF = C.PolyFillType.pftNonZero;
+
+/* ---------------- warnings */
+let warnings = new Map();
+function warn(msg) { warnings.set(msg, (warnings.get(msg) || 0) + 1); }
+
+/* ---------------- geometry (clipper paths, outers CCW / holes CW) */
+const toI = (x, y) => ({ X: Math.round(x * SC), Y: Math.round(y * SC) });
+function pathF(pts) {
+  const p = pts.map(([x, y]) => toI(x, y));
+  if (C.Clipper.Area(p) < 0) p.reverse();
+  return p;
+}
+function clip(subj, clp, type, tree) {
+  const c = new C.Clipper();
+  c.AddPaths(subj, C.PolyType.ptSubject, true);
+  if (clp) c.AddPaths(clp, C.PolyType.ptClip, true);
+  const out = tree ? new C.PolyTree() : [];
+  c.Execute(type, out, NF, NF);
+  return out;
+}
+function unionFlat(a) { return a.length ? clip(a, null, C.ClipType.ctUnion) : []; }
+/* Union of many paths: merge spatially sorted chunks pairwise (keeps the sweep's active edge list short). */
+function union(a) {
+  if (a.length <= 400) return unionFlat(a);
+  const keyed = a.map(p => { let s = 0; for (const q of p) s += q.X; return [s / p.length, p]; });
+  keyed.sort((u, v) => u[0] - v[0]);
+  let parts = [];
+  for (let i = 0; i < keyed.length; i += 200) parts.push(unionFlat(keyed.slice(i, i + 200).map(k => k[1])));
+  while (parts.length > 1) {
+    const next = [];
+    for (let i = 0; i < parts.length; i += 2) next.push(i + 1 < parts.length ? unionFlat(parts[i].concat(parts[i + 1])) : parts[i]);
+    parts = next;
+  }
+  return parts[0];
+}
+const diff = (a, b) => !a.length ? [] : !b.length ? union(a) : clip(a, b, C.ClipType.ctDifference);
+const area = paths => paths.reduce((s, p) => s + C.Clipper.Area(p), 0) / (SC * SC);
+function bbox(paths) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of paths) for (const q of p) {
+    if (q.X < x0) x0 = q.X; if (q.X > x1) x1 = q.X; if (q.Y < y0) y0 = q.Y; if (q.Y > y1) y1 = q.Y;
+  }
+  return [x0 / SC, y0 / SC, x1 / SC, y1 / SC];
+}
+function segCount(r) {
+  // segments for a full circle: at most QS*4, fewer for small radii (deviation <= TOL), multiple of 4
+  if (r <= TOL) return 8;
+  const n = Math.ceil(Math.PI / Math.acos(1 - TOL / r));
+  return Math.min(QS * 4, Math.max(8, Math.ceil(n / 4) * 4));
+}
+function circleF(cx, cy, r, n = segCount(r)) {
+  const pts = [];
+  for (let i = 0; i < n; i++) { const a = 2 * Math.PI * i / n; pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); }
+  return pts;
+}
+/* Mirror (x -> -x) first, then rotate clockwise by angle (ODB++), then translate. */
+function xform(paths, mirror, angle, x, y) {
+  const a = -angle * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  return paths.map(p => {
+    const q = p.map(pt => {
+      let px = pt.X / SC; const py = pt.Y / SC;
+      if (mirror) px = -px;
+      return toI(x + px * c - py * s, y + px * s + py * c);
+    });
+    if (mirror) q.reverse();
+    return q;
+  });
+}
+function arcPoints(xs, ys, xe, ye, xc, yc, cw) {
+  const r = Math.hypot(xs - xc, ys - yc);
+  const a0 = Math.atan2(ys - yc, xs - xc), a1 = Math.atan2(ye - yc, xe - xc);
+  let sweep;
+  if (cw) { sweep = a0 - a1; if (sweep <= 1e-9) sweep += 2 * Math.PI; sweep = -sweep; }
+  else { sweep = a1 - a0; if (sweep <= 1e-9) sweep += 2 * Math.PI; }
+  const n = Math.max(4, Math.floor(Math.abs(sweep) / (2 * Math.PI) * segCount(r)));
+  const pts = [];
+  for (let i = 0; i <= n; i++) pts.push([xc + r * Math.cos(a0 + sweep * i / n), yc + r * Math.sin(a0 + sweep * i / n)]);
+  pts[n] = [xe, ye];
+  return pts;
+}
+function strokePath(pts, st) {
+  const w = st.w > 0 ? st.w : MIN_W;
+  const same = pts.every(p => Math.abs(p[0] - pts[0][0]) < 1e-9 && Math.abs(p[1] - pts[0][1]) < 1e-9);
+  if (same) {
+    const [x, y] = pts[0];
+    if (st.cap === 'square') return [pathF([[x - w / 2, y - w / 2], [x + w / 2, y - w / 2], [x + w / 2, y + w / 2], [x - w / 2, y + w / 2]])];
+    return [pathF(circleF(x, y, w / 2))];
+  }
+  const r = w / 2 * SC;
+  const co = new C.ClipperOffset(2, Math.max(0.25, TOL * SC, r * (1 - Math.cos(Math.PI / (QS * 4)))));
+  const sq = st.cap === 'square';
+  co.AddPath(pts.map(([x, y]) => toI(x, y)), sq ? C.JoinType.jtMiter : C.JoinType.jtRound, sq ? C.EndType.etOpenSquare : C.EndType.etOpenRound);
+  const out = [];
+  co.Execute(out, r);
+  return out;
+}
+
+/* ---------------- standard symbols (dimensions in symbol units * k -> mm) */
+function rectCorners(w, h, r, corners, chamfer) {
+  // corners: 1=top-right 2=top-left 3=bottom-left 4=bottom-right
+  const pts = [];
+  const cs = [[4, w / 2, -h / 2, -90], [1, w / 2, h / 2, 0], [2, -w / 2, h / 2, 90], [3, -w / 2, -h / 2, 180]];
+  for (const [id, cx, cy, a0] of cs) {
+    if (r > 0 && corners.includes(String(id))) {
+      const sx = Math.sign(cx), sy = Math.sign(cy);
+      if (chamfer) {
+        // entering point then leaving point, CCW
+        const p1 = (a0 === -90 || a0 === 90) ? [cx - sx * r, cy] : [cx, cy - sy * r];
+        const p2 = (a0 === -90 || a0 === 90) ? [cx, cy - sy * r] : [cx - sx * r, cy];
+        pts.push(p1, p2);
+      } else {
+        const ox = cx - sx * r, oy = cy - sy * r;
+        for (let i = 0; i <= QS; i++) {
+          const a = (a0 + 90 * i / QS) * Math.PI / 180;
+          pts.push([ox + r * Math.cos(a), oy + r * Math.sin(a)]);
+        }
+      }
+    } else pts.push([cx, cy]);
+  }
+  return pts;
+}
+function spokesCut(ringPaths, nSp, angle, gap, len) {
+  const cuts = [];
+  for (let i = 0; i < nSp; i++) {
+    const a = (angle + 360 * i / nSp) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+    const q = [[0, -gap / 2], [len, -gap / 2], [len, gap / 2], [0, gap / 2]].map(([x, y]) => [x * c - y * s, x * s + y * c]);
+    cuts.push(pathF(q));
+  }
+  return diff(ringPaths, cuts);
+}
+const stdCache = new Map();
+function stdSymbol(name, k) {
+  const key = name + '|' + k;
+  if (stdCache.has(key)) return stdCache.get(key);
+  const v = stdSymbolCalc(name, k);
+  stdCache.set(key, v);
+  return v;
+}
+function stdSymbolCalc(name, k) {
+  const num = s => parseFloat(s) * k;
+  let m;
+  if ((m = /^r([\d.]+)$/.exec(name))) {
+    const d = num(m[1]);
+    return { paths: d > 0 ? [pathF(circleF(0, 0, d / 2))] : [], stroke: { cap: 'round', w: d } };
+  }
+  if ((m = /^s([\d.]+)$/.exec(name))) {
+    const s = num(m[1]);
+    return { paths: [pathF([[-s / 2, -s / 2], [s / 2, -s / 2], [s / 2, s / 2], [-s / 2, s / 2]])], stroke: { cap: 'square', w: s } };
+  }
+  if ((m = /^rect([\d.]+)x([\d.]+)(?:x(r|c)([\d.]+)(?:x(\d+))?)?$/.exec(name))) {
+    const w = num(m[1]), h = num(m[2]);
+    const r = m[4] ? Math.min(num(m[4]), w / 2, h / 2) : 0;
+    return { paths: [pathF(rectCorners(w, h, r, m[5] || '1234', m[3] === 'c'))] };
+  }
+  if ((m = /^oval([\d.]+)x([\d.]+)$/.exec(name))) {
+    const w = num(m[1]), h = num(m[2]);
+    return { paths: [pathF(rectCorners(w, h, Math.min(w, h) / 2, '1234', false))] };
+  }
+  if ((m = /^di([\d.]+)x([\d.]+)$/.exec(name))) {
+    const w = num(m[1]), h = num(m[2]);
+    return { paths: [pathF([[w / 2, 0], [0, h / 2], [-w / 2, 0], [0, -h / 2]])] };
+  }
+  if ((m = /^oct([\d.]+)x([\d.]+)x([\d.]+)$/.exec(name))) {
+    return { paths: [pathF(rectCorners(num(m[1]), num(m[2]), num(m[3]), '1234', true))] };
+  }
+  if ((m = /^donut_r([\d.]+)x([\d.]+)$/.exec(name))) {
+    return { paths: diff([pathF(circleF(0, 0, num(m[1]) / 2))], [pathF(circleF(0, 0, num(m[2]) / 2))]) };
+  }
+  if ((m = /^donut_s([\d.]+)x([\d.]+)$/.exec(name))) {
+    const o = num(m[1]) / 2, i = num(m[2]) / 2;
+    return { paths: diff([pathF([[-o, -o], [o, -o], [o, o], [-o, o]])], [pathF([[-i, -i], [i, -i], [i, i], [-i, i]])]) };
+  }
+  if ((m = /^el([\d.]+)x([\d.]+)$/.exec(name))) {
+    const w = num(m[1]) / 2, h = num(m[2]) / 2;
+    return { paths: [pathF(circleF(0, 0, 1).map(([x, y]) => [x * w, y * h]))] };
+  }
+  if ((m = /^tri([\d.]+)x([\d.]+)$/.exec(name))) {
+    const b = num(m[1]), h = num(m[2]);
+    return { paths: [pathF([[-b / 2, -h / 2], [b / 2, -h / 2], [0, h / 2]])] };
+  }
+  if ((m = /^hex_l([\d.]+)x([\d.]+)x([\d.]+)$/.exec(name))) {
+    const w = num(m[1]), h = num(m[2]), r = num(m[3]);
+    return { paths: [pathF([[-w / 2, 0], [-w / 2 + r, -h / 2], [w / 2 - r, -h / 2], [w / 2, 0], [w / 2 - r, h / 2], [-w / 2 + r, h / 2]])] };
+  }
+  if ((m = /^hex_s([\d.]+)x([\d.]+)x([\d.]+)$/.exec(name))) {
+    const w = num(m[1]), h = num(m[2]), r = num(m[3]);
+    return { paths: [pathF([[0, -h / 2], [w / 2, -h / 2 + r], [w / 2, h / 2 - r], [0, h / 2], [-w / 2, h / 2 - r], [-w / 2, -h / 2 + r]])] };
+  }
+  if ((m = /^(thr|ths)([\d.]+)x([\d.]+)x([\d.]+)x(\d+)x([\d.]+)$/.exec(name))) {
+    const od = num(m[2]), id = num(m[3]);
+    if (m[1] === 'ths') warn('角端の熱抵抗シンボル (ths) を丸端として描画: ' + name);
+    const ring = diff([pathF(circleF(0, 0, od / 2))], [pathF(circleF(0, 0, id / 2))]);
+    return { paths: spokesCut(ring, +m[5], +m[4], num(m[6]), od) };
+  }
+  if ((m = /^s_ths([\d.]+)x([\d.]+)x([\d.]+)x(\d+)x([\d.]+)$/.exec(name))) {
+    const o = num(m[1]) / 2, i = num(m[2]) / 2;
+    const ring = diff([pathF([[-o, -o], [o, -o], [o, o], [-o, o]])], [pathF([[-i, -i], [i, -i], [i, i], [-i, i]])]);
+    return { paths: spokesCut(ring, +m[4], +m[3], num(m[5]), o * 2) };
+  }
+  if (/^null\d*$/.test(name)) return { paths: [] };
+  return null;
+}
+
+/* ---------------- features files */
+function stripAttr(l) { const i = l.indexOf(';'); return i >= 0 ? l.slice(0, i) : l; }
+function unitsOf(lines, def) {
+  for (const l of lines) {
+    const m = /^\s*(?:U\s+|UNITS\s*=\s*)(MM|INCH)\b/i.exec(l);
+    if (m) return m[1].toUpperCase();
+  }
+  return def;
+}
+/* lib: { get(name) -> paths | null } for user symbols */
+function parseFeatures(text, lib, label) {
+  const lines = text.split(/\r?\n/);
+  const unit = unitsOf(lines.slice(0, 50), 'INCH');
+  const ks = unit === 'MM' ? 1 : 25.4;        // coordinates -> mm
+  const symK = unit === 'MM' ? 0.001 : 0.0254; // symbol dims (um or mil) -> mm
+  const syms = {};
+  const items = [], pads = [], lines_ = [];
+  const symShape = sym => {
+    const s = stdSymbol(sym.name, sym.k);
+    if (s) return s.paths;
+    const u = lib.get(sym.name);
+    if (u) return u;
+    warn('未対応のシンボル: ' + sym.name);
+    return null;
+  };
+  const strokeOf = sym => {
+    const s = stdSymbol(sym.name, sym.k);
+    if (s && s.stroke) return s.stroke;
+    warn('丸・角以外のシンボルの線を丸線として描画: ' + sym.name);
+    const sh = symShape(sym);
+    if (sh && sh.length) { const b = bbox(sh); return { cap: 'round', w: b[2] - b[0] }; }
+    return { cap: 'round', w: MIN_W };
+  };
+  let i = 0;
+  const N = lines.length;
+  while (i < N) {
+    const raw = lines[i++];
+    if (!raw || raw[0] === '#' || raw[0] === '@' || raw[0] === '&') continue;
+    const t = stripAttr(raw).trim().split(/\s+/);
+    const k = t[0];
+    if (!k) continue;
+    if (k[0] === '$') {
+      const kk = t[2] === 'I' ? 0.0254 : t[2] === 'M' ? 0.001 : symK;
+      syms[k.slice(1)] = { name: t[1], k: kk };
+    } else if (k === 'L') {
+      const [x1, y1, x2, y2] = t.slice(1, 5).map(v => parseFloat(v) * ks);
+      const sym = syms[t[5]], pol = t[6];
+      if (!sym) { warn('シンボル番号が不明な線 (' + label + ')'); continue; }
+      lines_.push({ x1, y1, x2, y2, sym, pol });
+      items.push({ pol, paths: strokePath([[x1, y1], [x2, y2]], strokeOf(sym)) });
+    } else if (k === 'A') {
+      const [xs, ys, xe, ye, xc, yc] = t.slice(1, 7).map(v => parseFloat(v) * ks);
+      const sym = syms[t[7]], pol = t[8], cw = t[10] === 'Y';
+      if (!sym) { warn('シンボル番号が不明な弧 (' + label + ')'); continue; }
+      items.push({ pol, paths: strokePath(arcPoints(xs, ys, xe, ye, xc, yc, cw), strokeOf(sym)) });
+    } else if (k === 'P') {
+      const x = parseFloat(t[1]) * ks, y = parseFloat(t[2]) * ks;
+      let j = 3, sym;
+      if (t[3] === '-1') { sym = syms[t[4]]; j = 5; warn('サイズ変更付きのパッドは元の大きさで描画'); }
+      else sym = syms[t[3]];
+      if (!sym) { warn('シンボル番号が不明なパッド (' + label + ')'); continue; }
+      const pol = t[j + 1];
+      const orient = parseInt(t[j + 3] || '0', 10);
+      const angle = orient >= 8 ? parseFloat(t[j + 4] || '0') : (orient % 4) * 90;
+      const mirror = (orient >= 4 && orient <= 7) || orient === 9;
+      const sh = symShape(sym);
+      const paths = sh ? xform(sh, mirror, angle, x, y) : null;
+      pads.push({ x, y, sym, pol, orient, angle, mirror, paths });
+      if (paths) items.push({ pol, paths });
+    } else if (k === 'S') {
+      const pol = t[1];
+      const isl = [], hol = [];
+      let cur = null, kind = null;
+      while (i < N) {
+        const u = stripAttr(lines[i++]).trim().split(/\s+/);
+        const c = u[0];
+        if (c === 'OB') { cur = [[parseFloat(u[1]) * ks, parseFloat(u[2]) * ks]]; kind = u[3]; }
+        else if (c === 'OS') cur.push([parseFloat(u[1]) * ks, parseFloat(u[2]) * ks]);
+        else if (c === 'OC') {
+          const [xe, ye, xc, yc] = u.slice(1, 5).map(v => parseFloat(v) * ks);
+          const last = cur[cur.length - 1];
+          cur.push(...arcPoints(last[0], last[1], xe, ye, xc, yc, u[5] === 'Y').slice(1));
+        } else if (c === 'OE') {
+          if (cur && cur.length >= 3) (kind === 'H' ? hol : isl).push(pathF(cur));
+          cur = null;
+        } else if (c === 'SE') break;
+      }
+      items.push({ pol, paths: diff(union(isl), union(hol)), surface: true });
+    } else if (k === 'T') {
+      warn('文字 (T レコード) は描画しない (' + label + ')');
+    } else if (k === 'B') {
+      warn('バーコード (B レコード) は描画しない (' + label + ')');
+    }
+  }
+  return { items, pads, lines: lines_, count: items.length };
+}
+function layerGeometry(ff) {
+  if (ff._geom) return ff._geom;
+  let acc = [], dark = [];
+  for (const it of ff.items) {
+    if (!it.paths || !it.paths.length) continue;
+    if (it.pol === 'N') { acc = diff(acc.concat(dark), it.paths); dark = []; }
+    else dark.push(...it.paths);
+  }
+  ff._geom = union(acc.concat(dark));
+  return ff._geom;
+}
+
+/* Split polygons with holes into hole-free pieces (KiCad gr_poly has no holes).
+   Cuts along a line through a hole, recursively, until no holes remain. */
+function polyTreeGroups(tree) {
+  const groups = [];
+  const walk = node => {
+    for (const ch of node.Childs()) {
+      if (!ch.IsHole()) {
+        const holes = ch.Childs().map(h => h.Contour());
+        groups.push([ch.Contour(), holes]);
+        for (const h of ch.Childs()) walk(h);
+      }
+    }
+  };
+  walk(tree);
+  return groups;
+}
+/* Group clipper output (outers CCW, holes CW, no overlaps) into [outer, holes] without another sweep. */
+function groupClean(paths) {
+  const outers = [], holes = [];
+  for (const p of paths) {
+    if (p.length < 3) continue;
+    const a = C.Clipper.Area(p);
+    if (a > 0) outers.push({ p, a, b: bbox([p]), holes: [] }); else if (a < 0) holes.push(p);
+  }
+  if (!holes.length) return outers.map(o => [o.p, []]);
+  for (const h of holes) {
+    let best = null;
+    for (const pt of [h[0], h[h.length >> 1], h[h.length >> 2]]) {
+      const x = pt.X / SC, y = pt.Y / SC;
+      for (const o of outers) {
+        if (x < o.b[0] || x > o.b[2] || y < o.b[1] || y > o.b[3] || (best && o.a >= best.a)) continue;
+        if (C.Clipper.PointInPolygon(pt, o.p) === 1) best = o;
+      }
+      if (best) break;
+    }
+    if (best) best.holes.push(h);
+    else return polyTreeGroups(clip(paths, null, C.ClipType.ctUnion, true)); // fallback
+  }
+  return outers.map(o => [o.p, o.holes]);
+}
+function fracture(paths) {
+  if (!paths.length) return [];
+  const out = [];
+  const stack = groupClean(paths).map(g => [g[0], g[1], 0]);
+  while (stack.length) {
+    const [outer, holes, depth] = stack.pop();
+    if (!holes.length) { out.push(outer); continue; }
+    if (depth > 60) { out.push(outer); warn('穴付きポリゴンの分割に失敗 (穴を省略)'); continue; }
+    const bbs = holes.map(h => bbox([h]).map(v => Math.round(v * SC)));
+    // pick the median hole by center x; cut through it along its longer axis
+    const order = bbs.map((b, i) => i).sort((a, b) => (bbs[a][0] + bbs[a][2]) - (bbs[b][0] + bbs[b][2]));
+    const hb = bbs[order[order.length >> 1]];
+    const ob = bbox([outer]).map(v => Math.round(v * SC));
+    const vertical = (hb[2] - hb[0]) >= (hb[3] - hb[1]);
+    let r1, r2;
+    if (vertical) {
+      const cx = Math.round((hb[0] + hb[2]) / 2);
+      r1 = [{ X: ob[0] - 10, Y: ob[1] - 10 }, { X: cx, Y: ob[1] - 10 }, { X: cx, Y: ob[3] + 10 }, { X: ob[0] - 10, Y: ob[3] + 10 }];
+      r2 = [{ X: cx, Y: ob[1] - 10 }, { X: ob[2] + 10, Y: ob[1] - 10 }, { X: ob[2] + 10, Y: ob[3] + 10 }, { X: cx, Y: ob[3] + 10 }];
+    } else {
+      const cy = Math.round((hb[1] + hb[3]) / 2);
+      r1 = [{ X: ob[0] - 10, Y: ob[1] - 10 }, { X: ob[2] + 10, Y: ob[1] - 10 }, { X: ob[2] + 10, Y: cy }, { X: ob[0] - 10, Y: cy }];
+      r2 = [{ X: ob[0] - 10, Y: cy }, { X: ob[2] + 10, Y: cy }, { X: ob[2] + 10, Y: ob[3] + 10 }, { X: ob[0] - 10, Y: ob[3] + 10 }];
+    }
+    const src = [outer, ...holes];
+    for (const r of [r1, r2]) {
+      const t = clip(src, [r], C.ClipType.ctIntersection, true);
+      for (const g of polyTreeGroups(t)) stack.push([g[0], g[1], depth + 1]);
+    }
+  }
+  return out;
+}
+
+/* ---------------- archive / file map */
+function decodeText(u8) {
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(u8); }
+  catch (e) {
+    try { return new TextDecoder('shift_jis').decode(u8); } catch (e2) { return new TextDecoder('utf-8').decode(u8); }
+  }
+}
+/* UNIX compress (.Z, LZW) */
+function uncompressZ(buf) {
+  if (buf[0] !== 0x1f || buf[1] !== 0x9d) throw new Error('compress 形式ではありません');
+  const maxbits = buf[2] & 0x1f, block = (buf[2] & 0x80) !== 0;
+  const maxmax = 1 << maxbits;
+  const prefix = new Int32Array(maxmax), suffix = new Uint8Array(maxmax);
+  for (let i = 0; i < 256; i++) suffix[i] = i;
+  const bits = (buf.length - 3) * 8;
+  let n = 9, maxcode = (1 << n) - 1, free = block ? 257 : 256;
+  let pos = 0, base = 0, oldcode = -1, finchar = 0;
+  let out = new Uint8Array(Math.max(1024, buf.length * 4)), olen = 0;
+  const stack = new Uint8Array(maxmax + 1);
+  const put = b => { if (olen >= out.length) { const o = new Uint8Array(out.length * 2); o.set(out); out = o; } out[olen++] = b; };
+  const align = () => { const g = n * 8; pos = base + Math.ceil((pos - base) / g) * g; base = pos; };
+  const read = () => {
+    const p = 3 + (pos >> 3), sh = pos & 7;
+    const v = (buf[p] | (buf[p + 1] << 8) | (buf[p + 2] << 16)) >>> sh;
+    pos += n;
+    return v & ((1 << n) - 1);
+  };
+  for (;;) {
+    if (free > maxcode) { align(); n++; maxcode = n === maxbits ? maxmax : (1 << n) - 1; }
+    if (pos + n > bits) break;
+    let code = read();
+    if (oldcode === -1) {
+      if (code >= 256) throw new Error('compress データが壊れています');
+      oldcode = finchar = code; put(code); continue;
+    }
+    if (code === 256 && block) {
+      prefix.fill(0, 0, 256);
+      free = 256; align(); n = 9; maxcode = (1 << n) - 1;
+      continue;
+    }
+    const incode = code;
+    let sp = 0;
+    if (code >= free) {
+      if (code > free) throw new Error('compress データが壊れています');
+      stack[sp++] = finchar; code = oldcode;
+    }
+    while (code >= 256) { stack[sp++] = suffix[code]; code = prefix[code]; }
+    finchar = suffix[code]; stack[sp++] = finchar;
+    while (sp > 0) put(stack[--sp]);
+    if (free < maxmax) { prefix[free] = oldcode; suffix[free] = finchar; free++; }
+    oldcode = incode;
+  }
+  return out.subarray(0, olen);
+}
+/* tar: returns [{path, data:Uint8Array}] */
+function parseTar(u8) {
+  const files = [];
+  let off = 0, longName = null, paxPath = null;
+  const str = (a, b) => { let e = a; while (e < b && u8[e]) e++; return new TextDecoder().decode(u8.subarray(a, e)); };
+  while (off + 512 <= u8.length) {
+    if (u8.subarray(off, off + 512).every(v => v === 0)) break;
+    let name = str(off, off + 100);
+    const size = parseInt(str(off + 124, off + 136).trim() || '0', 8);
+    const type = String.fromCharCode(u8[off + 156] || 48);
+    const magic = str(off + 257, off + 263);
+    if (magic.startsWith('ustar')) { const pre = str(off + 345, off + 500); if (pre) name = pre + '/' + name; }
+    const data = u8.subarray(off + 512, off + 512 + size);
+    off += 512 + Math.ceil(size / 512) * 512;
+    if (type === 'L') { longName = str(off - Math.ceil(size / 512) * 512, off - Math.ceil(size / 512) * 512 + size); continue; }
+    if (type === 'x') {
+      const m = /\d+ path=([^\n]*)\n/.exec(new TextDecoder().decode(data));
+      if (m) paxPath = m[1];
+      continue;
+    }
+    if (type === 'g') continue;
+    if (longName) { name = longName; longName = null; }
+    if (paxPath) { name = paxPath; paxPath = null; }
+    if (type === '0' || type === '\0' || type === '7') files.push({ path: name, data });
+  }
+  return files;
+}
+async function gunzip(u8) {
+  const ds = new DecompressionStream('gzip');
+  const stream = new Blob([u8]).stream().pipeThrough(ds);
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+/* FileSet: lowercased path -> {path, read: async () => Uint8Array} */
+class FileSet {
+  constructor() { this.map = new Map(); }
+  add(path, read) {
+    path = path.replace(/\\/g, '/').replace(/^\.?\//, '');
+    this.map.set(path.toLowerCase(), { path, read });
+  }
+  has(p) { p = p.toLowerCase(); return this.map.has(p) || this.map.has(p + '.z'); }
+  async bytes(p) {
+    const k = p.toLowerCase();
+    if (this.map.has(k)) return this.map.get(k).read();
+    if (this.map.has(k + '.z')) return uncompressZ(await this.map.get(k + '.z').read());
+    return null;
+  }
+  async text(p) { const b = await this.bytes(p); return b ? decodeText(b) : null; }
+  list(prefix) {
+    prefix = prefix.toLowerCase();
+    const out = [];
+    for (const k of this.map.keys()) if (k.startsWith(prefix)) out.push(k.slice(prefix.length));
+    return out;
+  }
+}
+async function fileSetFromArchive(name, u8) {
+  const fs = new FileSet();
+  const lower = name.toLowerCase();
+  if (u8[0] === 0x50 && u8[1] === 0x4b) {
+    const zip = await JSZip.loadAsync(u8);
+    for (const f of Object.values(zip.files)) if (!f.dir) fs.add(f.name, () => f.async('uint8array'));
+    // nested archive inside zip (e.g. a .tgz in a .zip)
+    const inner = [...fs.map.values()].filter(e => /\.(tgz|tar\.gz|tar|zip)$/i.test(e.path));
+    if (!findJobs(fs).length && inner.length === 1) return fileSetFromArchive(inner[0].path, await inner[0].read());
+    return fs;
+  }
+  let data = u8;
+  if (u8[0] === 0x1f && u8[1] === 0x8b) data = await gunzip(u8);
+  else if (u8[0] === 0x1f && u8[1] === 0x9d) data = uncompressZ(u8);
+  if (data.length > 262 && new TextDecoder().decode(data.subarray(257, 262)) === 'ustar' || /\.(tar|tgz|tar\.gz)$/i.test(lower)) {
+    for (const f of parseTar(data)) fs.add(f.path, async () => f.data);
+    return fs;
+  }
+  throw new Error('対応していない形式です (zip / tgz / tar / フォルダ)');
+}
+function findJobs(fs) {
+  const jobs = [];
+  for (const [k, v] of fs.map) {
+    const m = /^(.*?)matrix\/matrix(\.z)?$/.exec(k);
+    if (m) jobs.push(v.path.slice(0, m[1].length));
+  }
+  return jobs.sort((a, b) => a.length - b.length);
+}
+
+/* ---------------- ODB++ structure */
+function parseMatrix(text) {
+  const layers = [], steps = [];
+  const re = /(STEP|LAYER)\s*\{([^}]*)\}/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const d = {};
+    for (const l of m[2].split(/\r?\n/)) { const i = l.indexOf('='); if (i > 0) d[l.slice(0, i).trim()] = l.slice(i + 1).trim(); }
+    if (m[1] === 'LAYER') { d.ROW = parseInt(d.ROW, 10); layers.push(d); } else steps.push(d);
+  }
+  layers.sort((a, b) => a.ROW - b.ROW);
+  return { layers, steps };
+}
+const COPPER_TYPES = new Set(['SIGNAL', 'POWER_GROUND', 'MIXED']);
+function classify(matrix) {
+  const cu = matrix.layers.filter(l => l.CONTEXT === 'BOARD' && COPPER_TYPES.has(l.TYPE));
+  const first = cu.length ? cu[0].ROW : 0, last = cu.length ? cu[cu.length - 1].ROW : 0;
+  const cuName = i => i === 0 ? 'F.Cu' : i === cu.length - 1 ? 'B.Cu' : `In${i}.Cu`;
+  const side = row => row < first ? 'F' : row > last ? 'B' : null;
+  const out = [];
+  for (const l of matrix.layers) {
+    const e = { name: l.NAME, lname: l.NAME.toLowerCase(), row: l.ROW, type: l.TYPE, context: l.CONTEXT, polarity: l.POLARITY, start: l.START_NAME, end: l.END_NAME, role: 'user', target: null };
+    if (l.CONTEXT === 'BOARD') {
+      const s = side(l.ROW);
+      if (COPPER_TYPES.has(l.TYPE)) { e.role = 'copper'; e.target = cuName(cu.indexOf(l)); }
+      else if (l.TYPE === 'DRILL') e.role = 'drill';
+      else if (l.TYPE === 'COMPONENT') { e.role = 'comp'; e.side = s === 'B' ? 'B' : (s === 'F' ? 'F' : (/bot/i.test(l.NAME) ? 'B' : 'F')); }
+      else if (s && l.TYPE === 'SOLDER_MASK') e.target = s + '.Mask';
+      else if (s && l.TYPE === 'SOLDER_PASTE') e.target = s + '.Paste';
+      else if (s && l.TYPE === 'SILK_SCREEN') e.target = s + '.SilkS';
+    }
+    out.push(e);
+  }
+  return { layers: out, copper: cu.map(l => l.NAME.toLowerCase()), copperCount: cu.length };
+}
+
+const FIXED_LAYERS = [
+  ['F.Adhes', 9, 'user', 'F.Adhesive'], ['B.Adhes', 11, 'user', 'B.Adhesive'],
+  ['F.Paste', 13, 'user'], ['B.Paste', 15, 'user'],
+  ['F.SilkS', 5, 'user', 'F.Silkscreen'], ['B.SilkS', 7, 'user', 'B.Silkscreen'],
+  ['F.Mask', 1, 'user'], ['B.Mask', 3, 'user'],
+  ['Dwgs.User', 17, 'user', 'User.Drawings'], ['Cmts.User', 19, 'user', 'User.Comments'],
+  ['Eco1.User', 21, 'user', 'User.Eco1'], ['Eco2.User', 23, 'user', 'User.Eco2'],
+  ['Edge.Cuts', 25, 'user'], ['Margin', 27, 'user'],
+  ['F.CrtYd', 31, 'user', 'F.Courtyard'], ['B.CrtYd', 29, 'user', 'B.Courtyard'],
+  ['F.Fab', 35, 'user'], ['B.Fab', 33, 'user'],
+];
+const MAX_USER = 45;
+function graphicTargets(copperCount) {
+  const cu = [];
+  for (let i = 0; i < copperCount; i++) cu.push(i === 0 ? 'F.Cu' : i === copperCount - 1 ? 'B.Cu' : `In${i}.Cu`);
+  const fixed = FIXED_LAYERS.map(f => f[0]).filter(n => n !== 'Edge.Cuts');
+  const users = [];
+  for (let i = 1; i <= MAX_USER; i++) users.push('User.' + i);
+  return [...cu, ...fixed, ...users];
+}
+
+/* ---------------- Job loading */
+async function loadJob(fs, root) {
+  warnings = new Map();
+  const matrixText = await fs.text(root + 'matrix/matrix');
+  if (!matrixText) throw new Error('matrix/matrix が見つかりません');
+  const matrix = parseMatrix(matrixText);
+  const stepDirs = new Set();
+  for (const p of fs.list(root + 'steps/')) { const s = p.split('/')[0]; if (s) stepDirs.add(s); }
+  const steps = [...stepDirs];
+  // prefer steps that have components / eda data
+  const score = s => (fs.has(root + `steps/${s}/eda/data`) ? 2 : 0) + (fs.has(root + `steps/${s}/profile`) ? 1 : 0);
+  steps.sort((a, b) => score(b) - score(a));
+  return { fs, root, matrix, steps, cls: classify(matrix) };
+}
+
+async function loadStep(job, step, progress) {
+  const { fs, root, cls } = job;
+  const sp = root + `steps/${step}/`;
+  // user symbols (lazy, recursive)
+  const symCache = new Map(), symBusy = new Set();
+  const symDirs = new Set(fs.list(root + 'symbols/').map(p => p.split('/')[0]).filter(Boolean));
+  const symTexts = new Map();
+  for (const s of symDirs) { const t = await fs.text(root + `symbols/${s}/features`); if (t != null) symTexts.set(s, t); }
+  const lib = {
+    get(name) {
+      const k = name.toLowerCase();
+      if (symCache.has(k)) return symCache.get(k);
+      if (!symTexts.has(k) || symBusy.has(k)) return null;
+      symBusy.add(k);
+      const ff = parseFeatures(symTexts.get(k), lib, 'symbol ' + name);
+      const g = layerGeometry(ff);
+      symBusy.delete(k);
+      symCache.set(k, g);
+      return g;
+    }
+  };
+  if (fs.has(sp + 'stephdr')) {
+    const hdr = await fs.text(sp + 'stephdr');
+    if (/STEP-REPEAT/i.test(hdr || '')) warn('ステップの繰り返し (STEP-REPEAT、面付け) は展開しない');
+  }
+  const layers = [];
+  let n = 0;
+  for (const l of cls.layers) {
+    n++;
+    const e = Object.assign({}, l);
+    if (l.role === 'comp') {
+      const t = await fs.text(sp + `layers/${l.lname}/components`);
+      e.comps = t ? parseComponents(t) : [];
+      e.count = e.comps.length;
+    } else {
+      const t = await fs.text(sp + `layers/${l.lname}/features`);
+      if (t && /^\s*[LAPSTB]\s/m.test(t)) {
+        progress && await progress(`層を解析中 ${n}/${cls.layers.length}`);
+        e.ff = parseFeatures(t, lib, l.name);
+        e.count = e.ff.count;
+        if ((l.polarity || '').toUpperCase() === 'NEGATIVE') warn('負極性の層をそのまま描画: ' + l.name);
+      } else e.count = 0;
+    }
+    layers.push(e);
+  }
+  // default targets for auxiliary layers: User.1.. for non-empty ones
+  let u = 0;
+  for (const e of layers) {
+    if (e.role === 'user' && !e.target && e.count > 0) e.target = ++u <= MAX_USER ? 'User.' + u : null;
+  }
+  if (u > MAX_USER) warn(`補助層が ${u} 個あり、${MAX_USER} 個を超えた分は除外 (割り当てで変更可)`);
+  const profText = await fs.text(sp + 'profile');
+  const profile = profText ? layerGeometry(parseFeatures(profText, lib, 'profile')) : [];
+  if (!profile.length) warn('外形 (profile) がない');
+  const edaText = await fs.text(sp + 'eda/data');
+  const nets = [], pkgs = [];
+  if (edaText) {
+    for (const l of edaText.split(/\r?\n/)) {
+      if (l.startsWith('NET ')) nets.push(stripAttr(l.slice(4)).trim());
+      else if (l.startsWith('PKG ')) pkgs.push(stripAttr(l.slice(4)).trim().split(/\s+/)[0]);
+    }
+  } else warn('eda/data がないため、ネット名なしで変換');
+  return { step, layers, profile, nets, pkgs, copperCount: cls.copperCount };
+}
+
+function parseComponents(text) {
+  const lines = text.split(/\r?\n/);
+  const k = unitsOf(lines.slice(0, 50), 'INCH') === 'MM' ? 1 : 25.4;
+  const comps = [];
+  let cur = null;
+  for (const raw of lines) {
+    const t = stripAttr(raw).trim().split(/\s+/);
+    if (t[0] === 'CMP') {
+      cur = { pkg: parseInt(t[1], 10), x: parseFloat(t[2]) * k, y: parseFloat(t[3]) * k, rot: parseFloat(t[4]), mirror: t[5] === 'M', ref: t[6] || '', value: t[7] || '', pins: [] };
+      comps.push(cur);
+    } else if ((t[0] === 'TOP' || t[0] === 'BOT') && cur) {
+      cur.pins.push({ x: parseFloat(t[2]) * k, y: parseFloat(t[3]) * k, net: parseInt(t[6], 10), name: t[8] || String(parseInt(t[1], 10) + 1) });
+    }
+  }
+  return comps;
+}
+
+/* ---------------- pad / hole index */
+class PadIndex {
+  constructor(ffs) {
+    this.cell = 0.5;
+    this.grid = new Map();
+    for (const ff of ffs) {
+      if (!ff) continue;
+      for (const p of ff.pads) {
+        if (p.pol !== 'P' || !p.paths || !p.paths.length) continue;
+        const it = { x: p.x, y: p.y, pad: p, area: Math.abs(area(p.paths)) };
+        const key = Math.floor(p.x / this.cell) + ',' + Math.floor(p.y / this.cell);
+        if (!this.grid.has(key)) this.grid.set(key, []);
+        this.grid.get(key).push(it);
+      }
+    }
+  }
+  find(x, y, tol = 0.02) {
+    let best = null;
+    const cx = Math.floor(x / this.cell), cy = Math.floor(y / this.cell);
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+      for (const it of this.grid.get((cx + i) + ',' + (cy + j)) || []) {
+        if (Math.abs(it.x - x) <= tol && Math.abs(it.y - y) <= tol && (!best || it.area > best.area)) best = it;
+      }
+    }
+    return best ? best.pad : null;
+  }
+}
+function holeList(st) {
+  const holes = [];
+  for (const l of st.layers) {
+    if (l.role !== 'drill' || !l.ff) continue;
+    const span = drillSpan(st, l);
+    for (const p of l.ff.pads) {
+      if (p.pol !== 'P') continue;
+      let m;
+      if ((m = /^r([\d.]+)$/.exec(p.sym.name))) holes.push({ x: p.x, y: p.y, d: parseFloat(m[1]) * p.sym.k, slot: null, span, layer: l.name });
+      else if ((m = /^oval([\d.]+)x([\d.]+)$/.exec(p.sym.name))) {
+        const w = parseFloat(m[1]) * p.sym.k, h = parseFloat(m[2]) * p.sym.k;
+        holes.push({ x: p.x, y: p.y, d: Math.min(w, h), slot: { w, h, angle: p.angle }, span, layer: l.name });
+      } else warn('未対応の穴の形: ' + p.sym.name);
+    }
+    for (const ln of l.ff.lines) {
+      if (ln.pol !== 'P') continue;
+      const m = /^r([\d.]+)$/.exec(ln.sym.name);
+      if (!m) { warn('未対応の穴の形 (線): ' + ln.sym.name); continue; }
+      const d = parseFloat(m[1]) * ln.sym.k, len = Math.hypot(ln.x2 - ln.x1, ln.y2 - ln.y1);
+      const ang = -Math.atan2(ln.y2 - ln.y1, ln.x2 - ln.x1) * 180 / Math.PI; // ODB++ CW angle
+      holes.push({ x: (ln.x1 + ln.x2) / 2, y: (ln.y1 + ln.y2) / 2, d, slot: { w: len + d, h: d, angle: ang }, span, layer: l.name });
+    }
+  }
+  return holes;
+}
+function drillSpan(st, l) {
+  // Map START/END_NAME to copper; names outside the copper stack clamp to the outer layers.
+  const cu = st.layers.filter(x => x.role === 'copper');
+  if (!cu.length) return ['F.Cu', 'B.Cu'];
+  const rowOf = n => { const e = st.layers.find(x => x.name.toLowerCase() === (n || '').toLowerCase()); return e ? e.row : null; };
+  let r0 = rowOf(l.start), r1 = rowOf(l.end);
+  if (r0 == null) r0 = cu[0].row;
+  if (r1 == null) r1 = cu[cu.length - 1].row;
+  if (r0 > r1) [r0, r1] = [r1, r0];
+  const inside = cu.filter(x => x.row >= r0 && x.row <= r1);
+  const a = inside.length ? inside[0] : cu[0], b = inside.length ? inside[inside.length - 1] : cu[cu.length - 1];
+  return [a.target, b.target];
+}
+
+/* ---------------- KiCad writer */
+const f6 = v => { const r = Math.round(v * 1e6) / 1e6; return (Object.is(r, -0) ? 0 : r).toString(); };
+const q = s => '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+const uuid = () => (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() :
+  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); });
+function ptsLines(path, map, indent) {
+  const parts = path.map(p => { const [x, y] = map(p.X / SC, p.Y / SC); return `(xy ${f6(x)} ${f6(y)})`; });
+  const lines = [];
+  for (let i = 0; i < parts.length; i += 6) lines.push(indent + parts.slice(i, i + 6).join(' '));
+  return lines.join('\n');
+}
+const kicadAngle = odbCw => { let a = -odbCw % 360; if (a <= -180) a += 360; if (a > 180) a -= 360; return Object.is(a, -0) ? 0 : a; };
+
+function buildBoard(st, opts = {}) {
+  const out = [];
+  const stats = { components: 0, pads: 0, padsNoCopper: 0, vias: 0, holes: 0, polygons: 0, nets: 0 };
+  const layerOf = name => st.layers.find(l => l.lname === name);
+  const copperLayers = st.layers.filter(l => l.role === 'copper');
+  const topCu = copperLayers[0] && copperLayers[0].ff, botCu = copperLayers.length > 1 ? copperLayers[copperLayers.length - 1].ff : null;
+  const idx = { F: new PadIndex([topCu]), B: new PadIndex([botCu]) };
+  const findCu = (x, y) => idx.F.find(x, y) || idx.B.find(x, y);
+
+  /* targets */
+  const byTarget = new Map();
+  for (const l of st.layers) {
+    if (!l.ff || !l.target || l.role === 'drill') continue;
+    if (!byTarget.has(l.target)) byTarget.set(l.target, []);
+    byTarget.get(l.target).push(l);
+  }
+  const userNames = new Map();
+  for (const [t, ls] of byTarget) if (t.startsWith('User.')) userNames.set(t, ls.map(l => l.name).join(' + ').slice(0, 60));
+
+  /* header */
+  out.push('(kicad_pcb', '\t(version 20241229)', '\t(generator "odb2kicad")', '\t(generator_version "9.0")',
+    '\t(general', '\t\t(thickness 1.6)', '\t\t(legacy_teardrops no)', '\t)', '\t(paper "A4")', '\t(layers');
+  const ncu = Math.max(2, st.copperCount);
+  out.push('\t\t(0 "F.Cu" signal)');
+  for (let i = 1; i < ncu - 1; i++) out.push(`\t\t(${2 + 2 * i} "In${i}.Cu" signal)`);
+  out.push('\t\t(2 "B.Cu" signal)');
+  for (const [n, id, ty, un] of FIXED_LAYERS) out.push(`\t\t(${id} ${q(n)} ${ty}${un ? ' ' + q(un) : ''})`);
+  for (let i = 1; i <= MAX_USER; i++) {
+    const t = 'User.' + i;
+    if (userNames.has(t)) out.push(`\t\t(${37 + 2 * i} ${q(t)} user ${q(userNames.get(t))})`);
+  }
+  out.push('\t)', '\t(setup', '\t\t(pad_to_mask_clearance 0)', '\t\t(allow_soldermask_bridges_in_footprints no)', '\t\t(tenting front back)', '\t)');
+
+  /* nets */
+  const netCode = [];
+  out.push('\t(net 0 "")');
+  let code = 0;
+  const seen = new Map();
+  st.nets.forEach((nm, i) => {
+    if (!nm || nm === '$NONE$') { netCode[i] = 0; return; }
+    let name = nm;
+    if (seen.has(name)) name = `${nm}_${i}`;
+    seen.set(name, 1);
+    netCode[i] = ++code;
+    out.push(`\t(net ${code} ${q(name)})`);
+  });
+  stats.nets = code;
+  const netNames = ['', ...[...seen.keys()]];
+  const netRef = i => (i >= 0 && i < netCode.length && netCode[i]) ? `(net ${netCode[i]} ${q(netNames[netCode[i]])})` : null;
+
+  /* pads */
+  const usedHoles = new Set();
+  const holes = holeList(st);
+  const holeGrid = new Map();
+  holes.forEach((h, i) => {
+    const key = Math.floor(h.x / 0.5) + ',' + Math.floor(h.y / 0.5);
+    if (!holeGrid.has(key)) holeGrid.set(key, []);
+    holeGrid.get(key).push(i);
+  });
+  const findHole = (x, y, tol = 0.02) => {
+    const cx = Math.floor(x / 0.5), cy = Math.floor(y / 0.5);
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++)
+      for (const hi of holeGrid.get((cx + i) + ',' + (cy + j)) || [])
+        if (!usedHoles.has(hi) && Math.abs(holes[hi].x - x) <= tol && Math.abs(holes[hi].y - y) <= tol) return hi;
+    return null;
+  };
+  const padCheck = [];
+  function padBlock(number, x, y, fpx, fpy, geomPaths, layers, net, hole, indent) {
+    // pad position is footprint-local (KiCad, Y-down); footprint rotation is 0
+    const lx = x - fpx, ly = -(y - fpy);
+    const orient = hole && hole.slot ? kicadAngle(hole.slot.angle) : 0; // ODB++ CW -> KiCad CCW
+    const L = [];
+    const kind = hole ? (hole.npth ? 'np_thru_hole' : 'thru_hole') : 'smd';
+    L.push(`${indent}(pad ${q(number)} ${kind} custom`);
+    L.push(`${indent}\t(at ${f6(lx)} ${f6(ly)}${orient ? ' ' + f6(orient) : ''})`);
+    L.push(`${indent}\t(size 0.05 0.05)`);
+    if (hole) {
+      if (hole.slot) L.push(`${indent}\t(drill oval ${f6(hole.slot.w)} ${f6(hole.slot.h)})`);
+      else L.push(`${indent}\t(drill ${f6(hole.d)})`);
+    }
+    L.push(`${indent}\t(layers ${layers.map(q).join(' ')})`);
+    if (hole && !hole.npth) L.push(`${indent}\t(remove_unused_layers no)`);
+    if (net) L.push(`${indent}\t${net}`);
+    L.push(`${indent}\t(options`, `${indent}\t\t(clearance outline)`, `${indent}\t\t(anchor circle)`, `${indent}\t)`);
+    if (geomPaths && geomPaths.length) {
+      // board (ODB++, Y-up) -> pad-local KiCad: translate, flip Y, then rotate by -orientation
+      const a = -orient * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+      const map = (bx, by) => {
+        const dx = bx - x, dy = -(by - y);
+        // KiCad rotation (Y-down, CCW positive): x' = x cos + y sin, y' = -x sin + y cos
+        return [dx * c + dy * s, -dx * s + dy * c];
+      };
+      L.push(`${indent}\t(primitives`);
+      for (const p of fracture(geomPaths)) {
+        L.push(`${indent}\t\t(gr_poly`, `${indent}\t\t\t(pts`, ptsLines(p, map, indent + '\t\t\t\t'), `${indent}\t\t\t)`,
+          `${indent}\t\t\t(width 0)`, `${indent}\t\t\t(fill yes)`, `${indent}\t\t)`);
+      }
+      L.push(`${indent}\t)`);
+      if (opts.check) padCheck.push({ number, x, y, bbox: bbox(geomPaths) });
+    } else stats.padsNoCopper++;
+    L.push(`${indent}\t(uuid ${q(uuid())})`, `${indent})`);
+    return L.join('\n');
+  }
+  const textProp = (name, val, layer, hidden, mirror) => [
+    `\t\t(property ${q(name)} ${q(val)}`, '\t\t\t(at 0 0 0)', `\t\t\t(layer ${q(layer)})`,
+    ...(hidden ? ['\t\t\t(hide yes)'] : []), `\t\t\t(uuid ${q(uuid())})`,
+    '\t\t\t(effects', '\t\t\t\t(font', '\t\t\t\t\t(size 0.4 0.4)', '\t\t\t\t\t(thickness 0.06)', '\t\t\t\t)',
+    ...(mirror ? ['\t\t\t\t(justify mirror)'] : []), '\t\t\t)', '\t\t)'].join('\n');
+
+  const allCu = ['*.Cu', '*.Mask'];
+  for (const cl of st.layers.filter(l => l.role === 'comp')) {
+    const side = cl.side;
+    const sideCu = side === 'B' ? 'B.Cu' : 'F.Cu', fab = side === 'B' ? 'B.Fab' : 'F.Fab';
+    for (const c of cl.comps) {
+      const fpName = (st.pkgs[c.pkg] != null) ? st.pkgs[c.pkg] : '';
+      const L = [`\t(footprint ${q(fpName)}`, `\t\t(layer ${q(sideCu)})`, `\t\t(uuid ${q(uuid())})`, `\t\t(at ${f6(c.x)} ${f6(-c.y)})`,
+        textProp('Reference', c.ref, fab, false, side === 'B'), textProp('Value', c.value, fab, true, side === 'B')];
+      c.pins.forEach((pin, i) => {
+        const hi = findHole(pin.x, pin.y);
+        const net = netRef(pin.net);
+        if (hi != null) {
+          usedHoles.add(hi);
+          const hit = findCu(pin.x, pin.y);
+          L.push(padBlock(pin.name, pin.x, pin.y, c.x, c.y, hit && hit.paths, allCu, net, holes[hi], '\t\t'));
+        } else {
+          const hit = idx[side === 'B' ? 'B' : 'F'].find(pin.x, pin.y);
+          L.push(padBlock(pin.name, pin.x, pin.y, c.x, c.y, hit && hit.paths, [sideCu], net, null, '\t\t'));
+        }
+        stats.pads++;
+      });
+      L.push('\t\t(embedded_fonts no)', '\t)');
+      out.push(L.join('\n'));
+      stats.components++;
+    }
+  }
+
+  /* remaining holes: round with copper -> via; others -> pads of a HOLES footprint */
+  const viaLines = [], extraPads = [];
+  holes.forEach((h, i) => {
+    if (usedHoles.has(i)) return;
+    const hit = findCu(h.x, h.y);
+    if (!h.slot && hit) {
+      const b = bbox(hit.paths);
+      const w = Math.max(b[2] - b[0], h.d + 0.05);
+      const through = h.span[0] === 'F.Cu' && h.span[1] === 'B.Cu';
+      viaLines.push(['\t(via' + (through ? '' : ' blind'), `\t\t(at ${f6(h.x)} ${f6(-h.y)})`, `\t\t(size ${f6(w)})`, `\t\t(drill ${f6(h.d)})`,
+        `\t\t(layers ${q(h.span[0])} ${q(h.span[1])})`, '\t\t(net 0)', `\t\t(uuid ${q(uuid())})`, '\t)'].join('\n'));
+      stats.vias++;
+    } else {
+      const hh = hit ? h : Object.assign({}, h, { npth: true });
+      extraPads.push(padBlock('', h.x, h.y, 0, 0, hit && hit.paths, hit ? allCu : allCu, null, hh, '\t\t'));
+      stats.holes++;
+    }
+  });
+  if (extraPads.length) {
+    out.push(['\t(footprint "HOLES"', '\t\t(layer "F.Cu")', `\t\t(uuid ${q(uuid())})`, '\t\t(at 0 0)',
+      textProp('Reference', 'HOLES', 'F.Fab', true, false), textProp('Value', '', 'F.Fab', true, false),
+      ...extraPads, '\t\t(embedded_fonts no)', '\t)'].join('\n'));
+  }
+
+  /* graphics */
+  const preview = new Map();
+  for (const [t, ls] of byTarget) {
+    const g = ls.length === 1 ? layerGeometry(ls[0].ff) : union(ls.flatMap(l => layerGeometry(l.ff)));
+    preview.set(t, g);
+    for (const p of fracture(g)) {
+      out.push(['\t(gr_poly', '\t\t(pts', ptsLines(p, (x, y) => [x, -y], '\t\t\t'), '\t\t)',
+        '\t\t(stroke', '\t\t\t(width 0)', '\t\t\t(type solid)', '\t\t)', '\t\t(fill yes)', `\t\t(layer ${q(t)})`, `\t\t(uuid ${q(uuid())})`, '\t)'].join('\n'));
+      stats.polygons++;
+    }
+  }
+  /* board outline */
+  for (const p of st.profile) {
+    for (let i = 0; i < p.length; i++) {
+      const a = p[i], b = p[(i + 1) % p.length];
+      out.push(['\t(gr_line', `\t\t(start ${f6(a.X / SC)} ${f6(-a.Y / SC)})`, `\t\t(end ${f6(b.X / SC)} ${f6(-b.Y / SC)})`,
+        '\t\t(stroke', '\t\t\t(width 0.05)', '\t\t\t(type solid)', '\t\t)', '\t\t(layer "Edge.Cuts")', `\t\t(uuid ${q(uuid())})`, '\t)'].join('\n'));
+    }
+  }
+  out.push(...viaLines);
+  out.push('\t(embedded_fonts no)', ')', '');
+  if (stats.padsNoCopper) warn(`銅箔の形が見つからないパッド ${stats.padsNoCopper} 個 (小さな丸で代用)`);
+  return { text: out.join('\n'), stats, preview, holes, padCheck };
+}
+
+return { loadJob, loadStep, buildBoard, fileSetFromArchive, findJobs, FileSet, graphicTargets, uncompressZ, parseTar,
+  layerGeometry, fracture, area, warnings: () => warnings, resetWarnings: () => { warnings = new Map(); }, SC };
+})();
+if (typeof module !== 'undefined') module.exports = Odb;
+</script>
+
+<script>
+'use strict';
+(() => {
+const $ = id => document.getElementById(id);
+const statusEl = $('status');
+const setStatus = (msg, err) => { statusEl.textContent = msg; statusEl.classList.toggle('error', !!err); };
+const tick = () => new Promise(r => setTimeout(r, 0));
+const progress = async msg => { setStatus(msg); await tick(); };
+
+let job = null, st = null, result = null, view = 'F', downloadUrl = null;
+
+/* ---------- input */
+const dz = $('dropzone');
+dz.addEventListener('click', () => $('fileInput').click());
+dz.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('fileInput').click(); } });
+$('pickFile').addEventListener('click', () => $('fileInput').click());
+$('pickDir').addEventListener('click', () => $('dirInput').click());
+$('fileInput').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (f) await openArchive(f); });
+$('dirInput').addEventListener('change', async e => {
+  const files = [...e.target.files]; e.target.value = '';
+  if (!files.length) return;
+  const fs = new Odb.FileSet();
+  for (const f of files) fs.add(f.webkitRelativePath || f.name, async () => new Uint8Array(await f.arrayBuffer()));
+  await openFileSet(fs, files[0].webkitRelativePath.split('/')[0]);
+});
+['dragenter', 'dragover'].forEach(t => dz.addEventListener(t, e => { e.preventDefault(); dz.classList.add('drag-over'); }));
+['dragleave', 'drop'].forEach(t => dz.addEventListener(t, () => dz.classList.remove('drag-over')));
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', async e => {
+  e.preventDefault();
+  const items = [...(e.dataTransfer.items || [])];
+  const entries = items.map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (entries.length === 1 && entries[0].isDirectory) {
+    const fs = new Odb.FileSet();
+    await walkEntry(entries[0], '', fs);
+    await openFileSet(fs, entries[0].name);
+    return;
+  }
+  const f = e.dataTransfer.files[0];
+  if (f) await openArchive(f);
+});
+async function walkEntry(entry, prefix, fs) {
+  if (entry.isFile) {
+    fs.add(prefix + entry.name, () => new Promise((res, rej) => entry.file(async f => res(new Uint8Array(await f.arrayBuffer())), rej)));
+    return;
+  }
+  const reader = entry.createReader();
+  for (;;) {
+    const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+    if (!batch.length) break;
+    for (const ch of batch) await walkEntry(ch, prefix + entry.name + '/', fs);
+  }
+}
+async function openArchive(file) {
+  try {
+    await progress('読み込み中: ' + file.name);
+    const fs = await Odb.fileSetFromArchive(file.name, new Uint8Array(await file.arrayBuffer()));
+    await openFileSet(fs, file.name.replace(/\.(zip|tgz|tar\.gz|tar|gz)$/i, ''));
+  } catch (err) { console.error(err); setStatus('エラー: ' + err.message, true); }
+}
+let baseName = 'board';
+async function openFileSet(fs, name) {
+  try {
+    const roots = Odb.findJobs(fs);
+    if (!roots.length) throw new Error('ODB++ のジョブ (matrix/matrix) が見つかりません');
+    job = await Odb.loadJob(fs, roots[0]);
+    const rootName = roots[0].replace(/\/$/, '').split('/').pop();
+    baseName = rootName || name || 'board';
+    const sel = $('stepSel');
+    sel.innerHTML = '';
+    for (const s of job.steps) { const o = document.createElement('option'); o.value = o.textContent = s; sel.appendChild(o); }
+    $('stepRow').style.display = job.steps.length > 1 ? '' : 'none';
+    if (!job.steps.length) throw new Error('steps フォルダが見つかりません');
+    await openStep(job.steps[0]);
+  } catch (err) { console.error(err); setStatus('エラー: ' + err.message, true); }
+}
+$('stepSel').addEventListener('change', e => openStep(e.target.value).catch(err => setStatus('エラー: ' + err.message, true)));
+
+async function openStep(step) {
+  Odb.resetWarnings();
+  st = await Odb.loadStep(job, step, progress);
+  renderLayerTable();
+  await convert();
+}
+
+/* ---------- layer table */
+function renderLayerTable() {
+  const tb = $('layerRows');
+  tb.innerHTML = '';
+  const targets = Odb.graphicTargets(st.copperCount);
+  for (const l of st.layers) {
+    if (!l.count) continue;
+    const tr = document.createElement('tr');
+    const td1 = document.createElement('td'); td1.className = 'name'; td1.textContent = l.name;
+    const td2 = document.createElement('td'); td2.className = 'type'; td2.textContent = l.type + (l.context === 'MISC' ? ' (MISC)' : '');
+    const td3 = document.createElement('td');
+    if (l.role === 'copper') td3.textContent = l.target;
+    else if (l.role === 'drill') td3.textContent = '穴 (パッド / ビア)';
+    else if (l.role === 'comp') td3.textContent = `部品 ${l.count} 個 (${l.side === 'B' ? '裏' : '表'})`;
+    else {
+      const s = document.createElement('select');
+      const none = document.createElement('option'); none.value = ''; none.textContent = '(除外)'; s.appendChild(none);
+      for (const t of targets) { const o = document.createElement('option'); o.value = o.textContent = t; s.appendChild(o); }
+      s.value = l.target || '';
+      s.addEventListener('change', () => { l.target = s.value || null; $('reconvert').disabled = false; });
+      td3.appendChild(s);
+    }
+    tr.append(td1, td2, td3);
+    tb.appendChild(tr);
+  }
+  $('layersBox').style.display = '';
+}
+$('reconvert').addEventListener('click', async () => { $('reconvert').disabled = true; await convert(); });
+
+/* ---------- convert */
+async function convert() {
+  try {
+    await progress('変換中 (多角形の合成と分割)…');
+    result = Odb.buildBoard(st);
+    if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+    downloadUrl = URL.createObjectURL(new Blob([result.text], { type: 'text/plain' }));
+    const s = result.stats;
+    const rows = [['部品', s.components], ['パッド', s.pads], ['ネット', s.nets], ['ビア', s.vias], ['その他の穴', s.holes], ['塗りポリゴン', s.polygons],
+      ['ファイルサイズ', (result.text.length / 1048576).toFixed(1) + ' MB']];
+    $('stats').innerHTML = '';
+    for (const [k, v] of rows) { const a = document.createElement('span'); a.textContent = k; const b = document.createElement('b'); b.textContent = v; $('stats').append(a, b); }
+    $('result').style.display = '';
+    const w = $('warns'); w.innerHTML = '';
+    for (const [m, n] of Odb.warnings()) { const li = document.createElement('li'); li.textContent = m + (n > 1 ? ` (${n} 件)` : ''); w.appendChild(li); }
+    $('warnBox').style.display = Odb.warnings().size ? '' : 'none';
+    buildPreview();
+    fit();
+    setStatus('変換しました。「.kicad_pcb をダウンロード」で保存できます。');
+  } catch (err) { console.error(err); setStatus('エラー: ' + err.message, true); }
+}
+$('download').addEventListener('click', () => {
+  if (!downloadUrl) return;
+  const a = document.createElement('a');
+  a.href = downloadUrl; a.download = baseName + '.kicad_pcb';
+  document.body.appendChild(a); a.click(); a.remove();
+});
+
+/* ---------- preview */
+const cv = $('view'), ctx = cv.getContext('2d');
+let paths = null, bounds = null, cam = { s: 1, x: 0, y: 0 };
+function toPath2D(polys) {
+  const p = new Path2D(), S = Odb.SC;
+  for (const r of polys) {
+    if (!r.length) continue;
+    p.moveTo(r[0].X / S, r[0].Y / S);
+    for (let i = 1; i < r.length; i++) p.lineTo(r[i].X / S, r[i].Y / S);
+    p.closePath();
+  }
+  return p;
+}
+function buildPreview() {
+  const pv = result.preview;
+  const get = n => pv.has(n) ? toPath2D(pv.get(n)) : null;
+  const holes = new Path2D();
+  for (const h of result.holes) {
+    if (h.slot) {
+      const a = -h.slot.angle * Math.PI / 180, L = Math.max(0, Math.max(h.slot.w, h.slot.h) - h.d) / 2;
+      const along = h.slot.w >= h.slot.h ? a : a + Math.PI / 2;
+      const dx = Math.cos(along) * L, dy = Math.sin(along) * L;
+      holes.moveTo(h.x - dx + h.d / 2, h.y - dy);
+      holes.arc(h.x - dx, h.y - dy, h.d / 2, 0, Math.PI * 2);
+      holes.moveTo(h.x + dx + h.d / 2, h.y + dy);
+      holes.arc(h.x + dx, h.y + dy, h.d / 2, 0, Math.PI * 2);
+      const nx = -Math.sin(along) * h.d / 2, ny = Math.cos(along) * h.d / 2;
+      holes.moveTo(h.x - dx + nx, h.y - dy + ny); holes.lineTo(h.x + dx + nx, h.y + dy + ny);
+      holes.lineTo(h.x + dx - nx, h.y + dy - ny); holes.lineTo(h.x - dx - nx, h.y - dy - ny); holes.closePath();
+    } else { holes.moveTo(h.x + h.d / 2, h.y); holes.arc(h.x, h.y, h.d / 2, 0, Math.PI * 2); }
+  }
+  paths = {
+    edge: toPath2D(st.profile), holes,
+    FCu: get('F.Cu'), BCu: get('B.Cu'), FMask: get('F.Mask'), BMask: get('B.Mask'), FSilk: get('F.SilkS'), BSilk: get('B.SilkS'),
+  };
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const all = st.profile.length ? st.profile : [...pv.values()].flat();
+  for (const r of all) for (const p of r) { const x = p.X / Odb.SC, y = p.Y / Odb.SC; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  bounds = isFinite(x0) ? [x0, y0, x1, y1] : [0, 0, 10, 10];
+  $('empty').style.display = 'none';
+}
+function fit() {
+  if (!bounds) return;
+  const r = cv.getBoundingClientRect();
+  const w = bounds[2] - bounds[0], h = bounds[3] - bounds[1];
+  cam.s = Math.min(r.width / (w * 1.08), r.height / (h * 1.08));
+  cam.x = (bounds[0] + bounds[2]) / 2; cam.y = (bounds[1] + bounds[3]) / 2;
+  draw();
+}
+function draw() {
+  const dpr = window.devicePixelRatio || 1, r = cv.getBoundingClientRect();
+  cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#101418'; ctx.fillRect(0, 0, cv.width, cv.height);
+  if (!paths) return;
+  const mx = view === 'B' ? -1 : 1;
+  // screen = center + s * (mirror x, flip y)
+  ctx.setTransform(dpr * cam.s * mx, 0, 0, -dpr * cam.s, dpr * (r.width / 2 - mx * cam.s * cam.x), dpr * (r.height / 2 + cam.s * cam.y));
+  const fill = (p, c, a = 1) => { if (!p) return; ctx.globalAlpha = a; ctx.fillStyle = c; ctx.fill(p, 'evenodd'); };
+  fill(paths.edge, '#1e2a22');
+  if (view === 'F') { fill(paths.BCu, '#3a5bd0', .3); fill(paths.FCu, '#d8483a', .9); fill(paths.FMask, '#40b050', .22); fill(paths.FSilk, '#f2f2f2'); }
+  else { fill(paths.FCu, '#d8483a', .25); fill(paths.BCu, '#4a6be0', .9); fill(paths.BMask, '#40b050', .22); fill(paths.BSilk, '#f2f2f2'); }
+  fill(paths.holes, '#000000');
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1 / cam.s; ctx.strokeStyle = '#e0c040'; ctx.stroke(paths.edge);
+}
+new ResizeObserver(() => draw()).observe(cv);
+$('viewTop').addEventListener('click', () => { view = 'F'; $('viewTop').setAttribute('aria-pressed', 'true'); $('viewBot').setAttribute('aria-pressed', 'false'); draw(); });
+$('viewBot').addEventListener('click', () => { view = 'B'; $('viewBot').setAttribute('aria-pressed', 'true'); $('viewTop').setAttribute('aria-pressed', 'false'); draw(); });
+$('viewFit').addEventListener('click', fit);
+const mxv = () => view === 'B' ? -1 : 1;
+function zoomAt(px, py, f) {
+  const r = cv.getBoundingClientRect();
+  const wx = cam.x + (px - r.width / 2) / (cam.s * mxv()), wy = cam.y - (py - r.height / 2) / cam.s;
+  cam.s *= f;
+  cam.x = wx - (px - r.width / 2) / (cam.s * mxv()); cam.y = wy + (py - r.height / 2) / cam.s;
+  draw();
+}
+cv.addEventListener('wheel', e => { e.preventDefault(); const r = cv.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+const ptrs = new Map();
+let pinch = null;
+cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); });
+cv.addEventListener('pointermove', e => {
+  if (!ptrs.has(e.pointerId)) return;
+  const prev = ptrs.get(e.pointerId);
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (ptrs.size === 1) {
+    cam.x -= (e.clientX - prev.x) / (cam.s * mxv()); cam.y += (e.clientY - prev.y) / cam.s; draw();
+  } else if (ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pinch) { const r = cv.getBoundingClientRect(); zoomAt((a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top, d / pinch); }
+    pinch = d;
+  }
+});
+const up = e => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null; };
+cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+})();
+</script>
+</body>
+</html>
