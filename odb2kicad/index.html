@@ -95,7 +95,7 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
 <body>
 <header>
   <a class="back-link" href="../">← 一覧</a>
-  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.10.5</span></h1>
+  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.10.6</span></h1>
   <p>ODB++ の基板データを KiCad で閲覧できる .kicad_pcb (KiCad 9/10 用) に変換します。ファイルはサーバーに送信されず、処理はすべてブラウザ内で完結します。</p>
 </header>
 <main>
@@ -460,16 +460,39 @@ function parseFeatures(text, lib, label) {
   }
   return { items, pads, lines: lines_, count: items.length };
 }
-function layerGeometry(ff) {
-  if (ff._geom) return ff._geom;
+function itemsGeometry(items) {
   let acc = [], dark = [];
-  for (const it of ff.items) {
+  for (const it of items) {
     if (!it.paths || !it.paths.length) continue;
     if (it.pol === 'N') { acc = diff(acc.concat(dark), it.paths); dark = []; }
     else dark.push(...it.paths);
   }
-  ff._geom = union(acc.concat(dark));
+  return union(acc.concat(dark));
+}
+function layerGeometry(ff) {
+  if (!ff._geom) ff._geom = itemsGeometry(ff.items);
   return ff._geom;
+}
+/* Layers of a step are parsed lazily: only layers that are converted (target set, copper, drill) pay for it.
+   l.src = {text, lib, name, ff} (own features), l.x = {extra:[{cl,T}], pads, lines, geom} (step-repeat children).
+   Both holders are shared by reference between copies of the layer object. */
+function ffOf(l) {
+  const h = l.src;
+  if (!h) return null;
+  if (!h.ff) { h.ff = parseFeatures(h.text, h.lib, h.name); h.text = null; }
+  return h.ff;
+}
+function padsOf(l) { const ff = ffOf(l); return (ff ? ff.pads : []).concat(l.x ? l.x.pads : []); }
+function linesOf(l) { const ff = ffOf(l); return (ff ? ff.lines : []).concat(l.x ? l.x.lines : []); }
+function layerGeom(l) {
+  if (l.x && l.x.geom) return l.x.geom;
+  const ff = ffOf(l);
+  if (!l.x || !l.x.extra.length) return ff ? layerGeometry(ff) : [];
+  // children first (each as finished geometry), then the step's own features with their polarities
+  const items = l.x.extra.map(e => ({ pol: 'P', paths: e.T.paths(layerGeom(e.cl)) }));
+  if (ff) items.push(...ff.items);
+  l.x.geom = itemsGeometry(items);
+  return l.x.geom;
 }
 
 /* Split polygons with holes into hole-free pieces (KiCad gr_poly has no holes).
@@ -827,7 +850,7 @@ async function ownStep(job, step, progress) {
   let n = 0;
   for (const l of cls.layers) {
     n++;
-    const e = Object.assign({}, l);
+    const e = Object.assign({}, l, { x: { extra: [], pads: [], lines: [], geom: null } });
     if (l.role === 'comp') {
       const t = await fs.text(sp + `layers/${l.lname}/components`);
       e.comps = t ? parseComponents(t) : [];
@@ -835,10 +858,10 @@ async function ownStep(job, step, progress) {
       e.count = e.comps.length;
     } else {
       const t = await fs.text(sp + `layers/${l.lname}/features`);
-      if (t && /^\s*[LAPSTB]\s/m.test(t)) {
-        progress && await progress(`層を解析中 (${step}) ${n}/${cls.layers.length}`);
-        e.ff = parseFeatures(t, lib, l.name);
-        e.count = e.ff.count;
+      const nrec = t ? (t.match(/^\s*[LAPSTB]\s/gm) || []).length : 0;
+      if (nrec) {
+        e.src = { text: t, lib, name: l.name, ff: null };
+        e.count = nrec;
         if ((l.polarity || '').toUpperCase() === 'NEGATIVE') warn('負極性の層をそのまま描画: ' + l.name);
       } else e.count = 0;
     }
@@ -879,23 +902,20 @@ function mergeInstance(out, child, T, sfx, netOffset) {
       ol.count = ol.comps.length;
       return;
     }
-    if (!cl.ff) return;
-    if (!ol.ff) ol.ff = { items: [], pads: [], lines: [], count: 0 };
-    if (!ol.ff.pre) ol.ff.pre = [];
-    // child's layer is merged as its finished geometry (one positive item, drawn before the parent's own features)
-    ol.ff.pre.push({ pol: 'P', paths: T.paths(layerGeometry(cl.ff)) });
+    if (!cl.count) return;
+    // geometry is merged lazily (only if the layer ends up being converted)
+    ol.x.extra.push({ cl, T });
     if (cl.role === 'copper' || cl.role === 'drill') {
-      for (const p of cl.ff.pads) {
+      for (const p of padsOf(cl)) {
         const [x, y] = T.pt(p.x, p.y);
-        ol.ff.pads.push(Object.assign({}, p, { x, y, angle: T.padAngle(p.angle), mirror: p.mirror !== T.mirror, paths: p.paths ? T.paths(p.paths) : null }));
+        ol.x.pads.push(Object.assign({}, p, { x, y, angle: T.padAngle(p.angle), mirror: p.mirror !== T.mirror, paths: p.paths ? T.paths(p.paths) : null }));
       }
-      for (const ln of cl.ff.lines) {
+      for (const ln of linesOf(cl)) {
         const [x1, y1] = T.pt(ln.x1, ln.y1), [x2, y2] = T.pt(ln.x2, ln.y2);
-        ol.ff.lines.push(Object.assign({}, ln, { x1, y1, x2, y2 }));
+        ol.x.lines.push(Object.assign({}, ln, { x1, y1, x2, y2 }));
       }
     }
-    ol.ff.count += cl.ff.count;
-    ol.count = ol.ff.count;
+    ol.count = (ol.count || 0) + cl.count;
   });
   out.profile.push(...T.paths(child.profile));
 }
@@ -920,7 +940,6 @@ async function flatStep(job, step, progress, stack, cache) {
       out.instances += child.instances || 1; // count leaf boards
     }
   }
-  for (const l of out.layers) if (l.ff && l.ff.pre) { l.ff.items = l.ff.pre.concat(l.ff.items); delete l.ff.pre; delete l.ff._geom; }
   cache.set(step, out);
   return out;
 }
@@ -928,13 +947,7 @@ async function flatStep(job, step, progress, stack, cache) {
 async function loadStep(job, step, progress) {
   const flat = await flatStep(job, step, progress, [], new Map());
   const layers = flat.layers.map(l => Object.assign({}, l));
-  // default targets for auxiliary layers: User.1.. for non-empty ones
-  let u = 0;
-  for (const e of layers) {
-    if (e.role === 'user' && !e.target && e.count > 0) { u++; e.target = AUTO_USER_FIRST + u - 1 <= MAX_USER ? 'User.' + (AUTO_USER_FIRST + u - 1) : null; }
-  }
-  const slots = MAX_USER - AUTO_USER_FIRST + 1;
-  if (u > slots) warn(`補助層が ${u} 個あり、User.${AUTO_USER_FIRST}〜User.${MAX_USER} の ${slots} 個を超えた分は除外 (割り当てで変更可)`);
+  // auxiliary layers (would go to User.n) are excluded by default; the user can assign them in the table
   if (!flat.profile.length) warn('外形 (profile) がない');
   if (!flat.nets.length) warn('ネットの情報 (eda/data) がないため、ネット名なしで変換');
   return { step, layers, profile: flat.profile, nets: flat.nets, copperCount: job.cls.copperCount, instances: flat.instances };
@@ -959,12 +972,11 @@ function parseComponents(text) {
 
 /* ---------------- pad / hole index */
 class PadIndex {
-  constructor(ffs) {
+  constructor(pads) {
     this.cell = 0.5;
     this.grid = new Map();
-    for (const ff of ffs) {
-      if (!ff) continue;
-      for (const p of ff.pads) {
+    {
+      for (const p of pads) {
         if (p.pol !== 'P' || !p.paths || !p.paths.length) continue;
         const it = { x: p.x, y: p.y, pad: p, area: Math.abs(area(p.paths)) };
         const key = Math.floor(p.x / this.cell) + ',' + Math.floor(p.y / this.cell);
@@ -987,9 +999,9 @@ class PadIndex {
 function holeList(st) {
   const holes = [];
   for (const l of st.layers) {
-    if (l.role !== 'drill' || !l.ff) continue;
+    if (l.role !== 'drill' || !l.count) continue;
     const span = drillSpan(st, l);
-    for (const p of l.ff.pads) {
+    for (const p of padsOf(l)) {
       if (p.pol !== 'P') continue;
       let m;
       if ((m = /^r([\d.]+)$/.exec(p.sym.name))) holes.push({ x: p.x, y: p.y, d: parseFloat(m[1]) * p.sym.k, slot: null, span, layer: l.name });
@@ -998,7 +1010,7 @@ function holeList(st) {
         holes.push({ x: p.x, y: p.y, d: Math.min(w, h), slot: { w, h, angle: p.angle }, span, layer: l.name });
       } else warn('未対応の穴の形: ' + p.sym.name);
     }
-    for (const ln of l.ff.lines) {
+    for (const ln of linesOf(l)) {
       if (ln.pol !== 'P') continue;
       const m = /^r([\d.]+)$/.exec(ln.sym.name);
       if (!m) { warn('未対応の穴の形 (線): ' + ln.sym.name); continue; }
@@ -1041,14 +1053,14 @@ function buildBoard(st, opts = {}) {
   const stats = { components: 0, pads: 0, padsNoCopper: 0, vias: 0, holes: 0, polygons: 0, nets: 0 };
   const layerOf = name => st.layers.find(l => l.lname === name);
   const copperLayers = st.layers.filter(l => l.role === 'copper');
-  const topCu = copperLayers[0] && copperLayers[0].ff, botCu = copperLayers.length > 1 ? copperLayers[copperLayers.length - 1].ff : null;
-  const idx = { F: new PadIndex([topCu]), B: new PadIndex([botCu]) };
+  const topCu = copperLayers[0], botCu = copperLayers.length > 1 ? copperLayers[copperLayers.length - 1] : null;
+  const idx = { F: new PadIndex(topCu ? padsOf(topCu) : []), B: new PadIndex(botCu ? padsOf(botCu) : []) };
   const findCu = (x, y) => idx.F.find(x, y) || idx.B.find(x, y);
 
   /* targets */
   const byTarget = new Map();
   for (const l of st.layers) {
-    if (!l.ff || !l.target || l.role === 'drill') continue;
+    if (!l.count || !l.target || l.role === 'drill' || l.role === 'comp') continue;
     if (!byTarget.has(l.target)) byTarget.set(l.target, []);
     byTarget.get(l.target).push(l);
   }
@@ -1200,7 +1212,7 @@ function buildBoard(st, opts = {}) {
   /* graphics */
   const preview = new Map();
   for (const [t, ls] of byTarget) {
-    const g = ls.length === 1 ? layerGeometry(ls[0].ff) : union(ls.flatMap(l => layerGeometry(l.ff)));
+    const g = ls.length === 1 ? layerGeom(ls[0]) : union(ls.flatMap(l => layerGeom(l)));
     preview.set(t, g);
     for (const p of fracture(g)) {
       out.push(['\t(gr_poly', '\t\t(pts', ptsLines(p, (x, y) => [x, -y], '\t\t\t'), '\t\t)',
@@ -1223,7 +1235,7 @@ function buildBoard(st, opts = {}) {
 }
 
 return { loadJob, loadStep, buildBoard, fileSetFromArchive, findJobs, FileSet, graphicTargets, uncompressZ, parseTar,
-  layerGeometry, fracture, area, VCUT_LAYER, warnings: () => warnings, resetWarnings: () => { warnings = new Map(); }, SC };
+  layerGeometry, layerGeom, ffOf, fracture, area, VCUT_LAYER, warnings: () => warnings, resetWarnings: () => { warnings = new Map(); }, SC };
 })();
 if (typeof module !== 'undefined') module.exports = Odb;
 </script>
