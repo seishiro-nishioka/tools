@@ -40,6 +40,7 @@ header{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; padding:12p
 }
 .back-link:hover{border-color:var(--blue); color:var(--ink)}
 h1{margin:0; font-size:19px; font-weight:700; letter-spacing:.02em}
+h1 .tool-version{margin-left:8px; font-size:12px; font-weight:500; color:var(--sub); white-space:nowrap}
 header p{margin:0; color:var(--sub); font-size:12.5px}
 main{
   display:grid; grid-template-columns:360px minmax(0,1fr); gap:1px;
@@ -94,7 +95,7 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
 <body>
 <header>
   <a class="back-link" href="../">← 一覧</a>
-  <h1>ODB++ → KiCad 変換</h1>
+  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.10.3</span></h1>
   <p>ODB++ の基板データを KiCad で閲覧できる .kicad_pcb (KiCad 9/10 用) に変換します。ファイルはサーバーに送信されず、処理はすべてブラウザ内で完結します。</p>
 </header>
 <main>
