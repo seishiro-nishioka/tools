@@ -95,7 +95,7 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
 <body>
 <header>
   <a class="back-link" href="../">← 一覧</a>
-  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.10.3</span></h1>
+  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.10.4</span></h1>
   <p>ODB++ の基板データを KiCad で閲覧できる .kicad_pcb (KiCad 9/10 用) に変換します。ファイルはサーバーに送信されず、処理はすべてブラウザ内で完結します。</p>
 </header>
 <main>
@@ -117,6 +117,8 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
         <div class="stats" id="stats"></div>
         <div class="btn-row" style="margin-top:8px">
           <button type="button" class="primary" id="download">.kicad_pcb をダウンロード</button>
+        </div>
+        <div class="label" id="dlName" style="margin-top:4px; font-weight:400; word-break:break-all">
         </div>
       </div>
       <div id="layersBox" style="display:none">
@@ -1283,6 +1285,11 @@ async function openArchive(file) {
   } catch (err) { console.error(err); setStatus('エラー: ' + err.message, true); }
 }
 let baseName = 'board';
+// include the step name so a panel and a single board from the same job never share a file name
+function fileNameFor(step) {
+  const safe = v => String(v).replace(/[\\/:*?"<>|\s]+/g, '_');
+  return safe(baseName) + (step && step.toLowerCase() !== baseName.toLowerCase() ? '_' + safe(step) : '') + '.kicad_pcb';
+}
 async function openFileSet(fs, name) {
   try {
     const roots = Odb.findJobs(fs);
@@ -1349,6 +1356,7 @@ async function convert() {
     $('stats').innerHTML = '';
     for (const [k, v] of rows) { const a = document.createElement('span'); a.textContent = k; const b = document.createElement('b'); b.textContent = v; $('stats').append(a, b); }
     $('result').style.display = '';
+    $('dlName').textContent = '保存名: ' + fileNameFor(st.step);
     const w = $('warns'); w.innerHTML = '';
     for (const [m, n] of Odb.warnings()) { const li = document.createElement('li'); li.textContent = m + (n > 1 ? ` (${n} 件)` : ''); w.appendChild(li); }
     $('warnBox').style.display = Odb.warnings().size ? '' : 'none';
@@ -1360,7 +1368,7 @@ async function convert() {
 $('download').addEventListener('click', () => {
   if (!downloadUrl) return;
   const a = document.createElement('a');
-  a.href = downloadUrl; a.download = baseName + '.kicad_pcb';
+  a.href = downloadUrl; a.download = fileNameFor(st.step);
   document.body.appendChild(a); a.click(); a.remove();
 });
 
