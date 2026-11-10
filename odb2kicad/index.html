@@ -47,6 +47,8 @@ main{
   background:var(--line); flex:1; min-height:0;
 }
 @media (max-width: 860px){ main{grid-template-columns:1fr} }
+/* wide screens: the page fits the window and the left column scrolls on its own, so the preview keeps its size */
+@media (min-width: 861px){ body{height:100vh} main{min-height:0; overflow:hidden} main > .panel:first-child{overflow-y:auto} }
 .panel{background:var(--panel); min-width:0; display:flex; flex-direction:column}
 .pad{padding:12px; display:flex; flex-direction:column; gap:10px}
 .dropzone{
@@ -80,6 +82,10 @@ button:disabled{opacity:.4; cursor:not-allowed}
 .layer-table select{font:inherit; font-size:12px; max-width:120px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:4px}
 .layer-scroll{max-height:40vh; overflow:auto}
 .layer-hint{margin:2px 0 4px; font-size:11.5px; color:var(--sub)}
+#vcutBox{margin:2px 0 8px; padding:6px 8px; border:1px solid var(--line); border-radius:6px}
+label.check{display:flex; align-items:center; gap:6px; font-size:12.5px; flex-wrap:wrap}
+label.check input[type=number]{width:60px; font:inherit; font-size:12.5px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:4px; padding:1px 4px}
+.layer-table td.type .cand{display:block; color:var(--warn)}
 .layer-table td.eye{width:26px; padding:1px 2px}
 .eye-btn{display:flex; align-items:center; justify-content:center; width:24px; height:24px; padding:0; border:0; border-radius:4px; background:none; color:var(--ink); cursor:pointer}
 .eye-btn[aria-pressed="false"]{color:var(--sub)}
@@ -107,7 +113,7 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
 <body>
 <header>
   <a class="back-link" href="../">← 一覧</a>
-  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.10.7</span></h1>
+  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.10.8</span></h1>
   <p>ODB++ の基板データを KiCad で閲覧できる .kicad_pcb (KiCad 9/10 用) に変換します。ファイルはサーバーに送信されず、処理はすべてブラウザ内で完結します。</p>
 </header>
 <main>
@@ -137,6 +143,11 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
         <hr class="sep">
         <p class="label">層の割り当て (空の層は省略)</p>
         <p class="layer-hint">行にカーソルを乗せる / タップすると、その層をプレビューで強調します。目のアイコンはプレビューの表示だけを切り替え、変換に含めるかは「KiCad 層」で選びます。除外中の層は破線で表示します。</p>
+        <div id="vcutBox" style="display:none">
+          <label class="check"><input type="checkbox" id="vcutOn"> V カット面付けとして外形を作る</label>
+          <p class="layer-hint" id="vcutHint"></p>
+          <label class="check" id="vcutInsetRow">V カット線の端: パネル外形から <input type="number" id="vcutInset" min="0" step="0.5" value="1"> mm 内側</label>
+        </div>
         <div class="layer-scroll"><table class="layer-table"><thead><tr><th><span class="sr">表示</span></th><th>ODB++ 層</th><th>種類</th><th>KiCad 層</th></tr></thead><tbody id="layerRows"></tbody></table></div>
         <div class="btn-row" style="margin-top:6px"><button type="button" class="ghost" id="reconvert" disabled>割り当てを反映して再変換</button></div>
         <p class="layer-hint" id="staleNote" style="display:none">割り当てを変えました。結果の数とファイルは再変換 (またはダウンロード) のときに更新します。</p>
@@ -387,6 +398,8 @@ function unitsOf(lines, def) {
   }
   return def;
 }
+// r0 / s0 strokes are drawing lines (outlines, guides), not material
+const zeroWidth = sym => /^[rs]0*(\.0*)?$/.test(sym.name);
 /* lib: { get(name) -> paths | null } for user symbols */
 function parseFeatures(text, lib, label) {
   const lines = text.split(/\r?\n/);
@@ -427,12 +440,12 @@ function parseFeatures(text, lib, label) {
       const sym = syms[t[5]], pol = t[6];
       if (!sym) { warn('シンボル番号が不明な線 (' + label + ')'); continue; }
       lines_.push({ x1, y1, x2, y2, sym, pol });
-      items.push({ pol, paths: strokePath([[x1, y1], [x2, y2]], strokeOf(sym)) });
+      items.push({ pol, thin: zeroWidth(sym), paths: strokePath([[x1, y1], [x2, y2]], strokeOf(sym)) });
     } else if (k === 'A') {
       const [xs, ys, xe, ye, xc, yc] = t.slice(1, 7).map(v => parseFloat(v) * ks);
       const sym = syms[t[7]], pol = t[8], cw = t[10] === 'Y';
       if (!sym) { warn('シンボル番号が不明な弧 (' + label + ')'); continue; }
-      items.push({ pol, paths: strokePath(arcPoints(xs, ys, xe, ye, xc, yc, cw), strokeOf(sym)) });
+      items.push({ pol, thin: zeroWidth(sym), paths: strokePath(arcPoints(xs, ys, xe, ye, xc, yc, cw), strokeOf(sym)) });
     } else if (k === 'P') {
       const x = parseFloat(t[1]) * ks, y = parseFloat(t[2]) * ks;
       let j = 3, sym;
@@ -883,7 +896,7 @@ async function ownStep(job, step, progress) {
   }
   const profText = await fs.text(sp + 'profile');
   const profile = profText ? layerGeometry(parseFeatures(profText, lib, 'profile')) : [];
-  return { step, layers, profile, nets, hasEda: !!edaText, datum: hdr.datum, repeats: hdr.repeats, instances: 0 };
+  return { step, layers, profile: profile.slice(), ownProfile: profile, boards: [], nets, hasEda: !!edaText, datum: hdr.datum, repeats: hdr.repeats, instances: 0 };
 }
 
 /* Step-repeat: child coordinates -> parent. Mirror x first, then rotate clockwise, about the child datum. */
@@ -932,6 +945,7 @@ function mergeInstance(out, child, T, sfx, netOffset) {
     ol.count = (ol.count || 0) + cl.count;
   });
   out.profile.push(...T.paths(child.profile));
+  for (const b of child.boards) out.boards.push(T.paths(b));
 }
 async function flatStep(job, step, progress, stack, cache) {
   if (cache.has(step)) return cache.get(step);
@@ -954,6 +968,7 @@ async function flatStep(job, step, progress, stack, cache) {
       out.instances += child.instances || 1; // count leaf boards
     }
   }
+  if (!inst && out.profile.length) out.boards = [out.profile.slice()]; // a leaf board
   cache.set(step, out);
   return out;
 }
@@ -964,7 +979,86 @@ async function loadStep(job, step, progress) {
   // auxiliary layers (would go to User.n) are excluded by default; the user can assign them in the table
   if (!flat.profile.length) warn('外形 (profile) がない');
   if (!flat.nets.length) warn('ネットの情報 (eda/data) がないため、ネット名なしで変換');
-  return { step, layers, profile: flat.profile, nets: flat.nets, copperCount: job.cls.copperCount, instances: flat.instances };
+  const vcutAuto = isVcutPanel(flat.boards);
+  return { step, layers, profile: flat.profile, ownProfile: flat.ownProfile, boards: flat.boards, nets: flat.nets, copperCount: job.cls.copperCount, instances: flat.instances,
+    vcutAuto, vcut: vcutAuto, vcutInset: 1 };
+}
+
+/* ---------------- mechanical: board outline, cutouts, V-cut lines */
+const EPS = 0.005; // mm
+// Geometry of a layer used as cutouts (Edge.Cuts): zero-width drawing strokes are left out.
+function cutoutGeom(l) {
+  if (l.x && l.x.cut) return l.x.cut;
+  const ff = ffOf(l);
+  const items = (l.x ? l.x.extra : []).map(e => ({ pol: 'P', paths: e.T.paths(cutoutGeom(e.cl)) }));
+  if (ff) {
+    if (ff.items.some(it => it.thin)) warn('切り抜きに割り当てた層の幅 0 の線 (作図線) は切り抜きに使わない: ' + l.name);
+    items.push(...ff.items.filter(it => !it.thin));
+  }
+  const g = itemsGeometry(items);
+  if (l.x) l.x.cut = g;
+  return g;
+}
+// Line records of a layer in step coordinates (own lines plus step-repeat copies).
+function layerSegments(l) {
+  const ff = ffOf(l), out = [];
+  for (const e of (l.x ? l.x.extra : []))
+    for (const s of layerSegments(e.cl)) { const a = e.T.pt(s[0], s[1]), b = e.T.pt(s[2], s[3]); out.push([a[0], a[1], b[0], b[1]]); }
+  if (ff) for (const ln of ff.lines) if (ln.pol !== 'N') out.push([ln.x1, ln.y1, ln.x2, ln.y2]);
+  return out;
+}
+const pathsBox = ps => { const b = bbox(ps); return isFinite(b[0]) ? b : null; };
+// A V-cut panel: two or more boards whose bounding boxes touch edge to edge (without overlapping).
+function isVcutPanel(boards) {
+  const bx = boards.map(pathsBox).filter(Boolean);
+  if (bx.length < 2) return false;
+  const span = (a0, a1, b0, b1) => Math.min(a1, b1) - Math.max(a0, b0);
+  let touch = false;
+  for (let i = 0; i < bx.length; i++) for (let j = i + 1; j < bx.length; j++) {
+    const a = bx[i], b = bx[j];
+    if (span(a[0], a[2], b[0], b[2]) > EPS && span(a[1], a[3], b[1], b[3]) > EPS) return false; // overlap
+    if ((Math.abs(a[2] - b[0]) < EPS || Math.abs(b[2] - a[0]) < EPS) && span(a[1], a[3], b[1], b[3]) > EPS) touch = true;
+    if ((Math.abs(a[3] - b[1]) < EPS || Math.abs(b[3] - a[1]) < EPS) && span(a[0], a[2], b[0], b[2]) > EPS) touch = true;
+  }
+  return touch;
+}
+const isVcutLayer = l => l.role === 'user' && /v-?cut/i.test(l.name);
+const rectPath = (x0, y0, x1, y1) => [toI(x0, y0), toI(x1, y0), toI(x1, y1), toI(x0, y1)];
+/* Edge.Cuts loops and User.1 V-cut lines.
+   V-cut panel: material = panel profile - (each board's bounding box - the boards) - cutouts,
+   so edges where boards touch each other disappear and the small gaps at chamfers / notches stay closed. */
+function mechanical(st, quiet) {
+  const note = quiet ? () => {} : warn;
+  const cutLayers = st.layers.filter(l => l.count && l.role === 'user' && l.target === 'Edge.Cuts');
+  const cuts = cutLayers.length ? union(cutLayers.flatMap(l => cutoutGeom(l))) : [];
+  const res = { edge: [], fill: [], vcut: [], vcutFrom: null };
+  if (!st.vcut || st.boards.length < 2) {
+    res.edge = st.profile.concat(cuts);
+    if (!quiet) return res;
+    res.fill = diff(union(st.profile), cuts);
+    return res;
+  }
+  const panel = st.ownProfile.length ? union(st.ownProfile) : union(st.profile);
+  const boards = union(st.boards.flat());
+  const boxes = st.boards.map(pathsBox).filter(Boolean);
+  const cells = union(boxes.map(b => rectPath(b[0], b[1], b[2], b[3])));
+  const gaps = clip(diff(cells, boards), panel, C.ClipType.ctIntersection);
+  res.edge = res.fill = diff(panel, gaps.concat(cuts));
+  // V-cut lines: from a v-cut layer of the ODB++ if it has lines, otherwise along the board boxes across the panel
+  const given = st.layers.filter(l => l.count && isVcutLayer(l)).flatMap(layerSegments);
+  if (given.length) { res.vcut = given; res.vcutFrom = 'layer'; return res; }
+  const pb = pathsBox(panel) || [0, 0, 0, 0], d = Math.max(0, +st.vcutInset || 0);
+  const uniq = vs => { const o = []; for (const v of vs.sort((a, b) => a - b)) if (!o.length || v - o[o.length - 1] > EPS) o.push(v); return o; };
+  for (const x of uniq(boxes.flatMap(b => [b[0], b[2]]))) {
+    res.vcut.push([x, pb[3] - d, x, pb[1] + d]);
+    if (boxes.some(b => b[0] + EPS < x && x < b[2] - EPS)) note('V カット線が基板の中を通る: x = ' + +x.toFixed(3));
+  }
+  for (const y of uniq(boxes.flatMap(b => [b[1], b[3]]))) {
+    res.vcut.push([pb[2] - d, y, pb[0] + d, y]);
+    if (boxes.some(b => b[1] + EPS < y && y < b[3] - EPS)) note('V カット線が基板の中を通る: y = ' + +y.toFixed(3));
+  }
+  res.vcutFrom = 'boards';
+  return res;
 }
 
 function parseComponents(text) {
@@ -1074,7 +1168,7 @@ function buildBoard(st, opts = {}) {
   /* targets */
   const byTarget = new Map();
   for (const l of st.layers) {
-    if (!l.count || !l.target || l.role === 'drill' || l.role === 'comp') continue;
+    if (!l.count || !l.target || l.target === 'Edge.Cuts' || l.role === 'drill' || l.role === 'comp') continue;
     if (!byTarget.has(l.target)) byTarget.set(l.target, []);
     byTarget.get(l.target).push(l);
   }
@@ -1234,8 +1328,14 @@ function buildBoard(st, opts = {}) {
       stats.polygons++;
     }
   }
-  /* board outline */
-  for (const p of st.profile) {
+  /* board outline (and cutouts), V-cut lines */
+  const mech = mechanical(st);
+  for (const v of mech.vcut) {
+    out.push(['\t(gr_line', `\t\t(start ${f6(v[0])} ${f6(-v[1])})`, `\t\t(end ${f6(v[2])} ${f6(-v[3])})`,
+      '\t\t(stroke', '\t\t\t(width 0.1)', '\t\t\t(type solid)', '\t\t)', `\t\t(layer ${q(VCUT_LAYER)})`, `\t\t(uuid ${q(uuid())})`, '\t)'].join('\n'));
+  }
+  stats.vcuts = mech.vcut.length;
+  for (const p of mech.edge) {
     for (let i = 0; i < p.length; i++) {
       const a = p[i], b = p[(i + 1) % p.length];
       out.push(['\t(gr_line', `\t\t(start ${f6(a.X / SC)} ${f6(-a.Y / SC)})`, `\t\t(end ${f6(b.X / SC)} ${f6(-b.Y / SC)})`,
@@ -1248,7 +1348,7 @@ function buildBoard(st, opts = {}) {
   return { text: out.join('\n'), stats, preview, holes, padCheck };
 }
 
-return { loadJob, loadStep, buildBoard, fileSetFromArchive, findJobs, FileSet, graphicTargets, uncompressZ, parseTar,
+return { loadJob, loadStep, buildBoard, mechanical, cutoutGeom, fileSetFromArchive, findJobs, FileSet, graphicTargets, uncompressZ, parseTar,
   layerGeometry, layerGeom, ffOf, fracture, area, VCUT_LAYER, warnings: () => warnings, resetWarnings: () => { warnings = new Map(); }, SC };
 })();
 if (typeof module !== 'undefined') module.exports = Odb;
@@ -1342,7 +1442,9 @@ async function openStep(step) {
   st = await Odb.loadStep(job, step, progress);
   pv = new Map(); queue = []; hover = null; pinned = null; dirty = false;
   for (const l of st.layers) l.show = l.role === 'copper' || l.role === 'drill' || !!l.target;
+  mech = null;
   renderLayerTable();
+  renderVcut();
   await convert();
   // layers shown by default were just parsed by the conversion, so this is quick
   for (const l of st.layers) if (l.show && l.count && l.role !== 'comp') pv.set(l, makePv(l));
@@ -1355,10 +1457,10 @@ async function openStep(step) {
 const KICAD_COLORS = {
   'F.Cu': '#C83434', 'B.Cu': '#4D7FC4', 'F.Mask': '#D864FF', 'B.Mask': '#02FFEE', 'F.Paste': '#B4A09A', 'B.Paste': '#00C2C2',
   'F.SilkS': '#F2EDA1', 'B.SilkS': '#E8B2A7', 'F.Adhes': '#A400A4', 'B.Adhes': '#3333C8', 'Dwgs.User': '#C2C2C2', 'Cmts.User': '#5994DC',
-  'Eco1.User': '#B4DBD2', 'Eco2.User': '#D8C852', 'Margin': '#FF26E2', 'F.CrtYd': '#FF26E2', 'B.CrtYd': '#26E9FF', 'F.Fab': '#AFAFAF', 'B.Fab': '#585D84',
+  'Edge.Cuts': '#D0D2CD', 'Eco1.User': '#B4DBD2', 'Eco2.User': '#D8C852', 'Margin': '#FF26E2', 'F.CrtYd': '#FF26E2', 'B.CrtYd': '#26E9FF', 'F.Fab': '#AFAFAF', 'B.Fab': '#585D84',
 };
 const INNER_COLORS = ['#7FC87F', '#CE7D2C', '#4FCBCB', '#DB628B', '#A7A5C6', '#28CCD9', '#E8E86C', '#C26CE8'];
-const USER_COLORS = ['#C2C2C2', '#59D8C8', '#E08A5C', '#8AB4F8', '#D6E06A', '#F28AC8', '#7FD67F', '#C9A2F2', '#F0C060'];
+const USER_COLORS = ['#E8B84A', '#59D8C8', '#E08A5C', '#8AB4F8', '#D6E06A', '#F28AC8', '#7FD67F', '#C9A2F2', '#F0C060'];
 const EXCLUDED_COLOR = '#9FB2C4', DRILL_COLOR = '#E3B72E', EDGE_COLOR = '#D0D2CD';
 function colorOf(l) {
   if (l.role === 'drill') return DRILL_COLOR;
@@ -1408,13 +1510,14 @@ function renderLayerTable() {
     const sw = document.createElement('span'); sw.className = 'swatch';
     td1.append(sw, document.createTextNode(l.name));
     const td2 = document.createElement('td'); td2.className = 'type'; td2.textContent = l.type + (l.context === 'MISC' ? ' (MISC)' : '');
+    if (l.role === 'user' && CUTOUT_HINT.test(l.name)) { const c = document.createElement('span'); c.className = 'cand'; c.textContent = '切り抜きの候補'; td2.appendChild(c); }
     const td3 = document.createElement('td');
     let eye = null;
     if (l.role !== 'comp') {
       eye = document.createElement('button');
       eye.type = 'button'; eye.className = 'eye-btn';
       eye.title = eye.ariaLabel = 'プレビューに表示: ' + l.name;
-      eye.addEventListener('click', () => { l.show = !l.show; if (l.show) want(l); updateRow(l); draw(); });
+      eye.addEventListener('click', e => { e.stopPropagation(); l.show = !l.show; if (l.show) want(l); updateRow(l); draw(); });
       td0.appendChild(eye);
       tr.classList.add('previewable');
       tr.tabIndex = 0;
@@ -1438,16 +1541,16 @@ function renderLayerTable() {
       const s = document.createElement('select');
       s.ariaLabel = 'KiCad 層: ' + l.name;
       const none = document.createElement('option'); none.value = ''; none.textContent = '(除外)'; s.appendChild(none);
+      const cut = document.createElement('option'); cut.value = 'Edge.Cuts'; cut.textContent = 'Edge.Cuts (切り抜き)'; s.appendChild(cut);
       for (const t of targets) { const o = document.createElement('option'); o.value = t; o.textContent = t === Odb.VCUT_LAYER ? t + ' (Vカット用)' : t; s.appendChild(o); }
       s.value = l.target || '';
       s.addEventListener('change', () => {
         const was = l.target;
         l.target = s.value || null;
         if (l.target && !was && !l.show) { l.show = true; want(l); } // newly included layers become visible
+        if ((l.target === 'Edge.Cuts') !== (was === 'Edge.Cuts')) { mech = null; pv.delete(l); if (needed(l)) want(l); }
         updateRow(l); draw();
-        dirty = true;
-        $('reconvert').disabled = false;
-        $('staleNote').style.display = '';
+        markDirty();
       });
       td3.appendChild(s);
     }
@@ -1459,6 +1562,24 @@ function renderLayerTable() {
   $('layersBox').style.display = '';
 }
 $('reconvert').addEventListener('click', async () => { await convert(); });
+const CUTOUT_HINT = /slit|cutout|milling|rout/i;
+function markDirty() {
+  dirty = true;
+  $('reconvert').disabled = false;
+  $('staleNote').style.display = '';
+}
+function renderVcut() {
+  const many = st.boards.length >= 2;
+  $('vcutBox').style.display = many ? '' : 'none';
+  if (!many) return;
+  $('vcutOn').checked = st.vcut;
+  $('vcutInset').value = st.vcutInset;
+  $('vcutInsetRow').style.display = st.vcut ? '' : 'none';
+  $('vcutHint').textContent = (st.vcutAuto ? `基板 ${st.boards.length} 枚が接して並んでいるため、V カット面付けと判定しました。` : `基板 ${st.boards.length} 枚が接していないため、V カット面付けではないと判定しました。`) +
+    (st.vcut ? '基板同士・フレームと接する辺を外形から除き、角や切り欠きの隙間だけを閉じた輪郭で残します。V カット線は User.1 に描きます。' : '各基板とパネルの外形をそのまま Edge.Cuts に入れます。');
+}
+$('vcutOn').addEventListener('change', e => { st.vcut = e.target.checked; mech = null; renderVcut(); draw(); markDirty(); });
+$('vcutInset').addEventListener('input', e => { const v = parseFloat(e.target.value); if (!(v >= 0)) return; st.vcutInset = v; mech = null; draw(); markDirty(); });
 
 /* ---------- convert */
 async function convert() {
@@ -1471,7 +1592,7 @@ async function convert() {
     if (downloadUrl) URL.revokeObjectURL(downloadUrl);
     downloadUrl = URL.createObjectURL(new Blob([result.text], { type: 'text/plain' }));
     const s = result.stats;
-    const rows = [...(st.instances ? [['面付け', st.instances + ' 枚']] : []), ['部品', s.components], ['パッド', s.pads], ['ネット', s.nets], ['ビア', s.vias], ['その他の穴', s.holes], ['塗りポリゴン', s.polygons],
+    const rows = [...(st.instances ? [['面付け', st.instances + ' 枚']] : []), ['部品', s.components], ['パッド', s.pads], ['ネット', s.nets], ['ビア', s.vias], ['その他の穴', s.holes], ...(s.vcuts ? [['V カット線', s.vcuts + ' 本 (User.1)']] : []), ['塗りポリゴン', s.polygons],
       ['ファイルサイズ', (result.text.length / 1048576).toFixed(1) + ' MB']];
     $('stats').innerHTML = '';
     for (const [k, v] of rows) { const a = document.createElement('span'); a.textContent = k; const b = document.createElement('b'); b.textContent = v; $('stats').append(a, b); }
@@ -1507,7 +1628,8 @@ function toPath2D(polys) {
   return p;
 }
 function makePv(l) {
-  const g = Odb.layerGeom(l);
+  // a layer used as cutouts shows what will be cut, not its drawing lines
+  const g = l.target === 'Edge.Cuts' ? Odb.cutoutGeom(l) : Odb.layerGeom(l);
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const r of g) for (const p of r) { x0 = Math.min(x0, p.X); x1 = Math.max(x1, p.X); y0 = Math.min(y0, p.Y); y1 = Math.max(y1, p.Y); }
   const S = Odb.SC;
@@ -1581,8 +1703,8 @@ function drawNow() {
   // screen = center + s * (mirror x, flip y)
   ctx.setTransform(dpr * cam.s * mx, 0, 0, -dpr * cam.s, dpr * (r.width / 2 - mx * cam.s * cam.x), dpr * (r.height / 2 + cam.s * cam.y));
   const px = 1 / cam.s; // one CSS pixel in board units
-  const edge = toPath2DCached();
-  ctx.globalAlpha = 1; ctx.fillStyle = '#001023'; ctx.fill(edge, 'nonzero');
+  const m = mechPaths();
+  ctx.globalAlpha = 1; ctx.fillStyle = '#001023'; ctx.fill(m.fill, 'nonzero');
   const focus = focusOf();
   const list = st.layers.filter(l => l.count && l.role !== 'comp' && l.role !== 'drill' && l.show && l !== focus);
   list.sort((a, b) => depth(a) - depth(b) || stackRank(a.target || '') - stackRank(b.target || ''));
@@ -1615,12 +1737,19 @@ function drawNow() {
     } else paint(focus, Math.max(baseAlpha(focus), 0.75), true);
   }
   ctx.globalAlpha = 1;
-  ctx.lineWidth = px; ctx.strokeStyle = EDGE_COLOR; ctx.stroke(edge);
+  ctx.lineWidth = px; ctx.strokeStyle = EDGE_COLOR; ctx.stroke(m.edge);
+  ctx.lineWidth = 1.5 * px; ctx.strokeStyle = colorOf({ target: Odb.VCUT_LAYER }); ctx.setLineDash([8 * px, 4 * px, 2 * px, 4 * px]); ctx.stroke(m.vcut); ctx.setLineDash([]);
 }
-let edgeCache = null;
-function toPath2DCached() {
-  if (!edgeCache || edgeCache.st !== st) edgeCache = { st, path: toPath2D(st.profile) };
-  return edgeCache.path;
+// Edge.Cuts outline, board fill and V-cut lines as the conversion would make them (rebuilt when settings change)
+let mech = null;
+function mechPaths() {
+  if (mech) return mech;
+  let r;
+  try { r = Odb.mechanical(st, true); } catch (err) { console.error(err); r = { edge: st.profile, fill: st.profile, vcut: [] }; }
+  const vcut = new Path2D();
+  for (const v of r.vcut) { vcut.moveTo(v[0], v[1]); vcut.lineTo(v[2], v[3]); }
+  mech = { edge: toPath2D(r.edge), fill: toPath2D(r.fill), vcut };
+  return mech;
 }
 new ResizeObserver(() => draw()).observe(cv);
 $('viewTop').addEventListener('click', () => { view = 'F'; $('viewTop').setAttribute('aria-pressed', 'true'); $('viewBot').setAttribute('aria-pressed', 'false'); draw(); });
