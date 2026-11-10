@@ -79,6 +79,18 @@ button:disabled{opacity:.4; cursor:not-allowed}
 .layer-table td.type{color:var(--sub); font-size:11px}
 .layer-table select{font:inherit; font-size:12px; max-width:120px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:4px}
 .layer-scroll{max-height:40vh; overflow:auto}
+.layer-hint{margin:2px 0 4px; font-size:11.5px; color:var(--sub)}
+.layer-table td.eye{width:26px; padding:1px 2px}
+.eye-btn{display:flex; align-items:center; justify-content:center; width:24px; height:24px; padding:0; border:0; border-radius:4px; background:none; color:var(--ink); cursor:pointer}
+.eye-btn[aria-pressed="false"]{color:var(--sub)}
+.eye-btn:hover{background:var(--bg)}
+.swatch{display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px; border:1px solid rgba(0,0,0,.25)}
+.swatch.none{visibility:hidden}
+.layer-table tr.previewable{cursor:pointer}
+.layer-table tr.previewable:hover,.layer-table tr.previewable:focus-visible{background:var(--bg); outline:none}
+.layer-table tr.pinned{background:var(--bg); box-shadow:inset 3px 0 0 var(--blue)}
+.layer-table tr.excluded td.name{color:var(--sub)}
+.layer-table tr.excluded .swatch{background:none !important; border:1px dashed var(--sub)}
 ul.warns{margin:0; padding-left:18px; font-size:12px; color:var(--warn)}
 select.step{font:inherit; font-size:12.5px}
 .viewer{display:flex; flex-direction:column; min-height:60vh; height:100%}
@@ -95,7 +107,7 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
 <body>
 <header>
   <a class="back-link" href="../">← 一覧</a>
-  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.10.6</span></h1>
+  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.10.7</span></h1>
   <p>ODB++ の基板データを KiCad で閲覧できる .kicad_pcb (KiCad 9/10 用) に変換します。ファイルはサーバーに送信されず、処理はすべてブラウザ内で完結します。</p>
 </header>
 <main>
@@ -124,8 +136,10 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
       <div id="layersBox" style="display:none">
         <hr class="sep">
         <p class="label">層の割り当て (空の層は省略)</p>
-        <div class="layer-scroll"><table class="layer-table"><thead><tr><th>ODB++ 層</th><th>種類</th><th>KiCad 層</th></tr></thead><tbody id="layerRows"></tbody></table></div>
+        <p class="layer-hint">行にカーソルを乗せる / タップすると、その層をプレビューで強調します。目のアイコンはプレビューの表示だけを切り替え、変換に含めるかは「KiCad 層」で選びます。除外中の層は破線で表示します。</p>
+        <div class="layer-scroll"><table class="layer-table"><thead><tr><th><span class="sr">表示</span></th><th>ODB++ 層</th><th>種類</th><th>KiCad 層</th></tr></thead><tbody id="layerRows"></tbody></table></div>
         <div class="btn-row" style="margin-top:6px"><button type="button" class="ghost" id="reconvert" disabled>割り当てを反映して再変換</button></div>
+        <p class="layer-hint" id="staleNote" style="display:none">割り当てを変えました。結果の数とファイルは再変換 (またはダウンロード) のときに更新します。</p>
       </div>
       <div id="warnBox" style="display:none">
         <hr class="sep">
@@ -1326,44 +1340,134 @@ $('stepSel').addEventListener('change', e => openStep(e.target.value).catch(err 
 async function openStep(step) {
   Odb.resetWarnings();
   st = await Odb.loadStep(job, step, progress);
+  pv = new Map(); queue = []; hover = null; pinned = null; dirty = false;
+  for (const l of st.layers) l.show = l.role === 'copper' || l.role === 'drill' || !!l.target;
   renderLayerTable();
   await convert();
+  // layers shown by default were just parsed by the conversion, so this is quick
+  for (const l of st.layers) if (l.show && l.count && l.role !== 'comp') pv.set(l, makePv(l));
+  computeBounds();
+  $('empty').style.display = 'none';
+  fit();
 }
 
+/* ---------- layer colors (KiCad default theme) */
+const KICAD_COLORS = {
+  'F.Cu': '#C83434', 'B.Cu': '#4D7FC4', 'F.Mask': '#D864FF', 'B.Mask': '#02FFEE', 'F.Paste': '#B4A09A', 'B.Paste': '#00C2C2',
+  'F.SilkS': '#F2EDA1', 'B.SilkS': '#E8B2A7', 'F.Adhes': '#A400A4', 'B.Adhes': '#3333C8', 'Dwgs.User': '#C2C2C2', 'Cmts.User': '#5994DC',
+  'Eco1.User': '#B4DBD2', 'Eco2.User': '#D8C852', 'Margin': '#FF26E2', 'F.CrtYd': '#FF26E2', 'B.CrtYd': '#26E9FF', 'F.Fab': '#AFAFAF', 'B.Fab': '#585D84',
+};
+const INNER_COLORS = ['#7FC87F', '#CE7D2C', '#4FCBCB', '#DB628B', '#A7A5C6', '#28CCD9', '#E8E86C', '#C26CE8'];
+const USER_COLORS = ['#C2C2C2', '#59D8C8', '#E08A5C', '#8AB4F8', '#D6E06A', '#F28AC8', '#7FD67F', '#C9A2F2', '#F0C060'];
+const EXCLUDED_COLOR = '#9FB2C4', DRILL_COLOR = '#E3B72E', EDGE_COLOR = '#D0D2CD';
+function colorOf(l) {
+  if (l.role === 'drill') return DRILL_COLOR;
+  const t = l.target;
+  if (!t) return EXCLUDED_COLOR;
+  if (KICAD_COLORS[t]) return KICAD_COLORS[t];
+  let m = /^In(\d+)\.Cu$/.exec(t);
+  if (m) return INNER_COLORS[(m[1] - 1) % INNER_COLORS.length];
+  m = /^User\.(\d+)$/.exec(t);
+  if (m) return USER_COLORS[(m[1] - 1) % USER_COLORS.length];
+  return '#C2C2C2';
+}
+const excluded = l => l.role === 'user' && !l.target;
+
 /* ---------- layer table */
+const rowOf = new Map();
+const EYE_ON = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
+const EYE_OFF = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="1.8" opacity=".55"/><path d="M4 20L20 4" stroke="currentColor" stroke-width="1.8"/></svg>';
+function updateRow(l) {
+  const r = rowOf.get(l);
+  if (!r) return;
+  r.tr.classList.toggle('excluded', excluded(l));
+  r.tr.classList.toggle('pinned', l === pinned);
+  r.sw.style.background = colorOf(l);
+  if (r.eye) {
+    r.eye.innerHTML = l.show ? EYE_ON : EYE_OFF;
+    r.eye.setAttribute('aria-pressed', l.show ? 'true' : 'false');
+  }
+}
+let hoverTimer = 0;
+function setHover(l) {
+  clearTimeout(hoverTimer);
+  if (!l) { if (hover) { hover = null; draw(); } return; }
+  // wait a moment so sweeping the pointer over many rows does not parse every layer
+  hoverTimer = setTimeout(() => { hover = l; want(l); draw(); }, pv.has(l) ? 0 : 150);
+}
 function renderLayerTable() {
   const tb = $('layerRows');
   tb.innerHTML = '';
+  rowOf.clear();
   const targets = Odb.graphicTargets(st.copperCount);
   for (const l of st.layers) {
     if (!l.count) continue;
     const tr = document.createElement('tr');
-    const td1 = document.createElement('td'); td1.className = 'name'; td1.textContent = l.name;
+    const td0 = document.createElement('td'); td0.className = 'eye';
+    const td1 = document.createElement('td'); td1.className = 'name';
+    const sw = document.createElement('span'); sw.className = 'swatch';
+    td1.append(sw, document.createTextNode(l.name));
     const td2 = document.createElement('td'); td2.className = 'type'; td2.textContent = l.type + (l.context === 'MISC' ? ' (MISC)' : '');
     const td3 = document.createElement('td');
+    let eye = null;
+    if (l.role !== 'comp') {
+      eye = document.createElement('button');
+      eye.type = 'button'; eye.className = 'eye-btn';
+      eye.title = eye.ariaLabel = 'プレビューに表示: ' + l.name;
+      eye.addEventListener('click', () => { l.show = !l.show; if (l.show) want(l); updateRow(l); draw(); });
+      td0.appendChild(eye);
+      tr.classList.add('previewable');
+      tr.tabIndex = 0;
+      tr.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') setHover(l); });
+      tr.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') setHover(null); });
+      // tap / click / Enter pins the highlight (touch has no hover)
+      const pin = () => {
+        const prev = pinned;
+        pinned = pinned === l ? null : l;
+        if (pinned) want(pinned);
+        if (prev) updateRow(prev);
+        updateRow(l); draw();
+      };
+      tr.addEventListener('click', e => { if (!e.target.closest('button, select')) pin(); });
+      tr.addEventListener('keydown', e => { if (e.target === tr && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pin(); } });
+    } else sw.classList.add('none');
     if (l.role === 'copper') td3.textContent = l.target;
     else if (l.role === 'drill') td3.textContent = '穴 (パッド / ビア)';
     else if (l.role === 'comp') td3.textContent = `部品 ${l.count} 個 (${l.side === 'B' ? '裏' : '表'})`;
     else {
       const s = document.createElement('select');
+      s.ariaLabel = 'KiCad 層: ' + l.name;
       const none = document.createElement('option'); none.value = ''; none.textContent = '(除外)'; s.appendChild(none);
       for (const t of targets) { const o = document.createElement('option'); o.value = t; o.textContent = t === Odb.VCUT_LAYER ? t + ' (Vカット用)' : t; s.appendChild(o); }
       s.value = l.target || '';
-      s.addEventListener('change', () => { l.target = s.value || null; $('reconvert').disabled = false; });
+      s.addEventListener('change', () => {
+        const was = l.target;
+        l.target = s.value || null;
+        if (l.target && !was && !l.show) { l.show = true; want(l); } // newly included layers become visible
+        updateRow(l); draw();
+        dirty = true;
+        $('reconvert').disabled = false;
+        $('staleNote').style.display = '';
+      });
       td3.appendChild(s);
     }
-    tr.append(td1, td2, td3);
+    tr.append(td0, td1, td2, td3);
     tb.appendChild(tr);
+    rowOf.set(l, { tr, sw, eye });
+    updateRow(l);
   }
   $('layersBox').style.display = '';
 }
-$('reconvert').addEventListener('click', async () => { $('reconvert').disabled = true; await convert(); });
+$('reconvert').addEventListener('click', async () => { await convert(); });
 
 /* ---------- convert */
 async function convert() {
   try {
+    $('reconvert').disabled = true;
     await progress('変換中 (多角形の合成と分割)…');
     result = Odb.buildBoard(st);
+    dirty = false;
+    $('staleNote').style.display = 'none';
     if (downloadUrl) URL.revokeObjectURL(downloadUrl);
     downloadUrl = URL.createObjectURL(new Blob([result.text], { type: 'text/plain' }));
     const s = result.stats;
@@ -1376,21 +1480,22 @@ async function convert() {
     const w = $('warns'); w.innerHTML = '';
     for (const [m, n] of Odb.warnings()) { const li = document.createElement('li'); li.textContent = m + (n > 1 ? ` (${n} 件)` : ''); w.appendChild(li); }
     $('warnBox').style.display = Odb.warnings().size ? '' : 'none';
-    buildPreview();
-    fit();
     setStatus('変換しました。「.kicad_pcb をダウンロード」で保存できます。');
   } catch (err) { console.error(err); setStatus('エラー: ' + err.message, true); }
 }
-$('download').addEventListener('click', () => {
-  if (!downloadUrl) return;
+$('download').addEventListener('click', async () => {
+  if (dirty) await convert(); // assignments changed since the last conversion
+  if (!downloadUrl || dirty) return;
   const a = document.createElement('a');
   a.href = downloadUrl; a.download = fileNameFor(st.step);
   document.body.appendChild(a); a.click(); a.remove();
 });
 
-/* ---------- preview */
+/* ---------- preview: one Path2D per ODB++ layer, parsed only when it is shown or highlighted */
 const cv = $('view'), ctx = cv.getContext('2d');
-let paths = null, bounds = null, cam = { s: 1, x: 0, y: 0 };
+let pv = new Map(), queue = [], busy = false, hover = null, pinned = null, dirty = false;
+let bounds = null, cam = { s: 1, x: 0, y: 0 };
+const focusOf = () => hover || pinned;
 function toPath2D(polys) {
   const p = new Path2D(), S = Odb.SC;
   for (const r of polys) {
@@ -1401,58 +1506,121 @@ function toPath2D(polys) {
   }
   return p;
 }
-function buildPreview() {
-  const pv = result.preview;
-  const get = n => pv.has(n) ? toPath2D(pv.get(n)) : null;
-  const holes = new Path2D();
-  for (const h of result.holes) {
-    if (h.slot) {
-      const a = -h.slot.angle * Math.PI / 180, L = Math.max(0, Math.max(h.slot.w, h.slot.h) - h.d) / 2;
-      const along = h.slot.w >= h.slot.h ? a : a + Math.PI / 2;
-      const dx = Math.cos(along) * L, dy = Math.sin(along) * L;
-      holes.moveTo(h.x - dx + h.d / 2, h.y - dy);
-      holes.arc(h.x - dx, h.y - dy, h.d / 2, 0, Math.PI * 2);
-      holes.moveTo(h.x + dx + h.d / 2, h.y + dy);
-      holes.arc(h.x + dx, h.y + dy, h.d / 2, 0, Math.PI * 2);
-      const nx = -Math.sin(along) * h.d / 2, ny = Math.cos(along) * h.d / 2;
-      holes.moveTo(h.x - dx + nx, h.y - dy + ny); holes.lineTo(h.x + dx + nx, h.y + dy + ny);
-      holes.lineTo(h.x + dx - nx, h.y + dy - ny); holes.lineTo(h.x - dx - nx, h.y - dy - ny); holes.closePath();
-    } else { holes.moveTo(h.x + h.d / 2, h.y); holes.arc(h.x, h.y, h.d / 2, 0, Math.PI * 2); }
-  }
-  paths = {
-    edge: toPath2D(st.profile), holes,
-    FCu: get('F.Cu'), BCu: get('B.Cu'), FMask: get('F.Mask'), BMask: get('B.Mask'), FSilk: get('F.SilkS'), BSilk: get('B.SilkS'),
-  };
+function makePv(l) {
+  const g = Odb.layerGeom(l);
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  const all = st.profile.length ? st.profile : [...pv.values()].flat();
-  for (const r of all) for (const p of r) { const x = p.X / Odb.SC, y = p.Y / Odb.SC; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
-  bounds = isFinite(x0) ? [x0, y0, x1, y1] : [0, 0, 10, 10];
-  $('empty').style.display = 'none';
+  for (const r of g) for (const p of r) { x0 = Math.min(x0, p.X); x1 = Math.max(x1, p.X); y0 = Math.min(y0, p.Y); y1 = Math.max(y1, p.Y); }
+  const S = Odb.SC;
+  return { path: toPath2D(g), bbox: isFinite(x0) ? [x0 / S, y0 / S, x1 / S, y1 / S] : null };
 }
+const needed = l => l.show || l === hover || l === pinned;
+function want(l) {
+  if (pv.has(l)) return;
+  pv.set(l, null); // queued
+  queue.push(l);
+  runQueue();
+}
+async function runQueue() {
+  if (busy) return;
+  busy = true;
+  const keep = statusEl.textContent, owner = st;
+  while (queue.length) {
+    const l = queue.shift();
+    if (owner !== st) break;
+    if (!needed(l)) { pv.delete(l); continue; } // no longer asked for (pointer moved on)
+    setStatus('プレビュー用に解析中: ' + l.name + ' …');
+    await tick();
+    if (owner !== st) break;
+    try { pv.set(l, makePv(l)); } catch (err) { console.error(err); pv.set(l, { path: new Path2D(), bbox: null }); }
+    draw();
+  }
+  busy = false;
+  if (owner === st) setStatus(keep);
+  else if (queue.length) runQueue();
+}
+function computeBounds() {
+  let b = null;
+  const add = c => { if (!c) return; b = b ? [Math.min(b[0], c[0]), Math.min(b[1], c[1]), Math.max(b[2], c[2]), Math.max(b[3], c[3])] : c.slice(); };
+  if (st.profile.length) {
+    const S = Odb.SC;
+    for (const r of st.profile) for (const p of r) add([p.X / S, p.Y / S, p.X / S, p.Y / S]);
+  } else for (const v of pv.values()) add(v && v.bbox);
+  bounds = b || [0, 0, 10, 10];
+}
+// side of a layer relative to the current view: 0 far side, 1 inner, 2 none (user / excluded), 3 near side
+function depth(l) {
+  const t = l.target || '';
+  if (/^In\d+\.Cu$/.test(t)) return 1;
+  const s = t[0] === 'F' && t[1] === '.' ? 'F' : t[0] === 'B' && t[1] === '.' ? 'B' : null;
+  if (!s) return 2;
+  return s === view ? 3 : 0;
+}
+const stackRank = t => /\.Cu$/.test(t) ? 0 : /Adhes|Paste/.test(t) ? 1 : /Mask/.test(t) ? 2 : /SilkS/.test(t) ? 4 : 3;
+const baseAlpha = l => /Mask$/.test(l.target || '') ? 0.4 : 0.88;
 function fit() {
   if (!bounds) return;
   const r = cv.getBoundingClientRect();
-  const w = bounds[2] - bounds[0], h = bounds[3] - bounds[1];
+  const w = Math.max(bounds[2] - bounds[0], 1e-3), h = Math.max(bounds[3] - bounds[1], 1e-3);
   cam.s = Math.min(r.width / (w * 1.08), r.height / (h * 1.08));
   cam.x = (bounds[0] + bounds[2]) / 2; cam.y = (bounds[1] + bounds[3]) / 2;
   draw();
 }
+let drawPending = false;
 function draw() {
+  if (drawPending) return;
+  drawPending = true;
+  requestAnimationFrame(() => { drawPending = false; drawNow(); });
+}
+function drawNow() {
   const dpr = window.devicePixelRatio || 1, r = cv.getBoundingClientRect();
   cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#101418'; ctx.fillRect(0, 0, cv.width, cv.height);
-  if (!paths) return;
+  if (!st || !bounds) return;
   const mx = view === 'B' ? -1 : 1;
   // screen = center + s * (mirror x, flip y)
   ctx.setTransform(dpr * cam.s * mx, 0, 0, -dpr * cam.s, dpr * (r.width / 2 - mx * cam.s * cam.x), dpr * (r.height / 2 + cam.s * cam.y));
-  const fill = (p, c, a = 1, rule = 'evenodd') => { if (!p) return; ctx.globalAlpha = a; ctx.fillStyle = c; ctx.fill(p, rule); };
-  fill(paths.edge, '#1e2a22', 1, 'nonzero');
-  if (view === 'F') { fill(paths.BCu, '#3a5bd0', .3); fill(paths.FCu, '#d8483a', .9); fill(paths.FMask, '#40b050', .22); fill(paths.FSilk, '#f2f2f2'); }
-  else { fill(paths.FCu, '#d8483a', .25); fill(paths.BCu, '#4a6be0', .9); fill(paths.BMask, '#40b050', .22); fill(paths.BSilk, '#f2f2f2'); }
-  fill(paths.holes, '#000000');
+  const px = 1 / cam.s; // one CSS pixel in board units
+  const edge = toPath2DCached();
+  ctx.globalAlpha = 1; ctx.fillStyle = '#001023'; ctx.fill(edge, 'nonzero');
+  const focus = focusOf();
+  const list = st.layers.filter(l => l.count && l.role !== 'comp' && l.role !== 'drill' && l.show && l !== focus);
+  list.sort((a, b) => depth(a) - depth(b) || stackRank(a.target || '') - stackRank(b.target || ''));
+  const paint = (l, alpha, strong) => {
+    const v = pv.get(l);
+    if (!v) return;
+    const c = colorOf(l);
+    if (excluded(l)) {
+      // not converted: translucent fill and a dashed outline
+      ctx.globalAlpha = alpha * (strong ? 0.4 : 0.22); ctx.fillStyle = c; ctx.fill(v.path, 'evenodd');
+      ctx.globalAlpha = Math.min(1, alpha * (strong ? 1 : 0.8)); ctx.strokeStyle = c; ctx.lineWidth = (strong ? 1.3 : 1) * px;
+      ctx.setLineDash([4 * px, 3 * px]); ctx.stroke(v.path); ctx.setLineDash([]);
+    } else {
+      ctx.globalAlpha = alpha; ctx.fillStyle = c; ctx.fill(v.path, 'evenodd');
+    }
+  };
+  const fade = focus ? 0.22 : 1;
+  for (const l of list) {
+    const d = depth(l);
+    paint(l, baseAlpha(l) * (d === 0 ? 0.28 : d === 1 ? 0.5 : 1) * fade, false);
+  }
+  for (const l of st.layers) if (l.role === 'drill' && l.show && l !== focus && pv.get(l)) {
+    ctx.globalAlpha = focus ? 0.5 : 1; ctx.fillStyle = '#000'; ctx.fill(pv.get(l).path, 'nonzero');
+  }
+  if (focus && pv.get(focus)) {
+    if (focus.role === 'drill') {
+      const p = pv.get(focus).path;
+      ctx.globalAlpha = 1; ctx.fillStyle = '#000'; ctx.fill(p, 'nonzero');
+      ctx.strokeStyle = DRILL_COLOR; ctx.lineWidth = 1.5 * px; ctx.stroke(p);
+    } else paint(focus, Math.max(baseAlpha(focus), 0.75), true);
+  }
   ctx.globalAlpha = 1;
-  ctx.lineWidth = 1 / cam.s; ctx.strokeStyle = '#e0c040'; ctx.stroke(paths.edge);
+  ctx.lineWidth = px; ctx.strokeStyle = EDGE_COLOR; ctx.stroke(edge);
+}
+let edgeCache = null;
+function toPath2DCached() {
+  if (!edgeCache || edgeCache.st !== st) edgeCache = { st, path: toPath2D(st.profile) };
+  return edgeCache.path;
 }
 new ResizeObserver(() => draw()).observe(cv);
 $('viewTop').addEventListener('click', () => { view = 'F'; $('viewTop').setAttribute('aria-pressed', 'true'); $('viewBot').setAttribute('aria-pressed', 'false'); draw(); });
