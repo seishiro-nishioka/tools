@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>基板の取り数計算</title>
+<style>
+  :root {
+    --fg: #1f2328; --muted: #59636e; --line: #d0d7de; --bg: #f6f8fa; --panel: #fff;
+    --accent: #0969da; --c0: #2f6fdb; --c90: #e07b24; --best: #fff4d6; --sel: #ddebff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; color: var(--fg); background: var(--bg); font-size: 14px; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 18px; margin: 0; }
+  header .ver { color: var(--muted); font-size: 12px; }
+  header a { margin-left: auto; color: var(--accent); text-decoration: none; }
+  main { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 12px; padding: 12px; align-items: start; }
+  @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
+  aside { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; position: sticky; top: 12px; }
+  @media (max-width: 860px) { aside { position: static; } }
+  aside h2 { font-size: 13px; margin: 12px 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--line); }
+  aside h2:first-child { margin-top: 0; }
+  .row { display: flex; align-items: center; gap: 6px; margin: 4px 0; flex-wrap: wrap; }
+  .row > span.lbl { width: 64px; color: var(--muted); font-size: 12px; }
+  input[type=number] { width: 64px; padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+  input.bad { border-color: #cf222e; background: #ffebe9; }
+  .unit { color: var(--muted); font-size: 12px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+  .chip { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--line); border-radius: 12px; padding: 1px 4px 1px 6px; background: var(--bg); font-size: 12px; }
+  .chip.off { opacity: .5; }
+  .chip button { border: none; background: none; cursor: pointer; color: var(--muted); padding: 0 2px; font-size: 13px; }
+  button.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+  button.btn:hover { background: var(--bg); }
+  .note { color: var(--muted); font-size: 12px; margin: 4px 0; }
+  body.mode-cand .rev-only, body.mode-rev .cand-only { display: none; }
+  .tabs { display: flex; gap: 0; margin-bottom: 10px; }
+  .tabs button { border: 1px solid var(--line); background: var(--panel); padding: 7px 16px; cursor: pointer; font: inherit; }
+  .tabs button:first-child { border-radius: 6px 0 0 6px; }
+  .tabs button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+  .tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+  #summary { display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: baseline; }
+  #summary .big { font-size: 28px; font-weight: 700; }
+  #summary .k { color: var(--muted); font-size: 12px; margin-right: 4px; }
+  .views { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 1100px) { .views { grid-template-columns: minmax(0, 1fr); } }
+  figure { margin: 0; }
+  figcaption { font-size: 12px; color: var(--muted); margin-bottom: 4px; display: flex; gap: 6px; align-items: center; }
+  figcaption .sp { flex: 1; }
+  figcaption button { border: 1px solid var(--line); background: var(--panel); border-radius: 4px; width: 26px; height: 22px; cursor: pointer; }
+  svg.view { width: 100%; aspect-ratio: 1 / 1; background: #fff; border: 1px solid var(--line); border-radius: 6px; display: block; user-select: none; }
+  svg.view.mouse { cursor: grab; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 14px; height: 10px; vertical-align: -1px; margin-right: 4px; border: 1px solid #888; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .toolbar .sp { flex: 1; }
+  .tblwrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; white-space: nowrap; }
+  th, td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: right; }
+  th { background: var(--bg); position: sticky; top: 0; cursor: pointer; user-select: none; font-weight: 600; }
+  th.nosort { cursor: default; }
+  th .arr { color: var(--accent); }
+  td.l, th.l { text-align: left; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #f3f6fa; }
+  tr.best { background: var(--best); }
+  tr.sel { background: var(--sel) !important; outline: 2px solid var(--accent); outline-offset: -2px; }
+  tr.zero { color: #a0a7b0; }
+  #compare .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  #compare .item { border: 1px solid var(--line); border-radius: 6px; padding: 6px; cursor: pointer; }
+  #compare .item svg { width: 100%; aspect-ratio: 1 / 1; display: block; }
+  #compare .cap { font-size: 12px; margin-top: 4px; }
+  #compare .cap b { font-size: 15px; }
+</style>
+</head>
+<body class="mode-cand">
+<header>
+  <h1>基板の取り数計算</h1><span class="ver">v2026.11.11.1</span>
+  <a href="../">ツール一覧</a>
+</header>
+<main>
+  <aside>
+    <h2>個片</h2>
+    <div class="row"><span class="lbl">横 × 縦</span><input type="number" id="bw" step="any" min="0"> × <input type="number" id="bh" step="any" min="0"><span class="unit">mm</span></div>
+    <div class="row"><span class="lbl">間隔</span><input type="number" id="gap" step="any" min="0"><span class="unit">mm (V カットは 0)</span></div>
+
+    <h2>ワーク</h2>
+    <div class="row"><span class="lbl">捨て代 上</span><input type="number" id="mt" step="any" min="0"> 下 <input type="number" id="mb" step="any" min="0"></div>
+    <div class="row"><span class="lbl">捨て代 左</span><input type="number" id="ml" step="any" min="0"> 右 <input type="number" id="mr" step="any" min="0"></div>
+    <div class="cand-only">
+      <div class="row"><span class="lbl">横の候補</span></div>
+      <div class="chips" id="xsChips"></div>
+      <div class="row"><input type="number" id="xsAdd" step="any" min="0" placeholder="追加"><button class="btn" data-add="xs">追加</button></div>
+      <div class="row"><span class="lbl">縦の候補</span></div>
+      <div class="chips" id="ysChips"></div>
+      <div class="row"><input type="number" id="ysAdd" step="any" min="0" placeholder="追加"><button class="btn" data-add="ys">追加</button></div>
+      <p class="note">チェックを外した候補は計算しません。</p>
+    </div>
+    <div class="rev-only">
+      <div class="row"><span class="lbl">横の範囲</span><input type="number" id="rxMin" step="any" min="0"> 〜 <input type="number" id="rxMax" step="any" min="0"></div>
+      <div class="row"><span class="lbl">縦の範囲</span><input type="number" id="ryMin" step="any" min="0"> 〜 <input type="number" id="ryMax" step="any" min="0"></div>
+      <div class="row"><span class="lbl">丸め単位</span><input type="number" id="unit" step="any" min="0"><span class="unit">mm</span></div>
+    </div>
+    <p class="note">ワークは回転させません (横・縦は定尺板の向き)。</p>
+
+    <h2>定尺板</h2>
+    <div class="row"><span class="lbl">横 × 縦</span><input type="number" id="sw" step="any" min="0"> × <input type="number" id="sh" step="any" min="0"></div>
+    <div class="row"><span class="lbl">耳 (片側)</span><input type="number" id="ear" step="any" min="0"><span class="unit">mm</span></div>
+    <div class="row"><span class="lbl">カーフ</span><input type="number" id="kerf" step="any" min="0"><span class="unit">mm</span></div>
+
+    <div class="row" style="margin-top:12px"><button class="btn" id="reset">規定値に戻す</button></div>
+    <p class="note">入力値は URL に保存されます。URL を共有すると同じ条件で開けます。</p>
+  </aside>
+
+  <div>
+    <nav class="tabs">
+      <button data-mode="cand">候補から選ぶ</button><button data-mode="rev">逆算 (ワークサイズを求める)</button>
+    </nav>
+
+    <div class="card" id="summary"></div>
+
+    <div class="card">
+      <div class="views">
+        <figure>
+          <figcaption>定尺板<span class="sp"></span><button data-zoom="sheetSvg" data-z="in">＋</button><button data-zoom="sheetSvg" data-z="out">－</button><button data-zoom="sheetSvg" data-z="reset">⟲</button></figcaption>
+          <svg class="view" id="sheetSvg"></svg>
+        </figure>
+        <figure>
+          <figcaption>ワーク拡大<span class="sp"></span><button data-zoom="workSvg" data-z="in">＋</button><button data-zoom="workSvg" data-z="out">－</button><button data-zoom="workSvg" data-z="reset">⟲</button></figcaption>
+          <svg class="view" id="workSvg"></svg>
+        </figure>
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--c0)"></i>個片 0°</span>
+        <span><i style="background:var(--c90)"></i>個片 90°</span>
+        <span><i style="background:#e8edf4"></i>捨て代</span>
+        <span><i style="background:#fff"></i>有効エリア</span>
+        <span><i style="background:repeating-linear-gradient(45deg,#b9bfc8 0 1px,#f4f5f7 1px 4px)"></i>端材・耳・カーフ</span>
+        <span>ホイールで拡大縮小、ドラッグで移動、ダブルクリックで元に戻す。図形にマウスを重ねると寸法を表示</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="toolbar">
+        <b id="tblTitle"></b><span class="sp"></span>
+        <button class="btn" id="dlCsv">CSV</button>
+        <button class="btn" id="dlSvg">SVG</button>
+        <button class="btn" id="dlPng">PNG</button>
+      </div>
+      <p class="note" id="tblNote"></p>
+      <div class="tblwrap"><table id="tbl"><thead></thead><tbody></tbody></table></div>
+    </div>
+
+    <div class="card" id="compare"></div>
+  </div>
+</main>
+
+<script>
+'use strict';
+const EPS = 1e-9;
+const NS = 'http://www.w3.org/2000/svg';
+const C0 = '#2f6fdb', C90 = '#e07b24';
+const NUM_KEYS = ['bw','bh','gap','mt','mb','ml','mr','sw','sh','ear','kerf','rxMin','rxMax','ryMin','ryMax','unit'];
+const POSITIVE = new Set(['bw','bh','sw','sh','unit']);
+const DEF = { bw: 50, bh: 40, gap: 2, mt: 15, mb: 15, ml: 10, mr: 10, sw: 1020, sh: 1020, ear: 5, kerf: 3,
+  rxMin: 190, rxMax: 480, ryMin: 160, ryMax: 240, unit: 1, xs: [480, 318, 240, 190], ys: [240, 190, 160], mode: 'cand' };
+
+let S;                    // input state
+let rows = [];            // rows of the current mode
+let candRows = [];        // candidate-mode rows (also used for comparison in reverse mode)
+let selId = null;
+const compareIds = new Set();
+let sortKey = null, sortDir = -1;
+
+const $ = id => document.getElementById(id);
+const num = v => (v == null || !isFinite(v)) ? '—' : String(+(+v).toFixed(2));
+const pct = v => v == null ? '—' : (v * 100).toFixed(1) + '%';
+
+// ---------- state / URL ----------
+function defaults() {
+  return { ...DEF, xs: DEF.xs.map(v => ({ v, on: true })), ys: DEF.ys.map(v => ({ v, on: true })) };
+}
+function toHash() {
+  const p = new URLSearchParams();
+  NUM_KEYS.forEach(k => p.set(k, S[k]));
+  p.set('xs', S.xs.map(c => (c.on ? '' : '!') + c.v).join(','));
+  p.set('ys', S.ys.map(c => (c.on ? '' : '!') + c.v).join(','));
+  p.set('mode', S.mode);
+  history.replaceState(null, '', '#' + p.toString());
+}
+function fromHash() {
+  S = defaults();
+  const p = new URLSearchParams(location.hash.slice(1));
+  NUM_KEYS.forEach(k => { if (p.has(k)) { const v = parseFloat(p.get(k)); if (isFinite(v)) S[k] = v; } });
+  for (const k of ['xs', 'ys']) {
+    if (p.has(k)) S[k] = p.get(k).split(',').filter(Boolean)
+      .map(t => ({ on: !t.startsWith('!'), v: parseFloat(t.replace('!', '')) }))
+      .filter(c => isFinite(c.v) && c.v > 0);
+  }
+  if (p.get('mode') === 'rev') S.mode = 'rev';
+}
+
+// ---------- geometry ----------
+function fit(L, p, g) { return (p > 0 && L >= p - EPS) ? Math.floor((L + g) / (p + g) + EPS) : 0; }
+function span(n, p, g) { return n > 0 ? n * p + (n - 1) * g : 0; }
+function grid(ox, oy, nx, ny, w, h, g, r, out) {
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) out.push({ x: ox + i * (w + g), y: oy + j * (h + g), w, h, r });
+}
+function pure(effW, effH, P, r) {
+  const w = r ? P.bh : P.bw, h = r ? P.bw : P.bh, g = P.gap;
+  let nx = fit(effW, w, g), ny = fit(effH, h, g);
+  if (!nx || !ny) nx = ny = 0;
+  const rects = [];
+  grid(0, 0, nx, ny, w, h, g, r, rects);
+  return { count: nx * ny, rects, usedW: span(nx, w, g), usedH: span(ny, h, g), desc: `${nx}×${ny}` };
+}
+// One straight cut splits the effective area into a 0° block and a 90° block.
+function mixed(effW, effH, P) {
+  const { bw, bh, gap: g } = P;
+  let best = null;
+  const consider = c => {
+    if (!best || c.count > best.count || (c.count === best.count && c.usedW * c.usedH < best.usedW * best.usedH)) best = c;
+  };
+  // vertical cut: 0° columns on the left, 90° columns on the right
+  const ra = fit(effH, bh, g), rb = fit(effH, bw, g);
+  if (ra && rb) for (let i = 1; i <= fit(effW, bw, g); i++) {
+    const wA = span(i, bw, g), j = fit(effW - wA - g, bh, g);
+    if (!j) continue;
+    const rects = [];
+    grid(0, 0, i, ra, bw, bh, g, 0, rects);
+    grid(wA + g, 0, j, rb, bh, bw, g, 1, rects);
+    consider({ count: i * ra + j * rb, rects, usedW: wA + g + span(j, bh, g),
+      usedH: Math.max(span(ra, bh, g), span(rb, bw, g)), desc: `${i}×${ra} (0°) + ${j}×${rb} (90°) 左右に分割` });
+  }
+  // horizontal cut: 0° rows on top, 90° rows below
+  const ca = fit(effW, bw, g), cb = fit(effW, bh, g);
+  if (ca && cb) for (let i = 1; i <= fit(effH, bh, g); i++) {
+    const hA = span(i, bh, g), j = fit(effH - hA - g, bw, g);
+    if (!j) continue;
+    const rects = [];
+    grid(0, 0, ca, i, bw, bh, g, 0, rects);
+    grid(0, hA + g, cb, j, bh, bw, g, 1, rects);
+    consider({ count: ca * i + cb * j, rects, usedW: Math.max(span(ca, bw, g), span(cb, bh, g)),
+      usedH: hA + g + span(j, bw, g), desc: `${ca}×${i} (0°) + ${cb}×${j} (90°) 上下に分割` });
+  }
+  return best;
+}
+function layouts(effW, effH, P) {
+  const a = pure(effW, effH, P, 0), b = pure(effW, effH, P, 1), m = mixed(effW, effH, P);
+  const mixOk = m && m.count > Math.max(a.count, b.count);
+  return [{ orient: '0°', L: a }, { orient: '90°', L: b }, { orient: '混在', L: mixOk ? m : null }];
+}
+
+function makeRow(mode, wx, wy, orient, L, P, extra) {
+  const usW = P.sw - 2 * P.ear, usH = P.sh - 2 * P.ear;
+  const nWx = fit(usW, wx, P.kerf), nWy = fit(usH, wy, P.kerf);
+  const per = L ? L.count : null;
+  const y = L ? per * nWx * nWy : null;
+  const sheetA = P.sw * P.sh, bA = P.bw * P.bh;
+  return {
+    id: `${mode}|${wx}|${wy}|${orient}|${L ? L.desc : ''}`, mode, wx, wy, nWx, nWy, orient, L, per, yield: y,
+    util: L ? y * bA / sheetA : null, scrap: L ? (sheetA - y * bA) / 1e6 : null, ...extra
+  };
+}
+
+function computeCand(P) {
+  const out = [];
+  for (const cx of P.xs) if (cx.on) for (const cy of P.ys) if (cy.on) {
+    for (const o of layouts(cx.v - P.ml - P.mr, cy.v - P.mt - P.mb, P)) out.push(makeRow('cand', cx.v, cy.v, o.orient, o.L, P, {}));
+  }
+  return out;
+}
+
+// Work lengths worth trying along one axis: the largest length that still fits k works, for k = 1, 2, ...
+function axisOpts(usable, kerf, min, max, unit) {
+  const set = new Set();
+  for (let k = 1; k < 1000; k++) {
+    let L = Math.floor(((usable + kerf) / k - kerf) / unit + EPS) * unit;
+    if (L < min - EPS) break;
+    set.add(Math.min(L, max));
+  }
+  return [...set];
+}
+const ceilU = (v, u) => Math.ceil(v / u - EPS) * u;
+const floorU = (v, u) => Math.floor(v / u + EPS) * u;
+
+function computeRev(P, cand) {
+  const usW = P.sw - 2 * P.ear, usH = P.sh - 2 * P.ear;
+  const out = [], seen = new Set();
+  for (const Lx of axisOpts(usW, P.kerf, P.rxMin, P.rxMax, P.unit))
+    for (const Ly of axisOpts(usH, P.kerf, P.ryMin, P.ryMax, P.unit)) {
+      for (const o of layouts(Lx - P.ml - P.mr, Ly - P.mt - P.mb, P)) {
+        const L = o.L;
+        if (!L || !L.count) continue;
+        // smallest work that still holds this layout
+        const wx = Math.min(Math.max(ceilU(L.usedW + P.ml + P.mr, P.unit), P.rxMin), Lx);
+        const wy = Math.min(Math.max(ceilU(L.usedH + P.mt + P.mb, P.unit), P.ryMin), Ly);
+        const row = makeRow('rev', wx, wy, o.orient, L, P, {});
+        if (!row.nWx || !row.nWy || seen.has(row.id)) continue;
+        seen.add(row.id);
+        // largest work keeping both the layout and the number of works per sheet
+        row.rangeX = [wx, Math.max(wx, Math.min(Lx, floorU((usW + P.kerf) / row.nWx - P.kerf, P.unit)))];
+        row.rangeY = [wy, Math.max(wy, Math.min(Ly, floorU((usH + P.kerf) / row.nWy - P.kerf, P.unit)))];
+        const eq = [];
+        for (const c of cand) {
+          if (c.yield != null && c.yield >= row.yield) {
+            const s = `${c.wx}×${c.wy}`;
+            if (!eq.includes(s)) eq.push(s);
+          }
+        }
+        row.equiv = eq;
+        out.push(row);
+      }
+    }
+  return out;
+}
+
+// ---------- SVG drawing ----------
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function title(e, t) { el('title', {}, e).textContent = t; return e; }
+const LINE = { 'vector-effect': 'non-scaling-stroke' };
+
+function dimH(p, x1, x2, y, yRef, label, fs) {
+  const c = '#333';
+  el('line', { x1, y1: yRef, x2: x1, y2: y + (y > yRef ? 1 : -1) * fs * 0.3, stroke: '#999', 'stroke-width': 0.6, ...LINE }, p);
+  el('line', { x1: x2, y1: yRef, x2, y2: y + (y > yRef ? 1 : -1) * fs * 0.3, stroke: '#999', 'stroke-width': 0.6, ...LINE }, p);
+  el('line', { x1, y1: y, x2, y2: y, stroke: c, 'stroke-width': 1, ...LINE }, p);
+  const t = fs * 0.3;
+  for (const x of [x1, x2]) el('line', { x1: x - t, y1: y + t, x2: x + t, y2: y - t, stroke: c, 'stroke-width': 1.4, ...LINE }, p);
+  const tx = el('text', { x: (x1 + x2) / 2, y: y - fs * 0.35, 'font-size': fs, 'text-anchor': 'middle', fill: c, 'font-family': 'system-ui, sans-serif' }, p);
+  tx.textContent = label;
+}
+function dimV(p, y1, y2, x, xRef, label, fs) {
+  const c = '#333';
+  el('line', { x1: xRef, y1, x2: x + (x > xRef ? 1 : -1) * fs * 0.3, y2: y1, stroke: '#999', 'stroke-width': 0.6, ...LINE }, p);
+  el('line', { x1: xRef, y1: y2, x2: x + (x > xRef ? 1 : -1) * fs * 0.3, y2, stroke: '#999', 'stroke-width': 0.6, ...LINE }, p);
+  el('line', { x1: x, y1, x2: x, y2, stroke: c, 'stroke-width': 1, ...LINE }, p);
+  const t = fs * 0.3;
+  for (const y of [y1, y2]) el('line', { x1: x - t, y1: y + t, x2: x + t, y2: y - t, stroke: c, 'stroke-width': 1.4, ...LINE }, p);
+  const cy = (y1 + y2) / 2, cx = x - fs * 0.35;
+  const tx = el('text', { x: cx, y: cy, 'font-size': fs, 'text-anchor': 'middle', fill: c, transform: `rotate(-90 ${cx} ${cy})`, 'font-family': 'system-ui, sans-serif' }, p);
+  tx.textContent = label;
+}
+
+function hatchDefs(svg, id, size) {
+  const defs = el('defs', {}, svg);
+  const pat = el('pattern', { id, patternUnits: 'userSpaceOnUse', width: size, height: size, patternTransform: 'rotate(45)' }, defs);
+  el('rect', { width: size, height: size, fill: '#f4f5f7' }, pat);
+  el('line', { x1: 0, y1: 0, x2: 0, y2: size, stroke: '#b9bfc8', 'stroke-width': size * 0.18 }, pat);
+}
+
+// Draw one work at (x, y). The layout is centered in the effective area.
+function drawWork(parent, x, y, row, P, label) {
+  const g = el('g', { transform: `translate(${x} ${y})` }, parent);
+  const effW = row.wx - P.ml - P.mr, effH = row.wy - P.mt - P.mb;
+  title(el('rect', { x: 0, y: 0, width: row.wx, height: row.wy, fill: '#e8edf4', stroke: '#5a6b85', 'stroke-width': 1.2, ...LINE }, g),
+    `${label}ワーク ${num(row.wx)}×${num(row.wy)} mm\n捨て代 上${num(P.mt)} 下${num(P.mb)} 左${num(P.ml)} 右${num(P.mr)}`);
+  if (effW > 0 && effH > 0)
+    title(el('rect', { x: P.ml, y: P.mt, width: effW, height: effH, fill: '#fff', stroke: '#aab4c3', 'stroke-width': 0.6, 'stroke-dasharray': '3 2', ...LINE }, g),
+      `有効エリア ${num(effW)}×${num(effH)} mm`);
+  if (!row.L) return g;
+  const ox = P.ml + (effW - row.L.usedW) / 2, oy = P.mt + (effH - row.L.usedH) / 2;
+  const bg = el('g', {}, g);
+  for (const r of row.L.rects) {
+    title(el('rect', { x: ox + r.x, y: oy + r.y, width: r.w, height: r.h, fill: r.r ? C90 : C0, 'fill-opacity': 0.85,
+      stroke: r.r ? '#8a4512' : '#1d4fa3', 'stroke-width': 0.5, ...LINE }, bg), `個片 ${num(r.w)}×${num(r.h)} mm (${r.r ? '90°' : '0°'})`);
+  }
+  return g;
+}
+
+function drawSheet(svg, row, P, dims) {
+  svg.innerHTML = '';
+  const fs = Math.max(P.sw, P.sh) / 42;
+  const pad = dims ? fs * 3.2 : fs * 0.5;
+  const vb = [-pad, -pad, P.sw + pad * 2, P.sh + pad * 2];
+  svg.setAttribute('viewBox', vb.join(' '));
+  svg.dataset.vb = vb.join(' ');
+  const hid = 'h' + Math.random().toString(36).slice(2, 8);
+  hatchDefs(svg, hid, Math.max(P.sw, P.sh) / 120);
+  title(el('rect', { x: 0, y: 0, width: P.sw, height: P.sh, fill: `url(#${hid})`, stroke: '#333', 'stroke-width': 1.5, ...LINE }, svg),
+    `定尺板 ${num(P.sw)}×${num(P.sh)} mm (耳 ${num(P.ear)} / カーフ ${num(P.kerf)})`);
+  if (P.ear > 0) el('rect', { x: P.ear, y: P.ear, width: P.sw - 2 * P.ear, height: P.sh - 2 * P.ear, fill: 'none', stroke: '#888', 'stroke-width': 0.6, 'stroke-dasharray': '4 3', ...LINE }, svg);
+  if (!row) return;
+  for (let iy = 0; iy < row.nWy; iy++) for (let ix = 0; ix < row.nWx; ix++) {
+    drawWork(svg, P.ear + ix * (row.wx + P.kerf), P.ear + iy * (row.wy + P.kerf), row, P, `列${ix + 1} 行${iy + 1} `);
+  }
+  if (!dims) return;
+  dimH(svg, 0, P.sw, -fs * 1.8, 0, `${num(P.sw)}`, fs);
+  dimV(svg, 0, P.sh, -fs * 1.8, 0, `${num(P.sh)}`, fs);
+  if (row.nWx && row.nWy) {
+    const bottom = P.ear + (row.nWy - 1) * (row.wy + P.kerf) + row.wy;
+    const right = P.ear + (row.nWx - 1) * (row.wx + P.kerf) + row.wx;
+    dimH(svg, P.ear, P.ear + row.wx, P.sh + fs * 1.8, bottom, `ワーク ${num(row.wx)}`, fs);
+    dimV(svg, P.ear, P.ear + row.wy, P.sw + fs * 2.2, right, `ワーク ${num(row.wy)}`, fs);
+  }
+}
+
+function drawWorkView(svg, row, P) {
+  svg.innerHTML = '';
+  if (!row) { svg.removeAttribute('viewBox'); return; }
+  const m = Math.max(row.wx, row.wy), fs = m / 30;
+  const vb = [-fs * 3.6, -fs * 3.6, row.wx + fs * 9.2, row.wy + fs * 9.2];
+  // keep the view square-ish so the work is not tiny on one axis
+  const side = Math.max(vb[2], vb[3]);
+  vb[0] -= (side - vb[2]) / 2; vb[1] -= (side - vb[3]) / 2; vb[2] = vb[3] = side;
+  svg.setAttribute('viewBox', vb.join(' '));
+  svg.dataset.vb = vb.join(' ');
+  drawWork(svg, 0, 0, row, P, '');
+  dimH(svg, 0, row.wx, -fs * 1.8, 0, `${num(row.wx)}`, fs);
+  dimV(svg, 0, row.wy, -fs * 1.8, 0, `${num(row.wy)}`, fs);
+  const sm = fs * 0.8;
+  if (P.mt > 0) dimV(svg, 0, P.mt, row.wx + fs * 1.4, row.wx, `${num(P.mt)}`, sm);
+  if (P.mb > 0) dimV(svg, row.wy - P.mb, row.wy, row.wx + fs * 1.4, row.wx, `${num(P.mb)}`, sm);
+  if (P.ml > 0) dimH(svg, 0, P.ml, row.wy + fs * 1.4, row.wy, `${num(P.ml)}`, sm);
+  if (P.mr > 0) dimH(svg, row.wx - P.mr, row.wx, row.wy + fs * 1.4, row.wy, `${num(P.mr)}`, sm);
+  if (!row.L) return;
+  const effW = row.wx - P.ml - P.mr, effH = row.wy - P.mt - P.mb;
+  const ox = P.ml + (effW - row.L.usedW) / 2, oy = P.mt + (effH - row.L.usedH) / 2;
+  let k = 0;
+  for (const rot of [0, 1]) {
+    const r = row.L.rects.find(q => q.r === rot);
+    if (!r) continue;
+    const off = fs * (3.2 + 1.7 * k);
+    dimH(svg, ox + r.x, ox + r.x + r.w, row.wy + off, oy + r.y + r.h, `${num(r.w)}`, sm);
+    dimV(svg, oy + r.y, oy + r.y + r.h, row.wx + off, ox + r.x + r.w, `${num(r.h)}`, sm);
+    // gap to the next board of the same orientation, if any
+    const nb = row.L.rects.find(q => q.r === rot && Math.abs(q.y - r.y) < EPS && q.x > r.x + EPS);
+    if (nb && P.gap > 0 && k === 0) {
+      const t = el('text', { x: ox + r.x + r.w + P.gap / 2, y: oy + r.y - fs * 0.3, 'font-size': sm * 0.8, 'text-anchor': 'middle', fill: '#555', 'font-family': 'system-ui, sans-serif' }, svg);
+      t.textContent = `間隔 ${num(P.gap)}`;
+    }
+    k++;
+  }
+}
+
+// ---------- zoom / pan ----------
+function getVB(svg) { return svg.getAttribute('viewBox').split(' ').map(Number); }
+function zoomAt(svg, cx, cy, s) {
+  const [x, y, w, h] = getVB(svg);
+  svg.setAttribute('viewBox', [cx - (cx - x) * s, cy - (cy - y) * s, w * s, h * s].join(' '));
+}
+function zoomable(svg) {
+  svg.classList.add('mouse');
+  svg.addEventListener('wheel', e => {
+    if (!svg.getAttribute('viewBox')) return;
+    e.preventDefault();
+    const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY;
+    const q = p.matrixTransform(svg.getScreenCTM().inverse());
+    zoomAt(svg, q.x, q.y, e.deltaY > 0 ? 1.15 : 1 / 1.15);
+  }, { passive: false });
+  let drag = null;
+  svg.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'mouse' || !svg.getAttribute('viewBox')) return;
+    const [x, y, w, h] = getVB(svg);
+    drag = { cx: e.clientX, cy: e.clientY, x, y, s: Math.max(w / svg.clientWidth, h / svg.clientHeight) };
+    svg.setPointerCapture(e.pointerId);
+    svg.style.cursor = 'grabbing';
+  });
+  svg.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const [, , w, h] = getVB(svg);
+    svg.setAttribute('viewBox', [drag.x - (e.clientX - drag.cx) * drag.s, drag.y - (e.clientY - drag.cy) * drag.s, w, h].join(' '));
+  });
+  const end = () => { drag = null; svg.style.cursor = ''; };
+  svg.addEventListener('pointerup', end);
+  svg.addEventListener('pointercancel', end);
+  svg.addEventListener('dblclick', () => { if (svg.dataset.vb) svg.setAttribute('viewBox', svg.dataset.vb); });
+}
+document.querySelectorAll('[data-zoom]').forEach(b => b.addEventListener('click', () => {
+  const svg = $(b.dataset.zoom);
+  if (!svg.getAttribute('viewBox')) return;
+  if (b.dataset.z === 'reset') { svg.setAttribute('viewBox', svg.dataset.vb); return; }
+  const [x, y, w, h] = getVB(svg);
+  zoomAt(svg, x + w / 2, y + h / 2, b.dataset.z === 'in' ? 1 / 1.3 : 1.3);
+}));
+
+// ---------- table ----------
+function columns() {
+  const common = [
+    { key: 'nW', label: 'ワーク数', get: r => r.nWx * r.nWy, fmt: r => `${r.nWx}×${r.nWy} = ${r.nWx * r.nWy}` },
+    { key: 'orient', label: '向き', l: true, get: r => r.orient, fmt: r => r.orient },
+    { key: 'per', label: '個片/ワーク', get: r => r.per ?? -1, fmt: r => r.per == null ? '—' : r.per },
+    { key: 'desc', label: '内訳', l: true, get: r => r.L ? r.L.desc : '', fmt: r => r.L ? r.L.desc : '混在しても増えない' },
+    { key: 'yield', label: '取り数/定尺', get: r => r.yield ?? -1, fmt: r => r.yield == null ? '—' : `<b>${r.yield}</b>` },
+    { key: 'util', label: '利用率', get: r => r.util ?? -1, fmt: r => pct(r.util) },
+  ];
+  if (S.mode === 'cand') return [
+    { key: 'work', label: 'ワーク 横×縦', l: true, get: r => r.wx * 1e4 + r.wy, fmt: r => `${num(r.wx)}×${num(r.wy)}` },
+    ...common,
+    { key: 'scrap', label: '端材 m²', get: r => r.scrap ?? 1e9, fmt: r => r.scrap == null ? '—' : r.scrap.toFixed(3) },
+  ];
+  return [
+    { key: 'work', label: '推奨ワーク', l: true, get: r => r.wx * r.wy, fmt: r => `${num(r.wx)}×${num(r.wy)}` },
+    { key: 'rx', label: '横の範囲', get: r => r.rangeX[0], fmt: r => `${num(r.rangeX[0])}〜${num(r.rangeX[1])}` },
+    { key: 'ry', label: '縦の範囲', get: r => r.rangeY[0], fmt: r => `${num(r.rangeY[0])}〜${num(r.rangeY[1])}` },
+    ...common,
+    { key: 'equiv', label: '同数以上の規定候補', l: true, get: r => r.equiv.length,
+      fmt: r => r.equiv.length ? r.equiv.slice(0, 3).join(', ') + (r.equiv.length > 3 ? ` 他${r.equiv.length - 3}件` : '') : 'なし' },
+  ];
+}
+function defaultCmp(a, b) {
+  return (b.yield ?? -1) - (a.yield ?? -1) || (b.util ?? -1) - (a.util ?? -1) || a.wx * a.wy - b.wx * b.wy;
+}
+function sortedRows() {
+  const r = rows.slice();
+  if (!sortKey) return r.sort(defaultCmp);
+  const col = columns().find(c => c.key === sortKey);
+  if (!col) return r.sort(defaultCmp);
+  return r.sort((a, b) => {
+    const va = col.get(a), vb = col.get(b);
+    const c = typeof va === 'string' ? va.localeCompare(vb, 'ja') : va - vb;
+    return c * sortDir || defaultCmp(a, b);
+  });
+}
+
+function renderTable() {
+  const cols = columns();
+  const thead = $('tbl').tHead, tbody = $('tbl').tBodies[0];
+  thead.innerHTML = '';
+  const tr = thead.insertRow();
+  const th0 = document.createElement('th'); th0.textContent = '比較'; th0.className = 'nosort l'; tr.appendChild(th0);
+  for (const c of cols) {
+    const th = document.createElement('th');
+    th.className = c.l ? 'l' : '';
+    th.innerHTML = c.label + (sortKey === c.key ? ` <span class="arr">${sortDir < 0 ? '▼' : '▲'}</span>` : '');
+    th.onclick = () => {
+      if (sortKey === c.key) sortDir = -sortDir; else { sortKey = c.key; sortDir = -1; }
+      renderTable();
+    };
+    tr.appendChild(th);
+  }
+  const maxY = Math.max(0, ...rows.map(r => r.yield ?? 0));
+  tbody.innerHTML = '';
+  for (const r of sortedRows()) {
+    const row = tbody.insertRow();
+    if (r.id === selId) row.classList.add('sel');
+    if (maxY > 0 && r.yield === maxY) row.classList.add('best');
+    if (!r.yield) row.classList.add('zero');
+    const c0 = row.insertCell(); c0.className = 'l';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = compareIds.has(r.id);
+    cb.disabled = !r.yield;
+    cb.onclick = e => { e.stopPropagation(); cb.checked ? compareIds.add(r.id) : compareIds.delete(r.id); renderCompare(); };
+    c0.appendChild(cb);
+    for (const c of cols) { const td = row.insertCell(); td.className = c.l ? 'l' : ''; td.innerHTML = c.fmt(r); }
+    row.onclick = () => { selId = r.id; renderSelected(); renderTable(); };
+  }
+  $('tblTitle').textContent = S.mode === 'cand' ? `計算結果 (${rows.length} 通り)` : `逆算の結果 (${rows.length} 通り)`;
+  $('tblNote').textContent = S.mode === 'cand'
+    ? '行をクリックするとプレビューが切り替わります。見出しのクリックで並べ替え。黄色の行が最大の取り数です。'
+    : '推奨ワークは、その配置が収まる最小の寸法です。横・縦の範囲内なら、どの寸法でもワーク数と個片数は変わりません。';
+}
+
+function renderSelected() {
+  const r = rows.find(x => x.id === selId);
+  const P = S;
+  const sm = $('summary');
+  if (!r || !r.yield) {
+    sm.innerHTML = '<span>個片が入るワークがありません。個片の寸法、捨て代、ワークの候補・範囲を見直してください。</span>';
+    drawSheet($('sheetSvg'), null, P, true);
+    drawWorkView($('workSvg'), null, P);
+    return;
+  }
+  const items = [
+    ['取り数/定尺', `<span class="big">${r.yield}</span> 枚`],
+    ['利用率', pct(r.util)],
+    ['ワーク', `${num(r.wx)}×${num(r.wy)} mm` + (r.rangeX ? ` (横 ${num(r.rangeX[0])}〜${num(r.rangeX[1])}、縦 ${num(r.rangeY[0])}〜${num(r.rangeY[1])})` : '')],
+    ['ワーク数', `${r.nWx}×${r.nWy} = ${r.nWx * r.nWy}`],
+    ['個片/ワーク', `${r.per} (${r.L.desc})`],
+    ['端材', `${r.scrap.toFixed(3)} m²`],
+  ];
+  sm.innerHTML = items.map(([k, v]) => `<span><span class="k">${k}</span>${v}</span>`).join('');
+  drawSheet($('sheetSvg'), r, P, true);
+  drawWorkView($('workSvg'), r, P);
+}
+
+function renderCompare() {
+  const box = $('compare');
+  const list = rows.filter(r => compareIds.has(r.id) && r.yield);
+  box.innerHTML = '<b>比較</b>';
+  if (!list.length) {
+    box.insertAdjacentHTML('beforeend', '<p class="note">表の「比較」にチェックを入れると、ここにプレビューを並べて比べられます。</p>');
+    return;
+  }
+  const grid = document.createElement('div'); grid.className = 'grid';
+  for (const r of list.sort(defaultCmp)) {
+    const it = document.createElement('div'); it.className = 'item';
+    const svg = document.createElementNS(NS, 'svg');
+    drawSheet(svg, r, S, false);
+    it.appendChild(svg);
+    it.insertAdjacentHTML('beforeend', `<div class="cap"><b>${r.yield}</b> 枚 / ${pct(r.util)}<br>ワーク ${num(r.wx)}×${num(r.wy)} (${r.nWx}×${r.nWy})、${r.orient} ${r.per}枚</div>`);
+    it.onclick = () => { selId = r.id; renderSelected(); renderTable(); };
+    grid.appendChild(it);
+  }
+  box.appendChild(grid);
+  const clr = document.createElement('button'); clr.className = 'btn'; clr.textContent = '比較をすべて外す'; clr.style.marginTop = '8px';
+  clr.onclick = () => { compareIds.clear(); renderCompare(); renderTable(); };
+  box.appendChild(clr);
+}
+
+// ---------- inputs ----------
+function renderChips() {
+  for (const k of ['xs', 'ys']) {
+    const box = $(k + 'Chips');
+    box.innerHTML = '';
+    S[k].sort((a, b) => b.v - a.v).forEach((c, i) => {
+      const s = document.createElement('label'); s.className = 'chip' + (c.on ? '' : ' off');
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = c.on;
+      cb.onchange = () => { c.on = cb.checked; renderChips(); update(); };
+      const del = document.createElement('button'); del.textContent = '×'; del.title = '削除';
+      del.onclick = e => { e.preventDefault(); S[k].splice(i, 1); renderChips(); update(); };
+      s.append(cb, document.createTextNode(num(c.v)), del);
+      box.appendChild(s);
+    });
+  }
+}
+function fillInputs() {
+  NUM_KEYS.forEach(k => { $(k).value = S[k]; $(k).classList.remove('bad'); });
+  renderChips();
+  document.body.className = 'mode-' + S.mode;
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.mode === S.mode));
+}
+NUM_KEYS.forEach(k => $(k).addEventListener('input', () => {
+  const v = parseFloat($(k).value);
+  const ok = isFinite(v) && (POSITIVE.has(k) ? v > 0 : v >= 0);
+  $(k).classList.toggle('bad', !ok);
+  if (ok) { S[k] = v; update(); }
+}));
+document.querySelectorAll('[data-add]').forEach(b => {
+  const k = b.dataset.add, inp = $(k + 'Add');
+  const add = () => {
+    const v = parseFloat(inp.value);
+    if (!(v > 0)) return;
+    const ex = S[k].find(c => Math.abs(c.v - v) < EPS);
+    if (ex) ex.on = true; else S[k].push({ v, on: true });
+    inp.value = '';
+    renderChips(); update();
+  };
+  b.onclick = add;
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
+});
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  S.mode = b.dataset.mode; sortKey = null; sortDir = -1; selId = null;
+  fillInputs(); update();
+});
+$('reset').onclick = () => { const mode = S.mode; S = defaults(); S.mode = mode; fillInputs(); update(); };
+
+function update() {
+  toHash();
+  candRows = computeCand(S);
+  rows = S.mode === 'cand' ? candRows : computeRev(S, candRows);
+  if (!rows.some(r => r.id === selId && r.yield)) selId = (rows.slice().sort(defaultCmp)[0] || {}).id ?? null;
+  for (const id of [...compareIds]) if (!rows.some(r => r.id === id)) compareIds.delete(id);
+  renderSelected();
+  renderTable();
+  renderCompare();
+}
+
+// ---------- export ----------
+function download(name, blob) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function baseName() { return `panel_${num(S.bw)}x${num(S.bh)}`; }
+$('dlCsv').onclick = () => {
+  const cols = columns();
+  const strip = s => String(s).replace(/<[^>]+>/g, '');
+  const esc = s => /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  const lines = [cols.map(c => c.label).join(',')];
+  for (const r of sortedRows()) lines.push(cols.map(c => esc(strip(c.fmt(r)))).join(','));
+  download(`${baseName()}_${S.mode}.csv`, new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' }));
+};
+function sheetSvgText() {
+  const svg = $('sheetSvg').cloneNode(true);
+  svg.setAttribute('xmlns', NS);
+  svg.setAttribute('viewBox', $('sheetSvg').dataset.vb);
+  svg.removeAttribute('class');
+  const [, , w, h] = svg.dataset.vb.split(' ').map(Number);
+  svg.setAttribute('width', Math.round(w)); svg.setAttribute('height', Math.round(h));
+  return { text: new XMLSerializer().serializeToString(svg), w, h };
+}
+$('dlSvg').onclick = () => download(`${baseName()}.svg`, new Blob([sheetSvgText().text], { type: 'image/svg+xml' }));
+$('dlPng').onclick = () => {
+  const { text, w, h } = sheetSvgText();
+  const img = new Image();
+  img.onload = () => {
+    const sc = 2400 / Math.max(w, h);
+    const cv = document.createElement('canvas'); cv.width = Math.round(w * sc); cv.height = Math.round(h * sc);
+    const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(img, 0, 0, cv.width, cv.height);
+    cv.toBlob(b => download(`${baseName()}.png`, b), 'image/png');
+  };
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(text);
+};
+
+// ---------- start ----------
+zoomable($('sheetSvg'));
+zoomable($('workSvg'));
+fromHash();
+fillInputs();
+update();
+</script>
+</body>
+</html>

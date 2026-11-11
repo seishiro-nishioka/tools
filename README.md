@@ -20,6 +20,9 @@ tools/
 ├─ odb2kicad/         ← ODB++ → KiCad 変換
 │   ├─ index.html
 │   └─ README.md
+├─ panel-yield/       ← 基板の取り数計算
+│   ├─ index.html
+│   └─ README.md
 └─ <次のツール>/
     ├─ index.html
     └─ README.md
@@ -49,3 +52,4 @@ GitHub Pagesで公開(`main`ブランチのルートを配信)。
 | [cad2d](cad2d/) | 点・線分・円を配置し、SolveSpaceの幾何拘束ソルバーで正確に組み立てる簡易2D CAD |
 | [overlay-camera](overlay-camera/) | 基準写真をカメラ映像に半透明で重ね、同じ角度・距離・画角で撮り直すカメラ(差分・輪郭表示、前後比較画像の書き出し) |
 | [odb2kicad](odb2kicad/) | ODB++ の基板データを KiCad で閲覧できる .kicad_pcb に変換するツール(部品・ネット・パッド・ビア付き、表/裏のプレビュー) |
+| [panel-yield](panel-yield/) | 定尺板からワークを切り出し、ワーク内に個片を並べたときの取り数を全組み合わせで計算するツール(個片サイズからのワークサイズ逆算、定尺板・ワークのプレビューと比較付き) |
