@@ -76,7 +76,7 @@
 </head>
 <body class="mode-cand">
 <header>
-  <h1>基板の取り数計算</h1><span class="ver">v2026.11.11.1</span>
+  <h1>基板の取り数計算</h1><span class="ver">v2026.11.11.2</span>
   <a href="../">ツール一覧</a>
 </header>
 <main>
@@ -215,41 +215,9 @@ function pure(effW, effH, P, r) {
   grid(0, 0, nx, ny, w, h, g, r, rects);
   return { count: nx * ny, rects, usedW: span(nx, w, g), usedH: span(ny, h, g), desc: `${nx}×${ny}` };
 }
-// One straight cut splits the effective area into a 0° block and a 90° block.
-function mixed(effW, effH, P) {
-  const { bw, bh, gap: g } = P;
-  let best = null;
-  const consider = c => {
-    if (!best || c.count > best.count || (c.count === best.count && c.usedW * c.usedH < best.usedW * best.usedH)) best = c;
-  };
-  // vertical cut: 0° columns on the left, 90° columns on the right
-  const ra = fit(effH, bh, g), rb = fit(effH, bw, g);
-  if (ra && rb) for (let i = 1; i <= fit(effW, bw, g); i++) {
-    const wA = span(i, bw, g), j = fit(effW - wA - g, bh, g);
-    if (!j) continue;
-    const rects = [];
-    grid(0, 0, i, ra, bw, bh, g, 0, rects);
-    grid(wA + g, 0, j, rb, bh, bw, g, 1, rects);
-    consider({ count: i * ra + j * rb, rects, usedW: wA + g + span(j, bh, g),
-      usedH: Math.max(span(ra, bh, g), span(rb, bw, g)), desc: `${i}×${ra} (0°) + ${j}×${rb} (90°) 左右に分割` });
-  }
-  // horizontal cut: 0° rows on top, 90° rows below
-  const ca = fit(effW, bw, g), cb = fit(effW, bh, g);
-  if (ca && cb) for (let i = 1; i <= fit(effH, bh, g); i++) {
-    const hA = span(i, bh, g), j = fit(effH - hA - g, bw, g);
-    if (!j) continue;
-    const rects = [];
-    grid(0, 0, ca, i, bw, bh, g, 0, rects);
-    grid(0, hA + g, cb, j, bh, bw, g, 1, rects);
-    consider({ count: ca * i + cb * j, rects, usedW: Math.max(span(ca, bw, g), span(cb, bh, g)),
-      usedH: hA + g + span(j, bw, g), desc: `${ca}×${i} (0°) + ${cb}×${j} (90°) 上下に分割` });
-  }
-  return best;
-}
 function layouts(effW, effH, P) {
-  const a = pure(effW, effH, P, 0), b = pure(effW, effH, P, 1), m = mixed(effW, effH, P);
-  const mixOk = m && m.count > Math.max(a.count, b.count);
-  return [{ orient: '0°', L: a }, { orient: '90°', L: b }, { orient: '混在', L: mixOk ? m : null }];
+  // Boards in one work all share the same orientation.
+  return [{ orient: '0°', L: pure(effW, effH, P, 0) }, { orient: '90°', L: pure(effW, effH, P, 1) }];
 }
 
 function makeRow(mode, wx, wy, orient, L, P, extra) {
@@ -486,7 +454,7 @@ function columns() {
     { key: 'nW', label: 'ワーク数', get: r => r.nWx * r.nWy, fmt: r => `${r.nWx}×${r.nWy} = ${r.nWx * r.nWy}` },
     { key: 'orient', label: '向き', l: true, get: r => r.orient, fmt: r => r.orient },
     { key: 'per', label: '個片/ワーク', get: r => r.per ?? -1, fmt: r => r.per == null ? '—' : r.per },
-    { key: 'desc', label: '内訳', l: true, get: r => r.L ? r.L.desc : '', fmt: r => r.L ? r.L.desc : '混在しても増えない' },
+    { key: 'desc', label: '内訳', l: true, get: r => r.L ? r.L.desc : '', fmt: r => r.L ? r.L.desc : '—' },
     { key: 'yield', label: '取り数/定尺', get: r => r.yield ?? -1, fmt: r => r.yield == null ? '—' : `<b>${r.yield}</b>` },
     { key: 'util', label: '利用率', get: r => r.util ?? -1, fmt: r => pct(r.util) },
   ];
