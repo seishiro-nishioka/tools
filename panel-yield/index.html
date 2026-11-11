@@ -76,7 +76,7 @@
 </head>
 <body class="mode-cand">
 <header>
-  <h1>基板の取り数計算</h1><span class="ver">v2026.11.11.2</span>
+  <h1>基板の取り数計算</h1><span class="ver">v2026.11.11.3</span>
   <a href="../">ツール一覧</a>
 </header>
 <main>
@@ -453,7 +453,7 @@ function columns() {
   const common = [
     { key: 'nW', label: 'ワーク数', get: r => r.nWx * r.nWy, fmt: r => `${r.nWx}×${r.nWy} = ${r.nWx * r.nWy}` },
     { key: 'orient', label: '向き', l: true, get: r => r.orient, fmt: r => r.orient },
-    { key: 'per', label: '個片/ワーク', get: r => r.per ?? -1, fmt: r => r.per == null ? '—' : r.per },
+    { key: 'per', label: '取り数/ワーク', get: r => r.per ?? -1, fmt: r => r.per == null ? '—' : r.per },
     { key: 'desc', label: '内訳', l: true, get: r => r.L ? r.L.desc : '', fmt: r => r.L ? r.L.desc : '—' },
     { key: 'yield', label: '取り数/定尺', get: r => r.yield ?? -1, fmt: r => r.yield == null ? '—' : `<b>${r.yield}</b>` },
     { key: 'util', label: '利用率', get: r => r.util ?? -1, fmt: r => pct(r.util) },
@@ -539,7 +539,7 @@ function renderSelected() {
     ['利用率', pct(r.util)],
     ['ワーク', `${num(r.wx)}×${num(r.wy)} mm` + (r.rangeX ? ` (横 ${num(r.rangeX[0])}〜${num(r.rangeX[1])}、縦 ${num(r.rangeY[0])}〜${num(r.rangeY[1])})` : '')],
     ['ワーク数', `${r.nWx}×${r.nWy} = ${r.nWx * r.nWy}`],
-    ['個片/ワーク', `${r.per} (${r.L.desc})`],
+    ['取り数/ワーク', `${r.per} (${r.L.desc})`],
     ['端材', `${r.scrap.toFixed(3)} m²`],
   ];
   sm.innerHTML = items.map(([k, v]) => `<span><span class="k">${k}</span>${v}</span>`).join('');
