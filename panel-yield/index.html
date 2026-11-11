@@ -15,29 +15,57 @@
   header h1 { font-size: 18px; margin: 0; }
   header .ver { color: var(--muted); font-size: 12px; }
   header a { margin-left: auto; color: var(--accent); text-decoration: none; }
-  main { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 12px; padding: 12px; align-items: start; }
-  @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
-  aside { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; position: sticky; top: 12px; }
-  @media (max-width: 860px) { aside { position: static; } }
+  /* 3 columns: inputs | results | preview. Each column scrolls on its own so the page itself does not. */
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; }
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 270px minmax(0, 1fr) clamp(360px, 36vw, 680px); gap: 12px; padding: 12px; }
+  main > * { min-height: 0; overflow: auto; }
+  aside { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  #center { display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+  #center > .card { margin: 0; }
+  #tblCard { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  #tblCard .tblwrap { flex: 1; min-height: 0; overflow: auto; }
+  #compare { flex: 0 1 auto; max-height: 45%; overflow: auto; }
+  #right { display: flex; flex-direction: column; gap: 12px; }
+  #right > .card { margin: 0; }
+  #viewCard { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .views { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+  .views figure { flex: 1.5 1 0; min-height: 220px; display: flex; flex-direction: column; }
+  .views figure + figure { flex: 1 1 0; min-height: 160px; }
+  .views svg.view { flex: 1; min-height: 0; height: auto; aspect-ratio: auto; }
+  @media (max-width: 1100px) {
+    html, body { height: auto; }
+    body { display: block; }
+    main { display: flex; flex-direction: column; }
+    #right { order: 2; }
+    #center { order: 3; }
+    main > * { overflow: visible; margin-bottom: 12px; }
+    #center { overflow: visible; }
+    #compare { max-height: none; }
+    #viewCard, .views, .views figure { display: block; }
+    .views figure + figure { margin-top: 10px; }
+    .views svg.view { aspect-ratio: 1 / 1; height: auto; }
+  }
   aside h2 { font-size: 13px; margin: 12px 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--line); }
   aside h2:first-child { margin-top: 0; }
-  .row { display: flex; align-items: center; gap: 6px; margin: 4px 0; flex-wrap: wrap; }
-  .row > span.lbl { width: 64px; color: var(--muted); font-size: 12px; }
-  input[type=number] { width: 64px; padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+  .row { display: flex; align-items: center; gap: 5px; margin: 4px 0; flex-wrap: wrap; }
+  .row > span.lbl { width: 62px; flex: none; color: var(--muted); font-size: 12px; }
+  input[type=number] { width: 58px; padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+  #sw, #sh { width: 68px; }
   input.bad { border-color: #cf222e; background: #ffebe9; }
   .unit { color: var(--muted); font-size: 12px; }
   button.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px; }
   button.btn:hover { background: var(--bg); }
   .note { color: var(--muted); font-size: 12px; margin: 4px 0; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
-  #summary { display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: baseline; }
-  #summary .big { font-size: 28px; font-weight: 700; }
+  #summary { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 16px; align-items: baseline; }
+  #summary .big { font-size: 26px; font-weight: 700; }
+  #summary .wide { grid-column: 1 / -1; }
   #summary .k { color: var(--muted); font-size: 12px; margin-right: 4px; }
-  .views { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 12px; }
-  @media (max-width: 1100px) { .views { grid-template-columns: minmax(0, 1fr); } }
   figure { margin: 0; }
   figcaption { font-size: 12px; color: var(--muted); margin-bottom: 4px; display: flex; gap: 6px; align-items: center; }
   figcaption .sp { flex: 1; }
+  figcaption .hint { font-size: 11px; color: #8c959f; }
   figcaption button { border: 1px solid var(--line); background: var(--panel); border-radius: 4px; width: 26px; height: 22px; cursor: pointer; }
   svg.view { width: 100%; aspect-ratio: 1 / 1; background: #fff; border: 1px solid var(--line); border-radius: 6px; display: block; user-select: none; }
   svg.view.mouse { cursor: grab; }
@@ -47,7 +75,7 @@
   .toolbar .sp { flex: 1; }
   .tblwrap { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-size: 13px; white-space: nowrap; }
-  th, td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: right; }
+  th, td { padding: 4px 6px; border-bottom: 1px solid var(--line); text-align: right; }
   th { background: var(--bg); position: sticky; top: 0; cursor: pointer; user-select: none; font-weight: 600; }
   th.nosort { cursor: default; }
   th .arr { color: var(--accent); }
@@ -57,7 +85,7 @@
   tr.best { background: var(--best); }
   tr.sel { background: var(--sel) !important; outline: 2px solid var(--accent); outline-offset: -2px; }
   tr.zero { color: #a0a7b0; }
-  #compare .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  #compare .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
   #compare .item { border: 1px solid var(--line); border-radius: 6px; padding: 6px; cursor: pointer; }
   #compare .item svg { width: 100%; aspect-ratio: 1 / 1; display: block; }
   #compare .cap { font-size: 12px; margin-top: 4px; }
@@ -66,14 +94,14 @@
 </head>
 <body>
 <header>
-  <h1>基板の取り数計算</h1><span class="ver">v2026.11.11.5</span>
+  <h1>基板の取り数計算</h1><span class="ver">v2026.11.11.6</span>
   <a href="../">ツール一覧</a>
 </header>
 <main>
   <aside>
     <h2>基板単品</h2>
     <div class="row"><span class="lbl">横 × 縦</span><input type="number" id="bw" step="any" min="0"> × <input type="number" id="bh" step="any" min="0"><span class="unit">mm</span></div>
-    <div class="row"><span class="lbl">間隔</span><input type="number" id="gap" step="any" min="0"><span class="unit">mm (V カットは 0)</span></div>
+    <div class="row"><span class="lbl">間隔</span><input type="number" id="gap" step="any" min="0"><span class="unit">mm (Vカットは0)</span></div>
 
     <h2>ワーク</h2>
     <div class="row"><span class="lbl">捨て代 上</span><input type="number" id="mt" step="any" min="0"> 下 <input type="number" id="mb" step="any" min="0"></div>
@@ -92,13 +120,28 @@
     <p class="note">入力値は URL に保存されます。URL を共有すると同じ条件で開けます。</p>
   </aside>
 
-  <div>
+  <div id="center">
+    <div class="card" id="tblCard">
+      <div class="toolbar">
+        <b id="tblTitle"></b><span class="sp"></span>
+        <button class="btn" id="dlCsv">CSV</button>
+        <button class="btn" id="dlSvg">SVG</button>
+        <button class="btn" id="dlPng">PNG</button>
+      </div>
+      <p class="note" id="tblNote"></p>
+      <div class="tblwrap"><table id="tbl"><thead></thead><tbody></tbody></table></div>
+    </div>
+
+    <div class="card" id="compare"></div>
+  </div>
+
+  <div id="right">
     <div class="card" id="summary"></div>
 
-    <div class="card">
+    <div class="card" id="viewCard">
       <div class="views">
         <figure>
-          <figcaption>定尺板<span class="sp"></span><button data-zoom="sheetSvg" data-z="in">＋</button><button data-zoom="sheetSvg" data-z="out">－</button><button data-zoom="sheetSvg" data-z="reset">⟲</button></figcaption>
+          <figcaption title="ホイールで拡大縮小、ドラッグで移動、ダブルクリックで元に戻す。図形にマウスを重ねると寸法を表示">定尺板 <span class="hint">(ホイールで拡大、ドラッグで移動)</span><span class="sp"></span><button data-zoom="sheetSvg" data-z="in">＋</button><button data-zoom="sheetSvg" data-z="out">－</button><button data-zoom="sheetSvg" data-z="reset">⟲</button></figcaption>
           <svg class="view" id="sheetSvg"></svg>
         </figure>
         <figure>
@@ -112,22 +155,9 @@
         <span><i style="background:#e8edf4"></i>捨て代</span>
         <span><i style="background:#fff"></i>有効エリア</span>
         <span><i style="background:repeating-linear-gradient(45deg,#b9bfc8 0 1px,#f4f5f7 1px 4px)"></i>端材・耳・カーフ</span>
-        <span>ホイールで拡大縮小、ドラッグで移動、ダブルクリックで元に戻す。図形にマウスを重ねると寸法を表示</span>
       </div>
     </div>
 
-    <div class="card">
-      <div class="toolbar">
-        <b id="tblTitle"></b><span class="sp"></span>
-        <button class="btn" id="dlCsv">CSV</button>
-        <button class="btn" id="dlSvg">SVG</button>
-        <button class="btn" id="dlPng">PNG</button>
-      </div>
-      <p class="note" id="tblNote"></p>
-      <div class="tblwrap"><table id="tbl"><thead></thead><tbody></tbody></table></div>
-    </div>
-
-    <div class="card" id="compare"></div>
   </div>
 </main>
 
@@ -321,9 +351,6 @@ function drawWorkView(svg, row, P) {
   if (!row) { svg.removeAttribute('viewBox'); return; }
   const m = Math.max(row.wx, row.wy), fs = m / 30;
   const vb = [-fs * 3.6, -fs * 3.6, row.wx + fs * 9.2, row.wy + fs * 9.2];
-  // keep the view square-ish so the work is not tiny on one axis
-  const side = Math.max(vb[2], vb[3]);
-  vb[0] -= (side - vb[2]) / 2; vb[1] -= (side - vb[3]) / 2; vb[2] = vb[3] = side;
   svg.setAttribute('viewBox', vb.join(' '));
   svg.dataset.vb = vb.join(' ');
   drawWork(svg, 0, 0, row, P, '');
@@ -399,14 +426,14 @@ document.querySelectorAll('[data-zoom]').forEach(b => b.addEventListener('click'
 function columns() {
   return [
     { key: 'work', label: '推奨ワーク', l: true, get: r => r.wx * r.wy, fmt: r => `${num(r.wx)}×${num(r.wy)}` },
-    { key: 'rx', label: '横の範囲', get: r => r.rangeX[0], fmt: r => `${num(r.rangeX[0])}〜${num(r.rangeX[1])}` },
-    { key: 'ry', label: '縦の範囲', get: r => r.rangeY[0], fmt: r => `${num(r.rangeY[0])}〜${num(r.rangeY[1])}` },
+    { key: 'yield', label: '取り数/定尺', get: r => r.yield ?? -1, fmt: r => r.yield == null ? '—' : `<b>${r.yield}</b>` },
+    { key: 'util', label: '利用率', get: r => r.util ?? -1, fmt: r => pct(r.util) },
     { key: 'nW', label: 'ワーク数', get: r => r.nWx * r.nWy, fmt: r => `${r.nWx}×${r.nWy} = ${r.nWx * r.nWy}` },
     { key: 'orient', label: '向き', l: true, get: r => r.orient, fmt: r => r.orient },
     { key: 'per', label: '取り数/ワーク', get: r => r.per ?? -1, fmt: r => r.per == null ? '—' : r.per },
     { key: 'desc', label: '内訳', l: true, get: r => r.L ? r.L.desc : '', fmt: r => r.L ? r.L.desc : '—' },
-    { key: 'yield', label: '取り数/定尺', get: r => r.yield ?? -1, fmt: r => r.yield == null ? '—' : `<b>${r.yield}</b>` },
-    { key: 'util', label: '利用率', get: r => r.util ?? -1, fmt: r => pct(r.util) },
+    { key: 'rx', label: '横の範囲', get: r => r.rangeX[0], fmt: r => `${num(r.rangeX[0])}〜${num(r.rangeX[1])}` },
+    { key: 'ry', label: '縦の範囲', get: r => r.rangeY[0], fmt: r => `${num(r.rangeY[0])}〜${num(r.rangeY[1])}` },
     { key: 'scrap', label: '端材 m²', get: r => r.scrap ?? 1e9, fmt: r => r.scrap == null ? '—' : r.scrap.toFixed(3) },
   ];
 }
@@ -474,12 +501,12 @@ function renderSelected() {
   const items = [
     ['取り数/定尺', `<span class="big">${r.yield}</span> 枚`],
     ['利用率', pct(r.util)],
-    ['ワーク', `${num(r.wx)}×${num(r.wy)} mm` + (r.rangeX ? ` (横 ${num(r.rangeX[0])}〜${num(r.rangeX[1])}、縦 ${num(r.rangeY[0])}〜${num(r.rangeY[1])})` : '')],
+    ['ワーク', `${num(r.wx)}×${num(r.wy)} mm` + (r.rangeX ? ` (横 ${num(r.rangeX[0])}〜${num(r.rangeX[1])}、縦 ${num(r.rangeY[0])}〜${num(r.rangeY[1])})` : ''), 'wide'],
     ['ワーク数', `${r.nWx}×${r.nWy} = ${r.nWx * r.nWy}`],
     ['取り数/ワーク', `${r.per} (${r.L.desc})`],
     ['端材', `${r.scrap.toFixed(3)} m²`],
   ];
-  sm.innerHTML = items.map(([k, v]) => `<span><span class="k">${k}</span>${v}</span>`).join('');
+  sm.innerHTML = items.map(([k, v, c]) => `<span class="${c || ''}"><span class="k">${k}</span>${v}</span>`).join('');
   drawSheet($('sheetSvg'), r, P, true);
   drawWorkView($('workSvg'), r, P);
 }
