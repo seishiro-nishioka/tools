@@ -76,12 +76,12 @@
 </head>
 <body class="mode-cand">
 <header>
-  <h1>基板の取り数計算</h1><span class="ver">v2026.11.11.3</span>
+  <h1>基板の取り数計算</h1><span class="ver">v2026.11.11.4</span>
   <a href="../">ツール一覧</a>
 </header>
 <main>
   <aside>
-    <h2>個片</h2>
+    <h2>基板単品</h2>
     <div class="row"><span class="lbl">横 × 縦</span><input type="number" id="bw" step="any" min="0"> × <input type="number" id="bh" step="any" min="0"><span class="unit">mm</span></div>
     <div class="row"><span class="lbl">間隔</span><input type="number" id="gap" step="any" min="0"><span class="unit">mm (V カットは 0)</span></div>
 
@@ -132,8 +132,8 @@
         </figure>
       </div>
       <div class="legend">
-        <span><i style="background:var(--c0)"></i>個片 0°</span>
-        <span><i style="background:var(--c90)"></i>個片 90°</span>
+        <span><i style="background:var(--c0)"></i>基板単品 0°</span>
+        <span><i style="background:var(--c90)"></i>基板単品 90°</span>
         <span><i style="background:#e8edf4"></i>捨て代</span>
         <span><i style="background:#fff"></i>有効エリア</span>
         <span><i style="background:repeating-linear-gradient(45deg,#b9bfc8 0 1px,#f4f5f7 1px 4px)"></i>端材・耳・カーフ</span>
@@ -337,7 +337,7 @@ function drawWork(parent, x, y, row, P, label) {
   const bg = el('g', {}, g);
   for (const r of row.L.rects) {
     title(el('rect', { x: ox + r.x, y: oy + r.y, width: r.w, height: r.h, fill: r.r ? C90 : C0, 'fill-opacity': 0.85,
-      stroke: r.r ? '#8a4512' : '#1d4fa3', 'stroke-width': 0.5, ...LINE }, bg), `個片 ${num(r.w)}×${num(r.h)} mm (${r.r ? '90°' : '0°'})`);
+      stroke: r.r ? '#8a4512' : '#1d4fa3', 'stroke-width': 0.5, ...LINE }, bg), `基板単品 ${num(r.w)}×${num(r.h)} mm (${r.r ? '90°' : '0°'})`);
   }
   return g;
 }
@@ -521,7 +521,7 @@ function renderTable() {
   $('tblTitle').textContent = S.mode === 'cand' ? `計算結果 (${rows.length} 通り)` : `逆算の結果 (${rows.length} 通り)`;
   $('tblNote').textContent = S.mode === 'cand'
     ? '行をクリックするとプレビューが切り替わります。見出しのクリックで並べ替え。黄色の行が最大の取り数です。'
-    : '推奨ワークは、その配置が収まる最小の寸法です。横・縦の範囲内なら、どの寸法でもワーク数と個片数は変わりません。';
+    : '推奨ワークは、その配置が収まる最小の寸法です。横・縦の範囲内なら、どの寸法でもワーク数と基板単品の数は変わりません。';
 }
 
 function renderSelected() {
@@ -529,7 +529,7 @@ function renderSelected() {
   const P = S;
   const sm = $('summary');
   if (!r || !r.yield) {
-    sm.innerHTML = '<span>個片が入るワークがありません。個片の寸法、捨て代、ワークの候補・範囲を見直してください。</span>';
+    sm.innerHTML = '<span>基板単品が入るワークがありません。基板単品の寸法、捨て代、ワークの候補・範囲を見直してください。</span>';
     drawSheet($('sheetSvg'), null, P, true);
     drawWorkView($('workSvg'), null, P);
     return;
