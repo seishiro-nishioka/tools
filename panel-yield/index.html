@@ -94,7 +94,7 @@
 </head>
 <body>
 <header>
-  <h1>基板の取り数計算</h1><span class="ver">v2026.11.11.6</span>
+  <h1>基板の取り数計算</h1><span class="ver">v2026.11.11.7</span>
   <a href="../">ツール一覧</a>
 </header>
 <main>
@@ -425,16 +425,13 @@ document.querySelectorAll('[data-zoom]').forEach(b => b.addEventListener('click'
 // ---------- table ----------
 function columns() {
   return [
-    { key: 'work', label: '推奨ワーク', l: true, get: r => r.wx * r.wy, fmt: r => `${num(r.wx)}×${num(r.wy)}` },
     { key: 'yield', label: '取り数/定尺', get: r => r.yield ?? -1, fmt: r => r.yield == null ? '—' : `<b>${r.yield}</b>` },
-    { key: 'util', label: '利用率', get: r => r.util ?? -1, fmt: r => pct(r.util) },
-    { key: 'nW', label: 'ワーク数', get: r => r.nWx * r.nWy, fmt: r => `${r.nWx}×${r.nWy} = ${r.nWx * r.nWy}` },
-    { key: 'orient', label: '向き', l: true, get: r => r.orient, fmt: r => r.orient },
     { key: 'per', label: '取り数/ワーク', get: r => r.per ?? -1, fmt: r => r.per == null ? '—' : r.per },
     { key: 'desc', label: '内訳', l: true, get: r => r.L ? r.L.desc : '', fmt: r => r.L ? r.L.desc : '—' },
+    { key: 'orient', label: '向き', l: true, get: r => r.orient, fmt: r => r.orient },
+    { key: 'work', label: '推奨ワーク寸法', l: true, get: r => r.wx * r.wy, fmt: r => `${num(r.wx)}×${num(r.wy)}` },
     { key: 'rx', label: '横の範囲', get: r => r.rangeX[0], fmt: r => `${num(r.rangeX[0])}〜${num(r.rangeX[1])}` },
     { key: 'ry', label: '縦の範囲', get: r => r.rangeY[0], fmt: r => `${num(r.rangeY[0])}〜${num(r.rangeY[1])}` },
-    { key: 'scrap', label: '端材 m²', get: r => r.scrap ?? 1e9, fmt: r => r.scrap == null ? '—' : r.scrap.toFixed(3) },
   ];
 }
 function defaultCmp(a, b) {
