@@ -113,7 +113,7 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
 <body>
 <header>
   <a class="back-link" href="../">← 一覧</a>
-  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.10.8</span></h1>
+  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.11.1</span></h1>
   <p>ODB++ の基板データを KiCad で閲覧できる .kicad_pcb (KiCad 9/10 用) に変換します。ファイルはサーバーに送信されず、処理はすべてブラウザ内で完結します。</p>
 </header>
 <main>
@@ -1164,6 +1164,14 @@ function buildBoard(st, opts = {}) {
   const topCu = copperLayers[0], botCu = copperLayers.length > 1 ? copperLayers[copperLayers.length - 1] : null;
   const idx = { F: new PadIndex(topCu ? padsOf(topCu) : []), B: new PadIndex(botCu ? padsOf(botCu) : []) };
   const findCu = (x, y) => idx.F.find(x, y) || idx.B.find(x, y);
+  // inner copper (negative layers hold antipads, not lands)
+  const innerIdx = copperLayers.slice(1, -1).filter(l => l.target)
+    .map(l => ({ name: l.target, idx: new PadIndex((l.polarity || '').toUpperCase() === 'NEGATIVE' ? [] : padsOf(l)) }));
+  // per-layer lands of a plated hole: each copper layer keeps its own shape
+  const cuStack = (x, y) => {
+    const f = idx.F.find(x, y), b = idx.B.find(x, y);
+    return { front: f, back: b, inner: innerIdx.map(e => ({ name: e.name, pad: e.idx.find(x, y) })) };
+  };
 
   /* targets */
   const byTarget = new Map();
@@ -1224,38 +1232,100 @@ function buildBoard(st, opts = {}) {
     return null;
   };
   const padCheck = [];
-  function padBlock(number, x, y, fpx, fpy, geomPaths, layers, net, hole, indent) {
+  // Standard ODB++ symbol -> KiCad pad shape, in the pad's frame (KiCad orientation `orient`, CCW degrees).
+  // Only for lands centred on the pin and aligned to the pad axes; others stay custom polygons.
+  function nativeShape(p, x, y, orient) {
+    if (!p || !p.sym || Math.abs(p.x - x) > 1e-4 || Math.abs(p.y - y) > 1e-4) return null;
+    const n = p.sym.name, k = p.sym.k;
+    let m, shape, w, h;
+    if ((m = /^r([\d.]+)$/.exec(n))) return { shape: 'circle', w: parseFloat(m[1]) * k, h: parseFloat(m[1]) * k };
+    if ((m = /^s([\d.]+)$/.exec(n))) { shape = 'rect'; w = h = parseFloat(m[1]) * k; }
+    else if ((m = /^rect([\d.]+)x([\d.]+)$/.exec(n))) { shape = 'rect'; w = parseFloat(m[1]) * k; h = parseFloat(m[2]) * k; }
+    else if ((m = /^oval([\d.]+)x([\d.]+)$/.exec(n))) { shape = 'oval'; w = parseFloat(m[1]) * k; h = parseFloat(m[2]) * k; }
+    else return null;
+    // ODB++ angles are clockwise; the pad frame is rotated by -orient (CW) from the board
+    let rel = (((p.angle || 0) + orient) % 180 + 180) % 180;
+    if (Math.abs(rel - 180) < 1e-6) rel = 0;
+    if (Math.abs(rel) < 1e-6) return { shape, w, h };
+    if (Math.abs(rel - 90) < 1e-6) return { shape, w: h, h: w };
+    return null;
+  }
+  // shapes: { front, back?, inner?: [{ name, pad }] } ODB++ pads (board coords). For SMD only `front` (the pad's own layer) is used.
+  function padBlock(number, x, y, fpx, fpy, shapes, layers, net, hole, indent) {
     // pad position is footprint-local (KiCad, Y-down); footprint rotation is 0
     const lx = x - fpx, ly = -(y - fpy);
     const orient = hole && hole.slot ? kicadAngle(hole.slot.angle) : 0; // ODB++ CW -> KiCad CCW
+    // board (ODB++, Y-up) -> pad-local KiCad: translate, flip Y, then rotate by -orientation
+    const a = -orient * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+    const map = (bx, by) => {
+      const dx = bx - x, dy = -(by - y);
+      // KiCad rotation (Y-down, CCW positive): x' = x cos + y sin, y' = -x sin + y cos
+      return [dx * c + dy * s, -dx * s + dy * c];
+    };
+    const sh = shapes || {};
+    const plated = !!(hole && !hole.npth);
+    const pathsOf = p => p && p.paths && p.paths.length ? p.paths : null;
+    // one copper layer's land: KiCad shape, size and (for custom) primitives
+    const land = (p, ind) => {
+      const nat = plated ? nativeShape(p, x, y, orient) : null;
+      if (nat) return { shape: nat.shape, size: `${f6(nat.w)} ${f6(nat.h)}`, custom: false, lines: [] };
+      const paths = pathsOf(p);
+      // no land on this layer: the minimum circle (same as the anchor), which survives a KiCad save/reload
+      if (plated && !paths) return { shape: 'circle', size: '0.05 0.05', custom: false, lines: [] };
+      const P = [];
+      if (paths) {
+        P.push(`${ind}(primitives`);
+        for (const poly of fracture(paths)) {
+          P.push(`${ind}\t(gr_poly`, `${ind}\t\t(pts`, ptsLines(poly, map, ind + '\t\t\t'), `${ind}\t\t)`,
+            `${ind}\t\t(width 0)`, `${ind}\t\t(fill yes)`, `${ind}\t)`);
+        }
+        P.push(`${ind})`);
+      }
+      return { shape: 'custom', size: '0.05 0.05', custom: true, lines: P };
+    };
+    const keyOf = p => { const d = land(p, ''); return d.shape + '|' + d.size + '|' + d.lines.join('\n'); };
+    const front = land(sh.front, indent + '\t');
+    let stack = null;
+    if (plated && (sh.back !== undefined || sh.inner)) {
+      // each copper layer of the hole keeps its own land: F.Cu (the pad itself), inner layers, B.Cu (padstack)
+      const fk = keyOf(sh.front), bk = keyOf(sh.back);
+      const inner = (sh.inner || []).map(e => ({ name: e.name, pad: e.pad, k: keyOf(e.pad) }));
+      const innerSame = inner.every(e => e.k === inner[0].k);
+      if (bk !== fk || inner.some(e => e.k !== fk)) {
+        const layerBlock = (name, p) => {
+          const d = land(p, indent + '\t\t\t');
+          return [`${indent}\t\t(layer ${q(name)}`, `${indent}\t\t\t(shape ${d.shape})`, `${indent}\t\t\t(size ${d.size})`,
+            ...(d.custom ? [`${indent}\t\t\t(options`, `${indent}\t\t\t\t(clearance outline)`, `${indent}\t\t\t\t(anchor circle)`, `${indent}\t\t\t)`,
+              ...(d.lines.length ? d.lines : [`${indent}\t\t\t(primitives)`])] : []),
+            `${indent}\t\t)`];
+        };
+        stack = [`${indent}\t(padstack`];
+        if (innerSame) stack.push(`${indent}\t\t(mode front_inner_back)`, ...layerBlock('Inner', inner.length ? inner[0].pad : sh.front));
+        else { stack.push(`${indent}\t\t(mode custom)`); for (const e of inner) stack.push(...layerBlock(e.name, e.pad)); }
+        stack.push(...layerBlock('B.Cu', sh.back), `${indent}\t)`);
+      }
+    }
     const L = [];
     const kind = hole ? (hole.npth ? 'np_thru_hole' : 'thru_hole') : 'smd';
-    L.push(`${indent}(pad ${q(number)} ${kind} custom`);
+    L.push(`${indent}(pad ${q(number)} ${kind} ${front.shape}`);
     L.push(`${indent}\t(at ${f6(lx)} ${f6(ly)}${orient ? ' ' + f6(orient) : ''})`);
-    L.push(`${indent}\t(size 0.05 0.05)`);
+    L.push(`${indent}\t(size ${front.size})`);
     if (hole) {
       if (hole.slot) L.push(`${indent}\t(drill oval ${f6(hole.slot.w)} ${f6(hole.slot.h)})`);
       else L.push(`${indent}\t(drill ${f6(hole.d)})`);
     }
     L.push(`${indent}\t(layers ${layers.map(q).join(' ')})`);
-    if (hole && !hole.npth) L.push(`${indent}\t(remove_unused_layers no)`);
+    if (plated) L.push(`${indent}\t(remove_unused_layers no)`);
     if (net) L.push(`${indent}\t${net}`);
-    L.push(`${indent}\t(options`, `${indent}\t\t(clearance outline)`, `${indent}\t\t(anchor circle)`, `${indent}\t)`);
-    if (geomPaths && geomPaths.length) {
-      // board (ODB++, Y-up) -> pad-local KiCad: translate, flip Y, then rotate by -orientation
-      const a = -orient * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
-      const map = (bx, by) => {
-        const dx = bx - x, dy = -(by - y);
-        // KiCad rotation (Y-down, CCW positive): x' = x cos + y sin, y' = -x sin + y cos
-        return [dx * c + dy * s, -dx * s + dy * c];
-      };
-      L.push(`${indent}\t(primitives`);
-      for (const p of fracture(geomPaths)) {
-        L.push(`${indent}\t\t(gr_poly`, `${indent}\t\t\t(pts`, ptsLines(p, map, indent + '\t\t\t\t'), `${indent}\t\t\t)`,
-          `${indent}\t\t\t(width 0)`, `${indent}\t\t\t(fill yes)`, `${indent}\t\t)`);
-      }
-      L.push(`${indent}\t)`);
-      if (opts.check) padCheck.push({ number, x, y, bbox: bbox(geomPaths) });
+    if (front.custom) L.push(`${indent}\t(options`, `${indent}\t\t(clearance outline)`, `${indent}\t\t(anchor circle)`, `${indent}\t)`);
+    // KiCad 9 copies the front land to the other layers when it reads (mode ...) and then appends each
+    // layer's own primitives, so the padstack must come before the front primitives. (KiCad itself saves
+    // it after them; lands written as standard shapes are not affected when such a file is reopened.)
+    if (stack) L.push(...stack);
+    L.push(...front.lines);
+    const anyPaths = [sh.front, sh.back, ...(sh.inner || []).map(e => e.pad)].map(pathsOf).find(Boolean);
+    if (anyPaths) {
+      if (opts.check) padCheck.push({ number, x, y, bbox: bbox(anyPaths) });
     } else if (!(hole && hole.npth)) stats.padsNoCopper++;
     L.push(`${indent}\t(uuid ${q(uuid())})`, `${indent})`);
     return L.join('\n');
@@ -1279,11 +1349,10 @@ function buildBoard(st, opts = {}) {
         const net = netRef(pin.net);
         if (hi != null) {
           usedHoles.add(hi);
-          const hit = findCu(pin.x, pin.y);
-          L.push(padBlock(pin.name, pin.x, pin.y, c.x, c.y, hit && hit.paths, allCu, net, holes[hi], '\t\t'));
+          L.push(padBlock(pin.name, pin.x, pin.y, c.x, c.y, cuStack(pin.x, pin.y), allCu, net, holes[hi], '\t\t'));
         } else {
           const hit = idx[side === 'B' ? 'B' : 'F'].find(pin.x, pin.y);
-          L.push(padBlock(pin.name, pin.x, pin.y, c.x, c.y, hit && hit.paths, [sideCu], net, null, '\t\t'));
+          L.push(padBlock(pin.name, pin.x, pin.y, c.x, c.y, { front: hit }, [sideCu], net, null, '\t\t'));
         }
         stats.pads++;
       });
@@ -1299,15 +1368,25 @@ function buildBoard(st, opts = {}) {
     if (usedHoles.has(i)) return;
     const hit = findCu(h.x, h.y);
     if (!h.slot && hit) {
-      const b = bbox(hit.paths);
-      const w = Math.max(b[2] - b[0], h.d + 0.05);
+      // land diameter per layer (front / inner / back); layers without a land get the minimum ring
+      const cs = cuStack(h.x, h.y);
+      const wOf = p => { if (!p) return h.d + 0.05; const b = bbox(p.paths); return Math.max(b[2] - b[0], h.d + 0.05); };
+      const wf = wOf(cs.front), wb = wOf(cs.back), wi = cs.inner.map(e => ({ name: e.name, w: wOf(e.pad) }));
       const through = h.span[0] === 'F.Cu' && h.span[1] === 'B.Cu';
-      viaLines.push(['\t(via' + (through ? '' : ' blind'), `\t\t(at ${f6(h.x)} ${f6(-h.y)})`, `\t\t(size ${f6(w)})`, `\t\t(drill ${f6(h.d)})`,
-        `\t\t(layers ${q(h.span[0])} ${q(h.span[1])})`, '\t\t(net 0)', `\t\t(uuid ${q(uuid())})`, '\t)'].join('\n'));
+      const V = ['\t(via' + (through ? '' : ' blind'), `\t\t(at ${f6(h.x)} ${f6(-h.y)})`, `\t\t(size ${f6(wf)})`, `\t\t(drill ${f6(h.d)})`,
+        `\t\t(layers ${q(h.span[0])} ${q(h.span[1])})`];
+      if (f6(wb) !== f6(wf) || wi.some(e => f6(e.w) !== f6(wf))) {
+        V.push('\t\t(padstack');
+        if (wi.every(e => f6(e.w) === f6(wi[0].w))) V.push('\t\t\t(mode front_inner_back)', `\t\t\t(layer "Inner"`, `\t\t\t\t(size ${f6(wi.length ? wi[0].w : wf)})`, '\t\t\t)');
+        else { V.push('\t\t\t(mode custom)'); for (const e of wi) V.push(`\t\t\t(layer ${q(e.name)}`, `\t\t\t\t(size ${f6(e.w)})`, '\t\t\t)'); }
+        V.push(`\t\t\t(layer "B.Cu"`, `\t\t\t\t(size ${f6(wb)})`, '\t\t\t)', '\t\t)');
+      }
+      V.push('\t\t(net 0)', `\t\t(uuid ${q(uuid())})`, '\t)');
+      viaLines.push(V.join('\n'));
       stats.vias++;
     } else {
       const hh = hit ? h : Object.assign({}, h, { npth: true });
-      extraPads.push(padBlock('', h.x, h.y, 0, 0, hit && hit.paths, hit ? allCu : allCu, null, hh, '\t\t'));
+      extraPads.push(padBlock('', h.x, h.y, 0, 0, hit ? cuStack(h.x, h.y) : null, allCu, null, hh, '\t\t'));
       stats.holes++;
     }
   });
