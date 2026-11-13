@@ -11,6 +11,9 @@ tools/
 ├─ pdf-split-merge/   ← PDF分割・結合ツール
 │   ├─ index.html
 │   └─ README.md
+├─ pdf-unlock/        ← PDFパスワード解除
+│   ├─ index.html
+│   └─ README.md
 ├─ serial-monitor/    ← シリアル通信モニター
 │   ├─ index.html
 │   └─ README.md

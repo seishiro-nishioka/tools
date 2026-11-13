@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PDFパスワード解除</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EEF1F4; --panel:#FFFFFF; --ink:#1B2733; --sub:#5A6878; --line:#CBD4DE;
+  --red:#E0301E; --blue:#2B5C8A; --blue-ink:#FFFFFF; --ok:#1E7A46; --warn:#9A6200;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#141A21; --panel:#1C242D; --ink:#E6ECF2; --sub:#9AA8B6; --line:#33404D;
+    --red:#FF5040; --blue:#5B93C9; --blue-ink:#0E1620; --ok:#4CC27E; --warn:#E0A94A;
+  }
+}
+*,*::before,*::after{box-sizing:inherit}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  font-size:14.5px; line-height:1.5;
+}
+header{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; padding:12px 18px 6px; max-width:860px; margin:0 auto}
+.back-link{
+  flex:none; display:inline-flex; align-items:center; gap:4px;
+  font-size:12.5px; color:var(--sub); text-decoration:none;
+  padding:4px 9px; border-radius:5px; border:1px solid var(--line);
+}
+.back-link:hover{border-color:var(--blue); color:var(--ink)}
+h1{margin:0; font-size:19px; font-weight:700; letter-spacing:.02em}
+.tool-version{margin-left:8px; font-size:11px; font-weight:500; color:var(--sub)}
+header p{margin:0; color:var(--sub); font-size:12.5px; flex-basis:100%}
+
+main{max-width:860px; margin:0 auto; padding:8px 18px 32px; display:flex; flex-direction:column; gap:12px}
+.card{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; display:flex; flex-direction:column; gap:10px}
+
+.dropzone{
+  border:2px dashed var(--line); border-radius:8px; padding:22px 10px; text-align:center;
+  color:var(--sub); font-size:12.5px; cursor:pointer;
+}
+.dropzone:hover, .dropzone.drag-over{background:var(--bg); border-color:var(--blue)}
+.dropzone b{display:block; color:var(--ink); font-size:14px; margin-bottom:2px}
+
+label.field{display:flex; flex-direction:column; gap:4px; font-size:12.5px; color:var(--sub); font-weight:700}
+.pw-row{display:flex; gap:6px}
+input[type=password], input[type=text]{
+  flex:1; min-width:0; font:inherit; color:var(--ink); background:var(--bg);
+  border:1px solid var(--line); border-radius:6px; padding:8px 10px;
+}
+input:focus{outline:2px solid var(--blue); outline-offset:-1px}
+button{
+  font:inherit; font-size:13.5px; border-radius:6px; padding:7px 14px; cursor:pointer;
+  border:1px solid var(--line); background:var(--panel); color:var(--ink);
+}
+button:hover:not(:disabled){border-color:var(--blue)}
+button.primary{background:var(--blue); border-color:var(--blue); color:var(--blue-ink); font-weight:700}
+button:disabled{opacity:.5; cursor:default}
+.actions{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+.hint{font-size:12px; color:var(--sub); margin:0}
+
+.files{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px}
+.file{border:1px solid var(--line); border-radius:6px; padding:9px 10px; display:flex; flex-direction:column; gap:6px}
+.file-head{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+.file-name{font-weight:700; word-break:break-all; flex:1; min-width:180px}
+.file-size{font-size:12px; color:var(--sub)}
+.status{font-size:12.5px; white-space:pre-wrap; word-break:break-word}
+.status.ok{color:var(--ok)} .status.err{color:var(--red)} .status.warn{color:var(--warn)} .status.busy{color:var(--sub)}
+.file .pw-row{display:none}
+.file.need-pw .pw-row{display:flex}
+.file button{padding:4px 10px; font-size:12.5px}
+.remove{border:none; background:none; color:var(--sub); font-size:16px; padding:0 4px}
+.empty{color:var(--sub); font-size:12.5px; text-align:center; margin:4px 0}
+</style>
+</head>
+<body>
+<header>
+  <a class="back-link" href="../" aria-label="ツール一覧に戻る">← 一覧</a>
+  <h1>PDFパスワード解除<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.13.1</span></h1>
+  <p>パスワードが分かっているPDFから、パスワードなしで開けるPDFを作ります。ファイルもパスワードも端末の外には送信しません。</p>
+</header>
+<main>
+  <section class="card">
+    <div class="dropzone" id="drop" tabindex="0" role="button">
+      <b>PDFをドロップ</b>またはクリックして選択(複数可)
+    </div>
+    <input type="file" id="fileInput" accept="application/pdf,.pdf" multiple hidden>
+    <label class="field">パスワード(全ファイル共通)
+      <span class="pw-row">
+        <input type="password" id="password" autocomplete="off" spellcheck="false" placeholder="開くときのパスワード、または権限パスワード">
+        <button type="button" id="togglePw" aria-label="パスワードを表示">表示</button>
+      </span>
+    </label>
+    <p class="hint">印刷・コピーの制限だけが掛かったPDF(開くときにパスワードを聞かれないもの)は、空欄のままでも制限を外せます。</p>
+    <div class="actions">
+      <button type="button" class="primary" id="runAll" disabled>解除する</button>
+      <button type="button" id="zipAll" disabled>解除済みをZIPで保存</button>
+      <button type="button" id="clearAll" disabled>一覧を空にする</button>
+      <span class="hint" id="engineState">qpdf を読み込み中…</span>
+    </div>
+  </section>
+  <section class="card">
+    <ul class="files" id="files"></ul>
+    <p class="empty" id="empty">PDFはまだありません</p>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@neslinesli93/qpdf-wasm@0.3.1/dist/qpdf.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script>
+"use strict";
+const WASM_URL = "https://cdn.jsdelivr.net/npm/@neslinesli93/qpdf-wasm@0.3.1/dist/qpdf.wasm";
+const createQpdf = window.Module;   // qpdf.js defines a global factory named Module
+
+const $ = id => document.getElementById(id);
+const items = [];   // {id, file, bytes, state, out, outName, el}
+let nextId = 1;
+let wasmBinary = null;
+
+// ---- qpdf engine -------------------------------------------------------
+// A fresh module instance per call: qpdf's main() may call exit(), which
+// leaves an Emscripten runtime unusable for further callMain() calls.
+// The compiled wasm bytes are fetched once and reused.
+async function loadEngine(){
+  const res = await fetch(WASM_URL);
+  if(!res.ok) throw new Error("HTTP " + res.status);
+  wasmBinary = await res.arrayBuffer();
+}
+
+async function runQpdf(args, inBytes, wantOutput){
+  const log = [];
+  const q = await createQpdf({
+    wasmBinary, noInitialRun:true,
+    print: s => log.push(s), printErr: s => log.push(s),
+  });
+  q.FS.writeFile("/in.pdf", inBytes);
+  let code;
+  try{ code = q.callMain(args); }
+  catch(e){ code = (e && typeof e.status === "number") ? e.status : -1; log.push(String(e && e.message || e)); }
+  let out = null;
+  if(wantOutput){ try{ out = q.FS.readFile("/out.pdf"); }catch(_){} }
+  return {code, log: log.join("\n"), out};
+}
+
+async function tryDecrypt(bytes, password){
+  const args = ["--decrypt", "/in.pdf", "/out.pdf"];
+  if(password !== "") args.unshift("--password=" + password);
+  const r = await runQpdf(args, bytes, true);
+  // exit 0 = ok, 3 = ok with warnings (output is written), 2 = error
+  return (r.code === 0 || r.code === 3) && r.out && r.out.length ? r.out : null;
+}
+
+// The /Encrypt key sits in the (never encrypted) trailer or xref-stream
+// dictionary, so a raw byte scan tells "wrong password" from "broken file".
+function hasEncryptKey(bytes){
+  const pat = [0x2F,0x45,0x6E,0x63,0x72,0x79,0x70,0x74];   // "/Encrypt"
+  outer: for(let i = 0; i <= bytes.length - pat.length; i++){
+    for(let j = 0; j < pat.length; j++) if(bytes[i+j] !== pat[j]) continue outer;
+    return true;
+  }
+  return false;
+}
+
+// Returns {out, kind} on success, or {error: "need-password" | "wrong-password" | "broken"}.
+// qpdf cannot even open a file that needs a password without the right one,
+// so the order is: empty password first, then the given one.
+async function unlock(bytes, password){
+  let out = await tryDecrypt(bytes, "");
+  if(out){
+    // opened without a password: either plain or "permissions only"
+    const r = await runQpdf(["--is-encrypted", "/in.pdf"], bytes, false);
+    return {out, kind: r.code === 0 ? "restrictions-only" : "not-encrypted"};
+  }
+  if(!hasEncryptKey(bytes)) return {error:"broken"};
+  if(password === "") return {error:"need-password"};
+  out = await tryDecrypt(bytes, password);
+  return out ? {out, kind:"password"} : {error:"wrong-password"};
+}
+
+// ---- UI ----------------------------------------------------------------
+function fmtSize(n){
+  return n < 1024 ? n + " B" : n < 1048576 ? (n/1024).toFixed(1) + " KB" : (n/1048576).toFixed(1) + " MB";
+}
+function outNameFor(name){
+  return name.replace(/\.pdf$/i, "") + "_解除済み.pdf";
+}
+function setStatus(it, cls, text){
+  const s = it.el.querySelector(".status");
+  s.className = "status " + cls;
+  s.textContent = text;
+}
+function refreshButtons(){
+  const ready = !!wasmBinary;
+  $("runAll").disabled = !ready || !items.some(it => it.state !== "done" && it.state !== "busy");
+  $("zipAll").disabled = items.filter(it => it.state === "done").length < 2;
+  $("clearAll").disabled = items.length === 0;
+  $("empty").hidden = items.length > 0;
+}
+
+function addFiles(fileList){
+  for(const file of fileList){
+    if(!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") continue;
+    const it = {id: nextId++, file, bytes:null, state:"pending", out:null, outName: outNameFor(file.name)};
+    const li = document.createElement("li");
+    li.className = "file";
+    li.innerHTML = `
+      <div class="file-head">
+        <span class="file-name"></span><span class="file-size"></span>
+        <button type="button" class="dl" hidden>保存</button>
+        <button type="button" class="remove" aria-label="一覧から外す" title="一覧から外す">×</button>
+      </div>
+      <div class="status busy">未処理</div>
+      <div class="pw-row">
+        <input type="password" class="own-pw" autocomplete="off" spellcheck="false" placeholder="このファイルのパスワード">
+        <button type="button" class="retry">このファイルだけ再試行</button>
+      </div>`;
+    li.querySelector(".file-name").textContent = file.name;
+    li.querySelector(".file-size").textContent = fmtSize(file.size);
+    li.querySelector(".dl").onclick = () => download(it.out, it.outName);
+    li.querySelector(".remove").onclick = () => {
+      items.splice(items.indexOf(it), 1); li.remove(); refreshButtons();
+    };
+    const own = li.querySelector(".own-pw");
+    li.querySelector(".retry").onclick = () => processItem(it, own.value);
+    own.addEventListener("keydown", e => { if(e.key === "Enter") processItem(it, own.value); });
+    it.el = li;
+    items.push(it);
+    $("files").appendChild(li);
+  }
+  refreshButtons();
+}
+
+async function processItem(it, password){
+  if(!wasmBinary || it.state === "busy") return;
+  it.state = "busy";
+  it.el.classList.remove("need-pw");
+  it.el.querySelector(".dl").hidden = true;
+  setStatus(it, "busy", "処理中…");
+  refreshButtons();
+  try{
+    if(!it.bytes) it.bytes = new Uint8Array(await it.file.arrayBuffer());
+    const r = await unlock(it.bytes, password);
+    if(r.kind === "not-encrypted"){
+      it.state = "plain";
+      setStatus(it, "warn", "このPDFはもともと暗号化されていません(変換不要)");
+    }else if(r.out){
+      it.state = "done"; it.out = r.out;
+      it.el.querySelector(".dl").hidden = false;
+      const what = r.kind === "restrictions-only"
+        ? "開くパスワードはなく、印刷・コピーなどの制限を外しました"
+        : "パスワードを解除しました";
+      setStatus(it, "ok", `${what} → ${it.outName}(${fmtSize(r.out.length)})`);
+    }else if(r.error === "broken"){
+      it.state = "error";
+      setStatus(it, "err", "PDFとして読み込めませんでした(ファイルが壊れているか、PDFではない可能性があります)");
+    }else{
+      it.state = "error";
+      it.el.classList.add("need-pw");
+      setStatus(it, "err", r.error === "need-password" ? "パスワードが必要です" : "パスワードが違います");
+    }
+  }catch(e){
+    it.state = "error";
+    setStatus(it, "err", "解除できませんでした: " + (e && e.message || e));
+  }finally{
+    if(it.state === "busy") it.state = "error";
+    refreshButtons();
+  }
+}
+
+async function runAll(){
+  const pw = $("password").value;
+  for(const it of items.slice()){
+    if(it.state === "done" || it.state === "busy" || it.state === "plain") continue;
+    const own = it.el.querySelector(".own-pw").value;
+    await processItem(it, own !== "" ? own : pw);
+  }
+}
+
+function download(bytes, name){
+  const url = URL.createObjectURL(new Blob([bytes], {type:"application/pdf"}));
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+async function zipAll(){
+  const zip = new JSZip();
+  const used = new Set();
+  for(const it of items){
+    if(it.state !== "done") continue;
+    let name = it.outName, n = 2;
+    while(used.has(name)) name = it.outName.replace(/\.pdf$/, `(${n++}).pdf`);
+    used.add(name);
+    zip.file(name, it.out);
+  }
+  const blob = await zip.generateAsync({type:"uint8array"});
+  const url = URL.createObjectURL(new Blob([blob], {type:"application/zip"}));
+  const a = document.createElement("a");
+  a.href = url; a.download = "解除済みPDF.zip";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+// ---- wiring ------------------------------------------------------------
+const drop = $("drop"), fileInput = $("fileInput");
+drop.onclick = () => fileInput.click();
+drop.addEventListener("keydown", e => { if(e.key === "Enter" || e.key === " "){ e.preventDefault(); fileInput.click(); } });
+fileInput.onchange = () => { addFiles(fileInput.files); fileInput.value = ""; };
+drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("drag-over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("drag-over"));
+drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("drag-over"); addFiles(e.dataTransfer.files); });
+document.addEventListener("dragover", e => e.preventDefault());
+document.addEventListener("drop", e => e.preventDefault());
+
+$("togglePw").onclick = () => {
+  const p = $("password"), show = p.type === "password";
+  p.type = show ? "text" : "password";
+  $("togglePw").textContent = show ? "隠す" : "表示";
+};
+$("password").addEventListener("keydown", e => { if(e.key === "Enter" && !$("runAll").disabled) runAll(); });
+$("runAll").onclick = runAll;
+$("zipAll").onclick = zipAll;
+$("clearAll").onclick = () => { items.length = 0; $("files").innerHTML = ""; refreshButtons(); };
+
+refreshButtons();
+if(typeof createQpdf !== "function"){
+  $("engineState").textContent = "qpdf を読み込めませんでした(ネットワークを確認して再読み込みしてください)";
+}else{
+  loadEngine().then(() => { $("engineState").textContent = ""; refreshButtons(); })
+    .catch(e => { $("engineState").textContent = "qpdf を読み込めませんでした: " + e.message; });
+}
+</script>
+</body>
+</html>
