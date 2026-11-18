@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MLCC の DC バイアス特性 (メーカ共通)</title>
+<style>
+  :root {
+    --fg: #1f2328; --muted: #59636e; --line: #d0d7de; --grid: #eaeef2; --bg: #f6f8fa; --panel: #fff;
+    --accent: #0969da; --sel: #ddebff; --warn: #9a6700; --warnbg: #fff8c5;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; color: var(--fg); background: var(--bg); font-size: 14px; display: flex; flex-direction: column; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 18px; margin: 0; }
+  header .ver { color: var(--muted); font-size: 12px; }
+  header a { margin-left: auto; color: var(--accent); text-decoration: none; }
+  /* 3 columns: inputs | charts | results. Each column scrolls on its own. */
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr) clamp(360px, 34vw, 580px); gap: 12px; padding: 12px; }
+  main > * { min-height: 0; overflow: auto; }
+  aside, .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  #center { display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+  #center .card { flex: 1 1 0; min-height: 240px; display: flex; flex-direction: column; }
+  #center svg { flex: 1; min-height: 0; width: 100%; display: block; }
+  #right { display: flex; flex-direction: column; gap: 12px; }
+  @media (max-width: 1100px) {
+    html, body { height: auto; } body { display: block; }
+    main { display: flex; flex-direction: column; }
+    main > * { overflow: visible; }
+    #center { overflow: visible; }
+    #center .card { min-height: 0; } #center svg { height: 320px; flex: none; }
+  }
+  h2 { font-size: 13px; margin: 12px 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--line); }
+  h2:first-child, .card h2 { margin-top: 0; }
+  .row { display: flex; align-items: center; gap: 5px; margin: 5px 0; flex-wrap: wrap; }
+  .row > span.lbl { width: 76px; flex: none; color: var(--muted); font-size: 12px; }
+  input, select { padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+  input[type=text], input[type=number] { width: 80px; }
+  input.bad { border-color: #cf222e; background: #ffebe9; }
+  .unit { color: var(--muted); font-size: 12px; }
+  .note { color: var(--muted); font-size: 12px; margin: 4px 0; line-height: 1.5; }
+  .warn { color: var(--warn); background: var(--warnbg); font-size: 12px; padding: 4px 6px; border-radius: 4px; margin: 6px 0; }
+  button.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+  button.btn:hover { background: var(--bg); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { background: #0860c4; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin: 2px 0 4px; }
+  .legend i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+  .legend i.band { height: 10px; opacity: .25; }
+  .head { display: flex; align-items: center; gap: 8px; }
+  .head h2 { flex: 1; border: 0; margin: 0; padding: 0; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; background: var(--panel); padding: 2px 8px; font: inherit; font-size: 12px; cursor: pointer; }
+  .seg button.on { background: var(--sel); }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { padding: 4px 4px; border-bottom: 1px solid var(--grid); text-align: right; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+  td:first-child, th:first-child { text-align: left; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--bg); }
+  tbody tr.sel { background: var(--sel); }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  td.del { color: var(--muted); cursor: pointer; }
+  td.del:hover { color: #cf222e; }
+  #tip { position: fixed; pointer-events: none; background: rgba(255,255,255,.97); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.12); display: none; z-index: 10; }
+  #tip div { white-space: nowrap; }
+  #tip b { font-weight: 600; }
+  details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+  details p, details li { font-size: 12px; line-height: 1.6; color: var(--fg); }
+  details ul { padding-left: 18px; margin: 4px 0; }
+  code { font-size: 12px; background: var(--bg); padding: 0 3px; border-radius: 3px; }
+  svg text { font-family: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MLCC の DC バイアス特性 (メーカ共通)</h1><span class="ver">v2026.11.18.1</span>
+  <a href="../">ツール一覧</a>
+</header>
+<main>
+  <aside>
+    <h2>部品 <span id="editName" class="unit"></span></h2>
+    <div class="row"><span class="lbl">誘電体</span>
+      <select id="diel"><option>X5R</option><option>X7R</option><option>X6S</option><option>X7S</option><option>C0G</option></select></div>
+    <div class="row"><span class="lbl">サイズ</span><select id="case"></select></div>
+    <div class="row"><span class="lbl">厚み (任意)</span><input id="thk" type="number" step="0.05" min="0.1" placeholder="標準"><span class="unit">mm</span></div>
+    <div class="row"><span class="lbl">公称容量</span><input id="cap" type="text" value="10u"><span class="unit">F (例: 10u, 100n, 4.7µ)</span></div>
+    <div class="row"><span class="lbl">定格電圧</span><input id="vr" type="number" step="any" min="0.1" value="6.3"><span class="unit">V</span></div>
+    <div class="row"><span class="lbl">印加電圧</span><input id="va" type="number" step="any" min="0" value="3.3"><span class="unit">V</span></div>
+
+    <h2>データシートの1点で補正 (任意)</h2>
+    <p class="note">メーカの特性図から1点だけ読み取って入れると、その点を通るように誘電体の厚みを決め直す。推定より確実。</p>
+    <div class="row"><span class="lbl">電圧</span><input id="calV" type="number" step="any" min="0" placeholder="—"><span class="unit">V のとき</span></div>
+    <div class="row"><span class="lbl">容量変化</span><input id="calR" type="number" step="any" placeholder="例 -40"><span class="unit">%</span></div>
+
+    <h2>直接指定 (任意)</h2>
+    <div class="row"><span class="lbl">誘電体厚み</span><input id="tdir" type="number" step="any" min="0.1" placeholder="推定"><span class="unit">µm (1層)</span></div>
+
+    <div id="warns"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn primary" id="addBtn">比較に追加</button>
+      <button class="btn" id="dupBtn">複製</button>
+    </div>
+    <p class="note">右の表の行をクリックすると、その部品をここで編集できる。入力値は URL に入るので、URL を共有すれば同じ条件で開ける。</p>
+
+    <h2>モデルの調整</h2>
+    <div class="row"><span class="lbl">E50 X5R/X6S</span><input id="e50a" type="number" step="0.1" min="0.3" value="2.2"><span class="unit">V/µm</span></div>
+    <div class="row"><span class="lbl">E50 X7R/X7S</span><input id="e50b" type="number" step="0.1" min="0.3" value="2.8"><span class="unit">V/µm</span></div>
+    <p class="note">E50 = 容量が半分になる電界。帯は E50 の ×0.7〜×1.4 (メーカ・世代によるばらつきの目安)。</p>
+    <button class="btn" id="resetBtn">初期状態に戻す</button>
+  </aside>
+
+  <section id="center">
+    <div class="card">
+      <div class="head"><h2>共通曲線: 容量変化率 − 誘電体にかかる電界</h2></div>
+      <div class="legend" id="lg1"></div>
+      <svg id="ch1"></svg>
+    </div>
+    <div class="card">
+      <div class="head"><h2>部品ごと: 印加電圧に対する容量</h2>
+        <span class="seg" id="yMode"><button data-m="pct" class="on">容量変化率 %</button><button data-m="abs">実効容量</button></span></div>
+      <div class="legend" id="lg2"></div>
+      <svg id="ch2"></svg>
+    </div>
+  </section>
+
+  <section id="right">
+    <div class="card">
+      <h2>結果</h2>
+      <div style="overflow:auto"><table>
+        <thead><tr><th>部品</th><th>厚み<br>µm</th><th>電界<br>V/µm</th><th>変化率<br>@印加</th><th>実効容量<br>@印加</th><th>変化率<br>@定格</th><th></th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table></div>
+      <p class="note">厚み: 誘電体1層の推定厚み。「補」は補正点から、「直」は直接指定から求めた値。電界・変化率は印加電圧での値 (帯の範囲も括弧で表示)。</p>
+    </div>
+    <div class="card">
+      <details open>
+        <summary>考え方</summary>
+        <p>DC バイアスで容量が下がるのは、チタン酸バリウム系誘電体の誘電率が<b>電界</b>で下がるため。同じ系統の材料なら、メーカやサイズが違っても「電界 E = 電圧 ÷ 誘電体1層の厚み」に対する変化率はほぼ同じ曲線に乗る。部品ごとの違いは、ほぼ層の厚みの違いで説明できる。</p>
+        <p><b>共通曲線</b> (Johnson の式。高電界で E<sup>−2/3</sup> に漸近):<br>
+          <code>C/C0 = (1 + 7·(E/E50)²)<sup>−1/3</sup></code></p>
+        <p><b>層の厚みの推定</b>: 有効体積 V<sub>act</sub> (外形体積 × 有効率) を厚み t の層で埋めると C = ε0·εr·V<sub>act</sub>/t² なので<br>
+          <code>t = √(ε0·εr·V<sub>act</sub> / C)</code><br>
+          εr は X5R/X6S 3500、X7R/X7S 2500、有効率はサイズ別に 0.30 (01005) 〜 0.62 (1812) と置いた。</p>
+        <p>大容量品 (サイズいっぱいに積んだ部品) ほどこの推定は当たる。容量に対してサイズが大きい部品は、実際には層を少なく薄く作ることがあり、推定より厚めに出て<b>楽観側</b>になる。気になる部品はデータシートの1点で補正する。</p>
+      </details>
+      <details>
+        <summary>含まれないもの</summary>
+        <ul>
+          <li>温度特性 (DC バイアスと掛け算で効く。X5R の 85 ℃ ではさらに下がる)</li>
+          <li>AC 振幅の影響 (測定条件の 0.5 Vrms / 1 Vrms で値が変わる)</li>
+          <li>エージング (Class II は 10 倍時間ごとに 1〜3 % 程度低下)</li>
+          <li>公称容量の許容差 (±10 %, ±20 %)</li>
+        </ul>
+        <p>係数 (εr、有効率、E50) は代表的な公開特性図に合うよう決めた目安。設計の詰めでは、採用部品の特性図で確認すること。</p>
+      </details>
+    </div>
+  </section>
+</main>
+<div id="tip"></div>
+
+<script>
+'use strict';
+const EPS0 = 8.854e-12;
+// L x W x T (mm), active-volume ratio (electrode overlap x active layers / outer volume)
+const CASES = {
+  '01005': { mm: '0402', d: [0.4, 0.2, 0.2], eta: 0.30 },
+  '0201':  { mm: '0603', d: [0.6, 0.3, 0.3], eta: 0.38 },
+  '0402':  { mm: '1005', d: [1.0, 0.5, 0.5], eta: 0.45 },
+  '0603':  { mm: '1608', d: [1.6, 0.8, 0.8], eta: 0.50 },
+  '0805':  { mm: '2012', d: [2.0, 1.25, 1.25], eta: 0.55 },
+  '1206':  { mm: '3216', d: [3.2, 1.6, 1.6], eta: 0.58 },
+  '1210':  { mm: '3225', d: [3.2, 2.5, 2.5], eta: 0.60 },
+  '1812':  { mm: '4532', d: [4.5, 3.2, 2.5], eta: 0.62 },
+};
+const DIEL = {
+  X5R: { er: 3500, grp: 'a' }, X6S: { er: 3500, grp: 'a' },
+  X7R: { er: 2500, grp: 'b' }, X7S: { er: 2500, grp: 'b' },
+  C0G: { er: 0, grp: null },
+};
+const BAND = [0.7, 1.4];
+const COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
+const GRP_COLOR = { a: '#52514e', b: '#9a9890' };
+
+const DEFAULT_PARTS = [
+  { diel: 'X5R', cs: '0402', thk: '', cap: '10u', vr: 6.3, va: 3.3, calV: '', calR: '', tdir: '' },
+  { diel: 'X5R', cs: '0603', thk: '', cap: '10u', vr: 10, va: 3.3, calV: '', calR: '', tdir: '' },
+  { diel: 'X5R', cs: '0805', thk: '', cap: '10u', vr: 25, va: 12, calV: '', calR: '', tdir: '' },
+  { diel: 'X7R', cs: '1206', thk: '', cap: '10u', vr: 25, va: 12, calV: '', calR: '', tdir: '' },
+  { diel: 'X7R', cs: '0603', thk: '', cap: '100n', vr: 50, va: 24, calV: '', calR: '', tdir: '' },
+];
+
+const state = { parts: [], sel: 0, e50: { a: 2.2, b: 2.8 }, yMode: 'pct' };
+const $ = id => document.getElementById(id);
+
+// ---------- model ----------
+const ret = (E, e50) => Math.pow(1 + 7 * (E / e50) ** 2, -1 / 3);
+const invRet = (r, e50) => Math.sqrt(Math.pow(r, -3) - 1) * e50 / Math.sqrt(7); // E for given C/C0
+
+function parseCap(s) {
+  const m = String(s).trim().replace(/F$/i, '').match(/^([0-9]*\.?[0-9]+(?:e-?\d+)?)\s*([pnuµm]?)$/i);
+  if (!m) return NaN;
+  const k = { p: 1e-12, n: 1e-9, u: 1e-6, 'µ': 1e-6, m: 1e-3, '': 1e-6 }[m[2].toLowerCase()];
+  return parseFloat(m[1]) * k;
+}
+function fmtCap(F) {
+  if (!isFinite(F)) return '—';
+  const u = [[1e-6, 'µF'], [1e-9, 'nF'], [1e-12, 'pF']].find(([k]) => F >= k * 0.9995) || [1e-12, 'pF'];
+  const v = F / u[0];
+  return String(+v.toPrecision(3)) + ' ' + u[1];
+}
+const num = v => (v === '' || v == null) ? NaN : parseFloat(v);
+
+function evalPart(p) {
+  const out = { warns: [] };
+  const C = parseCap(p.cap), vr = num(p.vr), va = num(p.va);
+  out.C = C; out.vr = vr; out.va = va;
+  if (!(C > 0)) { out.err = 'cap'; return out; }
+  const d = DIEL[p.diel];
+  if (!d.grp) { out.c0g = true; out.f = () => 1; out.t = NaN; return out; }
+  const e50 = state.e50[d.grp];
+  out.e50 = e50;
+  const cs = CASES[p.cs];
+  const T = num(p.thk) > 0 ? num(p.thk) : cs.d[2];
+  const vol = cs.d[0] * cs.d[1] * T * 1e-9 * cs.eta;
+  const tEst = Math.sqrt(EPS0 * d.er * vol / C) * 1e6;
+  out.tEst = tEst;
+  const cV = num(p.calV), cR = num(p.calR);
+  if (cV > 0 && isFinite(cR)) {
+    const r = 1 + cR / 100;
+    if (r > 0 && r < 1) { out.t = cV / invRet(r, e50); out.src = '補'; }
+    else out.warns.push('補正の容量変化は 0〜-100 % の範囲で入れる (例: -40)。');
+  }
+  if (!out.src && num(p.tdir) > 0) { out.t = num(p.tdir); out.src = '直'; }
+  if (!out.src) { out.t = tEst; out.src = ''; }
+  out.f = V => ret(V / out.t, e50);
+  out.fBand = V => [ret(V / out.t, e50 * BAND[0]), ret(V / out.t, e50 * BAND[1])];
+  if (vr > 0 && vr / out.t > 15) out.warns.push(`定格電圧で ${(vr / out.t).toFixed(1)} V/µm になる。容量に対してサイズが小さすぎる (実在しない組み合わせ) 可能性がある。`);
+  if (out.src === '補' && out.t > tEst * 1.3) out.warns.push(`補正後の厚み ${out.t.toFixed(2)} µm がサイズからの上限推定 ${tEst.toFixed(2)} µm より厚い。サイズ・容量・誘電体の入力を確認する。`);
+  if (va > vr) out.warns.push('印加電圧が定格を超えている。');
+  return out;
+}
+
+function label(p) {
+  const cs = CASES[p.cs];
+  return `${p.cs}(${cs.mm}) ${fmtCap(parseCap(p.cap))} ${p.vr}V ${p.diel}`;
+}
+
+// ---------- chart ----------
+function niceTicks(max, n) {
+  const raw = max / n, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map(s => s * mag).find(s => s >= raw);
+  const t = []; for (let v = 0; v <= max + 1e-9; v += step) t.push(+v.toFixed(10)); return t;
+}
+function svgEl(tag, attrs, parent) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e); return e;
+}
+/* cfg: {xmax, ymax, xlabel, ylabel, yfmt, bands:[{lo:[[x,y]], hi:[[x,y]], color}], lines:[{pts, color, dash, width}], dots:[{x,y,color}], hover(x)->[{color,text}] , xfmt} */
+function drawChart(svg, cfg) {
+  const W = svg.clientWidth || 600, H = svg.clientHeight || 300;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = '';
+  const m = { l: 52, r: 14, t: 8, b: 38 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const X = x => m.l + x / cfg.xmax * pw, Y = y => m.t + ph - y / cfg.ymax * ph;
+  const g = svgEl('g', {}, svg);
+  for (const t of niceTicks(cfg.ymax, 5)) {
+    svgEl('line', { x1: m.l, x2: m.l + pw, y1: Y(t), y2: Y(t), stroke: t === 0 ? '#8c959f' : '#eaeef2' }, g);
+    svgEl('text', { x: m.l - 6, y: Y(t) + 4, 'text-anchor': 'end', 'font-size': 11, fill: '#59636e' }, g).textContent = cfg.yfmt(t);
+  }
+  for (const t of niceTicks(cfg.xmax, Math.max(4, Math.floor(pw / 70)))) {
+    svgEl('line', { x1: X(t), x2: X(t), y1: m.t, y2: m.t + ph, stroke: t === 0 ? '#8c959f' : '#eaeef2' }, g);
+    svgEl('text', { x: X(t), y: m.t + ph + 15, 'text-anchor': 'middle', 'font-size': 11, fill: '#59636e' }, g).textContent = (cfg.xfmt || String)(t);
+  }
+  svgEl('text', { x: m.l + pw / 2, y: H - 4, 'text-anchor': 'middle', 'font-size': 12, fill: '#59636e' }, g).textContent = cfg.xlabel;
+  svgEl('text', { x: 12, y: m.t + ph / 2, 'text-anchor': 'middle', 'font-size': 12, fill: '#59636e', transform: `rotate(-90 12 ${m.t + ph / 2})` }, g).textContent = cfg.ylabel;
+  const clip = 'c' + Math.random().toString(36).slice(2);
+  const cp = svgEl('clipPath', { id: clip }, svgEl('defs', {}, svg));
+  svgEl('rect', { x: m.l, y: m.t, width: pw, height: ph }, cp);
+  const pg = svgEl('g', { 'clip-path': `url(#${clip})` }, svg);
+  const path = pts => pts.map((p, i) => (i ? 'L' : 'M') + X(p[0]).toFixed(1) + ' ' + Y(p[1]).toFixed(1)).join('');
+  for (const b of cfg.bands || []) {
+    svgEl('path', { d: path(b.hi) + path(b.lo.slice().reverse()).replace(/^M/, 'L') + 'Z', fill: b.color, opacity: 0.13 }, pg);
+  }
+  for (const l of cfg.lines) {
+    svgEl('path', { d: path(l.pts), fill: 'none', stroke: l.color, 'stroke-width': l.width || 2, 'stroke-dasharray': l.dash || '', 'stroke-linejoin': 'round' }, pg);
+  }
+  for (const d of cfg.dots || []) {
+    svgEl('circle', { cx: X(d.x), cy: Y(d.y), r: 5, fill: d.color, stroke: '#fff', 'stroke-width': 2 }, pg);
+  }
+  // hover: crosshair + tooltip
+  const cross = svgEl('line', { y1: m.t, y2: m.t + ph, stroke: '#59636e', 'stroke-width': 1, 'stroke-dasharray': '3 3', visibility: 'hidden' }, svg);
+  const hit = svgEl('rect', { x: m.l, y: m.t, width: pw, height: ph, fill: 'transparent' }, svg);
+  const tip = $('tip');
+  hit.addEventListener('pointermove', ev => {
+    const r = svg.getBoundingClientRect();
+    const px = (ev.clientX - r.left) * W / r.width;
+    const x = Math.max(0, Math.min(cfg.xmax, (px - m.l) / pw * cfg.xmax));
+    cross.setAttribute('x1', X(x)); cross.setAttribute('x2', X(x)); cross.setAttribute('visibility', 'visible');
+    const rows = cfg.hover(x);
+    tip.innerHTML = rows.map(o => `<div>${o.color ? `<span class="sw" style="background:${o.color}"></span>` : ''}${o.text}</div>`).join('');
+    tip.style.display = 'block';
+    const tx = ev.clientX + 14, tw = tip.offsetWidth;
+    tip.style.left = (tx + tw > innerWidth - 8 ? ev.clientX - tw - 14 : tx) + 'px';
+    tip.style.top = Math.min(ev.clientY + 10, innerHeight - tip.offsetHeight - 8) + 'px';
+  });
+  hit.addEventListener('pointerleave', () => { cross.setAttribute('visibility', 'hidden'); tip.style.display = 'none'; });
+}
+
+// ---------- render ----------
+let evals = [];
+function render() {
+  evals = state.parts.map(evalPart);
+  const p = state.parts[state.sel], e = evals[state.sel];
+  $('editName').textContent = `(${state.sel + 1}番目)`;
+  $('warns').innerHTML = (e.err ? ['公称容量を読めない (例: 10u, 100n, 470p)。'] : e.warns).map(w => `<div class="warn">${w}</div>`).join('');
+  $('cap').classList.toggle('bad', !!e.err);
+  renderTable(); renderCh1(); renderCh2(); saveUrl();
+}
+
+function renderTable() {
+  $('tbody').innerHTML = state.parts.map((p, i) => {
+    const e = evals[i], col = COLORS[i % COLORS.length];
+    let t = '—', E = '—', r = '—', ce = '—', rr = '—';
+    if (!e.err) {
+      if (e.c0g) { r = '0 %'; rr = '0 %'; ce = fmtCap(e.C); t = '—'; E = '—'; }
+      else {
+        const b = e.fBand(e.va), pc = x => ((x - 1) * 100).toFixed(0);
+        t = e.t.toFixed(2) + (e.src ? ' ' + e.src : '');
+        E = (e.va / e.t).toFixed(1);
+        r = `${pc(e.f(e.va))} %<br><span class="unit">(${pc(b[0])}〜${pc(b[1])})</span>`;
+        ce = fmtCap(e.C * e.f(e.va));
+        rr = pc(e.f(e.vr)) + ' %';
+      }
+    }
+    return `<tr data-i="${i}" class="${i === state.sel ? 'sel' : ''}"><td><span class="sw" style="background:${col}"></span>${p.cs} ${fmtCap(parseCap(p.cap))} ${p.diel}<br><span class="unit">定格 ${p.vr} V / 印加 ${p.va} V</span></td><td>${t}</td><td>${E}</td><td>${r}</td><td>${ce}</td><td>${rr}</td><td class="del" data-del="${i}" title="削除">✕</td></tr>`;
+  }).join('');
+}
+
+function renderCh1() {
+  const xmax = 15, N = 150;
+  const bands = [], lines = [];
+  const lg = [];
+  for (const [grp, name] of [['a', 'X5R / X6S'], ['b', 'X7R / X7S']]) {
+    const e50 = state.e50[grp], col = GRP_COLOR[grp];
+    const pts = k => Array.from({ length: N + 1 }, (_, j) => { const E = j / N * xmax; return [E, ret(E, e50 * k) * 100]; });
+    bands.push({ lo: pts(BAND[0]), hi: pts(BAND[1]), color: col });
+    lines.push({ pts: pts(1), color: col, dash: grp === 'b' ? '6 4' : '' });
+    lg.push(`<span><i style="background:${col};${grp === 'b' ? 'background:repeating-linear-gradient(90deg,' + col + ' 0 6px,transparent 6px 9px)' : ''}"></i>${name} (E50 = ${e50} V/µm)</span>`);
+  }
+  lg.push(`<span><i class="band" style="background:${GRP_COLOR.a}"></i>ばらつきの目安</span>`);
+  lg.push(`<span>● 各部品の印加電圧での位置 (色は右の表)</span>`);
+  $('lg1').innerHTML = lg.join('');
+  const dots = [];
+  evals.forEach((e, i) => { if (!e.err && !e.c0g && e.va >= 0) dots.push({ x: Math.min(e.va / e.t, xmax), y: e.f(e.va) * 100, color: COLORS[i % COLORS.length] }); });
+  drawChart($('ch1'), {
+    xmax, ymax: 100, xlabel: '誘電体にかかる電界 E (V/µm)', ylabel: '容量 C/C0 (%)',
+    yfmt: t => t + '', bands, lines, dots,
+    hover: E => [{ text: `<b>E = ${E.toFixed(2)} V/µm</b>` },
+      { color: GRP_COLOR.a, text: `X5R/X6S: ${(ret(E, state.e50.a) * 100).toFixed(0)} % (${(ret(E, state.e50.a * BAND[0]) * 100).toFixed(0)}〜${(ret(E, state.e50.a * BAND[1]) * 100).toFixed(0)})` },
+      { color: GRP_COLOR.b, text: `X7R/X7S: ${(ret(E, state.e50.b) * 100).toFixed(0)} % (${(ret(E, state.e50.b * BAND[0]) * 100).toFixed(0)}〜${(ret(E, state.e50.b * BAND[1]) * 100).toFixed(0)})` }],
+  });
+}
+
+function renderCh2() {
+  const ok = evals.map((e, i) => [e, i]).filter(([e]) => !e.err);
+  const xmax = Math.max(1, ...ok.map(([e]) => Math.max(e.vr || 0, e.va || 0))) * 1.05;
+  const abs = state.yMode === 'abs';
+  const ymax = abs ? Math.max(...ok.map(([e]) => e.C), 1e-12) * 1.05 : 100;
+  const unit = abs ? [[1e-6, 'µF'], [1e-9, 'nF'], [1e-12, 'pF']].find(([k]) => ymax / 1.05 >= k) || [1e-12, 'pF'] : null;
+  const sc = abs ? 1 / unit[0] : 100;
+  const N = 120, lines = [], dots = [], bands = [];
+  for (const [e, i] of ok) {
+    const col = COLORS[i % COLORS.length], vend = e.vr;
+    const k = abs ? e.C : 1;
+    const pts = Array.from({ length: N + 1 }, (_, j) => { const V = j / N * vend; return [V, e.f(V) * k * sc]; });
+    lines.push({ pts, color: col, width: i === state.sel ? 3 : 2 });
+    if (i === state.sel && !e.c0g) {
+      const bp = j => Array.from({ length: N + 1 }, (_, q) => { const V = q / N * vend; return [V, e.fBand(V)[j] * k * sc]; });
+      bands.push({ lo: bp(0), hi: bp(1), color: col });
+    }
+    if (e.va <= vend) dots.push({ x: e.va, y: e.f(e.va) * k * sc, color: col });
+  }
+  $('lg2').innerHTML = ok.map(([e, i]) => `<span><i style="background:${COLORS[i % COLORS.length]}"></i>${label(state.parts[i])}</span>`).join('')
+    + '<span>線の終点 = 定格電圧、● = 印加電圧、帯 = 選択中の部品のばらつき</span>';
+  drawChart($('ch2'), {
+    xmax, ymax: abs ? ymax * sc : 100, xlabel: 'DC 印加電圧 (V)',
+    ylabel: abs ? `実効容量 (${unit[1]})` : '容量 C/C0 (%)',
+    yfmt: t => abs ? +t.toPrecision(3) + '' : t + '', bands, lines, dots,
+    hover: V => [{ text: `<b>${V.toFixed(2)} V</b>` }, ...ok.filter(([e]) => V <= e.vr * 1.0001).map(([e, i]) => ({
+      color: COLORS[i % COLORS.length],
+      text: `${label(state.parts[i])}: ${(e.f(V) * 100).toFixed(0)} % / ${fmtCap(e.C * e.f(V))}`
+    }))],
+  });
+}
+
+// ---------- inputs ----------
+const FIELDS = { diel: 'diel', case: 'cs', thk: 'thk', cap: 'cap', vr: 'vr', va: 'va', calV: 'calV', calR: 'calR', tdir: 'tdir' };
+function loadForm() {
+  const p = state.parts[state.sel];
+  for (const [id, k] of Object.entries(FIELDS)) $(id).value = p[k];
+  $('e50a').value = state.e50.a; $('e50b').value = state.e50.b;
+}
+for (const [id, k] of Object.entries(FIELDS)) {
+  $(id).addEventListener('input', () => { state.parts[state.sel][k] = $(id).value; render(); });
+}
+for (const [id, g] of [['e50a', 'a'], ['e50b', 'b']]) {
+  $(id).addEventListener('input', () => { const v = num($(id).value); if (v > 0) { state.e50[g] = v; render(); } });
+}
+$('addBtn').addEventListener('click', () => {
+  if (state.parts.length >= COLORS.length) { alert(`比較できるのは ${COLORS.length} 個まで。`); return; }
+  state.parts.push({ ...state.parts[state.sel], calV: '', calR: '', tdir: '' });
+  state.sel = state.parts.length - 1; loadForm(); render();
+});
+$('dupBtn').addEventListener('click', () => {
+  if (state.parts.length >= COLORS.length) { alert(`比較できるのは ${COLORS.length} 個まで。`); return; }
+  state.parts.push({ ...state.parts[state.sel] });
+  state.sel = state.parts.length - 1; loadForm(); render();
+});
+$('resetBtn').addEventListener('click', () => {
+  state.parts = DEFAULT_PARTS.map(p => ({ ...p })); state.sel = 0; state.e50 = { a: 2.2, b: 2.8 };
+  loadForm(); render();
+});
+$('tbody').addEventListener('click', ev => {
+  const d = ev.target.closest('[data-del]');
+  if (d) {
+    if (state.parts.length <= 1) return;
+    const i = +d.dataset.del; state.parts.splice(i, 1);
+    if (state.sel >= state.parts.length) state.sel = state.parts.length - 1;
+    else if (state.sel > i) state.sel--;
+    loadForm(); render(); return;
+  }
+  const tr = ev.target.closest('tr[data-i]');
+  if (tr) { state.sel = +tr.dataset.i; loadForm(); render(); }
+});
+$('yMode').addEventListener('click', ev => {
+  const b = ev.target.closest('button'); if (!b) return;
+  state.yMode = b.dataset.m;
+  for (const x of $('yMode').children) x.classList.toggle('on', x === b);
+  renderCh2(); saveUrl();
+});
+addEventListener('resize', () => { renderCh1(); renderCh2(); });
+
+// ---------- URL state ----------
+function saveUrl() {
+  const s = { p: state.parts.map(p => [p.diel, p.cs, p.thk, p.cap, p.vr, p.va, p.calV, p.calR, p.tdir]), s: state.sel, e: [state.e50.a, state.e50.b], y: state.yMode };
+  history.replaceState(null, '', '#' + encodeURIComponent(JSON.stringify(s)));
+}
+function loadUrl() {
+  try {
+    const s = JSON.parse(decodeURIComponent(location.hash.slice(1)));
+    state.parts = s.p.map(a => ({ diel: a[0], cs: a[1], thk: a[2], cap: a[3], vr: a[4], va: a[5], calV: a[6], calR: a[7], tdir: a[8] }))
+      .filter(p => DIEL[p.diel] && CASES[p.cs]);
+    if (!state.parts.length) throw 0;
+    state.sel = Math.min(s.s | 0, state.parts.length - 1);
+    if (s.e) state.e50 = { a: +s.e[0] || 2.2, b: +s.e[1] || 2.8 };
+    if (s.y === 'abs') { state.yMode = 'abs'; for (const x of $('yMode').children) x.classList.toggle('on', x.dataset.m === 'abs'); }
+  } catch { state.parts = DEFAULT_PARTS.map(p => ({ ...p })); state.sel = 0; }
+}
+
+$('case').innerHTML = Object.entries(CASES).map(([k, c]) => `<option value="${k}">${k} (${c.mm}) ${c.d.join('×')}</option>`).join('');
+loadUrl(); loadForm(); render();
+</script>
+</body>
+</html>
