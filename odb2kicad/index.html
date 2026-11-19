@@ -42,13 +42,22 @@ header{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; padding:12p
 h1{margin:0; font-size:19px; font-weight:700; letter-spacing:.02em}
 h1 .tool-version{margin-left:8px; font-size:12px; font-weight:500; color:var(--sub); white-space:nowrap}
 header p{margin:0; color:var(--sub); font-size:12.5px}
+/* three columns 1 : 2 : 1 — source & info | preview | layers & actions */
 main{
-  display:grid; grid-template-columns:360px minmax(0,1fr); gap:1px;
+  display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr) minmax(0,1fr); gap:1px;
   background:var(--line); flex:1; min-height:0;
 }
-@media (max-width: 860px){ main{grid-template-columns:1fr} }
-/* wide screens: the page fits the window and the left column scrolls on its own, so the preview keeps its size */
-@media (min-width: 861px){ body{height:100vh} main{min-height:0; overflow:hidden} main > .panel:first-child{overflow-y:auto} }
+@media (max-width: 999px){ main{grid-template-columns:1fr} }
+/* wide screens: the page fits the window; the side columns scroll on their own, so the preview keeps its size */
+@media (min-width: 1000px){
+  body{height:100vh} main{min-height:0; overflow:hidden}
+  #col1{overflow-y:auto}
+  #col3{overflow:hidden}
+  #col3 .rowA{flex:1; min-height:0; overflow-y:auto}
+  #col3 .layer-scroll{max-height:none}
+}
+#col3 .rowB{flex:none; border-top:1px solid var(--line)}
+#col3 .rowB button{width:100%}
 .panel{background:var(--panel); min-width:0; display:flex; flex-direction:column}
 .pad{padding:12px; display:flex; flex-direction:column; gap:10px}
 .dropzone{
@@ -113,11 +122,11 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
 <body>
 <header>
   <a class="back-link" href="../">← 一覧</a>
-  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.11.1</span></h1>
+  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.19.1</span></h1>
   <p>ODB++ の基板データを KiCad で閲覧できる .kicad_pcb (KiCad 9/10 用) に変換します。ファイルはサーバーに送信されず、処理はすべてブラウザ内で完結します。</p>
 </header>
 <main>
-  <section class="panel">
+  <section class="panel" id="col1">
     <div class="pad">
       <div class="dropzone" id="dropzone" tabindex="0" role="button">
         <b>ODB++ をドロップ</b>
@@ -131,26 +140,15 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
       <input type="file" id="dirInput" class="sr" webkitdirectory multiple>
       <div id="stepRow" style="display:none"><span class="label">ステップ</span> <select class="step" id="stepSel"></select></div>
       <div id="result" style="display:none">
+        <hr class="sep">
         <p class="label">結果</p>
         <div class="stats" id="stats"></div>
-        <div class="btn-row" style="margin-top:8px">
-          <button type="button" class="primary" id="download">.kicad_pcb をダウンロード</button>
-        </div>
-        <div class="label" id="dlName" style="margin-top:4px; font-weight:400; word-break:break-all">
-        </div>
       </div>
-      <div id="layersBox" style="display:none">
-        <hr class="sep">
-        <p class="label">層の割り当て (空の層は省略)</p>
-        <p class="layer-hint">行にカーソルを乗せる / タップすると、その層をプレビューで強調します。目のアイコンはプレビューの表示だけを切り替え、変換に含めるかは「KiCad 層」で選びます。除外中の層は破線で表示します。</p>
-        <div id="vcutBox" style="display:none">
-          <label class="check"><input type="checkbox" id="vcutOn"> V カット面付けとして外形を作る</label>
-          <p class="layer-hint" id="vcutHint"></p>
-          <label class="check" id="vcutInsetRow">V カット線の端: パネル外形から <input type="number" id="vcutInset" min="0" step="0.5" value="1"> mm 内側</label>
-        </div>
-        <div class="layer-scroll"><table class="layer-table"><thead><tr><th><span class="sr">表示</span></th><th>ODB++ 層</th><th>種類</th><th>KiCad 層</th></tr></thead><tbody id="layerRows"></tbody></table></div>
-        <div class="btn-row" style="margin-top:6px"><button type="button" class="ghost" id="reconvert" disabled>割り当てを反映して再変換</button></div>
-        <p class="layer-hint" id="staleNote" style="display:none">割り当てを変えました。結果の数とファイルは再変換 (またはダウンロード) のときに更新します。</p>
+      <div id="vcutBox" style="display:none">
+        <p class="label" style="margin-top:0">V カット</p>
+        <label class="check"><input type="checkbox" id="vcutOn"> V カット面付けとして外形を作る</label>
+        <p class="layer-hint" id="vcutHint"></p>
+        <label class="check" id="vcutInsetRow">V カット線の端: パネル外形から <input type="number" id="vcutInset" min="0" step="0.5" value="1"> mm 内側</label>
       </div>
       <div id="warnBox" style="display:none">
         <hr class="sep">
@@ -171,6 +169,22 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
         <canvas id="view"></canvas>
         <div class="empty" id="empty">ODB++ を読み込むと、ここにプレビューを表示します。</div>
       </div>
+    </div>
+  </section>
+  <section class="panel" id="col3">
+    <div class="pad rowA">
+      <div id="layersBox" style="display:none">
+        <p class="label" style="margin-top:0">層の割り当て (空の層は省略)</p>
+        <p class="layer-hint">行にカーソルを乗せる / タップすると、その層をプレビューで強調します。目のアイコンはプレビューの表示だけを切り替え、変換に含めるかは「KiCad 層」で選びます。除外中の層は破線で表示します。</p>
+        <div class="layer-scroll"><table class="layer-table"><thead><tr><th><span class="sr">表示</span></th><th>ODB++ 層</th><th>種類</th><th>KiCad 層</th></tr></thead><tbody id="layerRows"></tbody></table></div>
+      </div>
+      <p class="layer-hint" id="layersEmpty">ODB++ を読み込むと、ここに層の一覧を表示します。</p>
+    </div>
+    <div class="pad rowB" id="actions" style="display:none">
+      <button type="button" class="ghost" id="reconvert" disabled>割り当てを反映して再変換</button>
+      <p class="layer-hint" id="staleNote" style="display:none; margin:0">割り当てを変えました。結果の数とファイルは再変換 (またはダウンロード) のときに更新します。</p>
+      <button type="button" class="primary" id="download">.kicad_pcb をダウンロード</button>
+      <div class="label" id="dlName" style="margin-top:0; font-weight:400; word-break:break-all"></div>
     </div>
   </section>
 </main>
@@ -207,20 +221,9 @@ function clip(subj, clp, type, tree) {
   return out;
 }
 function unionFlat(a) { return a.length ? clip(a, null, C.ClipType.ctUnion) : []; }
-/* Union of many paths: merge spatially sorted chunks pairwise (keeps the sweep's active edge list short). */
-function union(a) {
-  if (a.length <= 400) return unionFlat(a);
-  const keyed = a.map(p => { let s = 0; for (const q of p) s += q.X; return [s / p.length, p]; });
-  keyed.sort((u, v) => u[0] - v[0]);
-  let parts = [];
-  for (let i = 0; i < keyed.length; i += 200) parts.push(unionFlat(keyed.slice(i, i + 200).map(k => k[1])));
-  while (parts.length > 1) {
-    const next = [];
-    for (let i = 0; i < parts.length; i += 2) next.push(i + 1 < parts.length ? unionFlat(parts[i].concat(parts[i + 1])) : parts[i]);
-    parts = next;
-  }
-  return parts[0];
-}
+/* Union in one sweep. (Splitting the input into chunks was slower and could separate a hole from its outer:
+   a lone CW hole is filled under the non-zero rule, which filled the inside of ring-shaped patterns.) */
+const union = unionFlat;
 const diff = (a, b) => !a.length ? [] : !b.length ? union(a) : clip(a, b, C.ClipType.ctDifference);
 const area = paths => paths.reduce((s, p) => s + C.Clipper.Area(p), 0) / (SC * SC);
 function bbox(paths) {
@@ -1639,6 +1642,7 @@ function renderLayerTable() {
     updateRow(l);
   }
   $('layersBox').style.display = '';
+  $('layersEmpty').style.display = 'none';
 }
 $('reconvert').addEventListener('click', async () => { await convert(); });
 const CUTOUT_HINT = /slit|cutout|milling|rout/i;
@@ -1676,6 +1680,7 @@ async function convert() {
     $('stats').innerHTML = '';
     for (const [k, v] of rows) { const a = document.createElement('span'); a.textContent = k; const b = document.createElement('b'); b.textContent = v; $('stats').append(a, b); }
     $('result').style.display = '';
+    $('actions').style.display = '';
     $('dlName').textContent = '保存名: ' + fileNameFor(st.step);
     const w = $('warns'); w.innerHTML = '';
     for (const [m, n] of Odb.warnings()) { const li = document.createElement('li'); li.textContent = m + (n > 1 ? ` (${n} 件)` : ''); w.appendChild(li); }
