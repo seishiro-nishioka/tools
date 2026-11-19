@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MLCC のサイズと容量の傾向</title>
+<style>
+  :root {
+    --fg: #1f2328; --muted: #59636e; --line: #d0d7de; --grid: #eaeef2; --bg: #f6f8fa; --panel: #fff;
+    --accent: #0969da; --sel: #ddebff; --warn: #9a6700; --warnbg: #fff8c5;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; color: var(--fg); background: var(--bg); font-size: 14px; display: flex; flex-direction: column; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 18px; margin: 0; }
+  header .ver { color: var(--muted); font-size: 12px; }
+  header a { margin-left: auto; color: var(--accent); text-decoration: none; }
+  /* 3 columns: inputs | charts | table. Each column scrolls on its own. */
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 260px minmax(0, 1fr) clamp(400px, 38vw, 640px); gap: 12px; padding: 12px; }
+  main > * { min-height: 0; overflow: auto; }
+  aside, .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  #center { display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+  #center .card { flex: 1 1 0; min-height: 240px; display: flex; flex-direction: column; }
+  #center .card.big { flex-grow: 1.4; }
+  #center svg { flex: 1; min-height: 0; width: 100%; display: block; }
+  #right { display: flex; flex-direction: column; gap: 12px; }
+  @media (max-width: 1100px) {
+    html, body { height: auto; } body { display: block; }
+    main { display: flex; flex-direction: column; }
+    main > * { overflow: visible; }
+    #center { overflow: visible; }
+    #center .card { min-height: 0; } #center svg { height: 340px; flex: none; }
+  }
+  h2 { font-size: 13px; margin: 12px 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--line); }
+  h2:first-child, .card h2 { margin-top: 0; }
+  .row { display: flex; align-items: center; gap: 5px; margin: 5px 0; flex-wrap: wrap; }
+  .row > span.lbl { width: 70px; flex: none; color: var(--muted); font-size: 12px; }
+  input, select { padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+  input[type=number] { width: 70px; }
+  .unit { color: var(--muted); font-size: 12px; }
+  .note { color: var(--muted); font-size: 12px; margin: 4px 0; line-height: 1.5; }
+  button.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+  button.btn:hover { background: var(--bg); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin: 2px 0 4px; }
+  .legend i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+  .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .head h2 { flex: 1; border: 0; margin: 0; padding: 0; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; background: var(--panel); padding: 2px 8px; font: inherit; font-size: 12px; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: var(--sel); }
+  .vchk { display: grid; grid-template-columns: repeat(3, auto); gap: 3px 10px; font-size: 13px; }
+  .vchk label { display: flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
+  .vchk .sw { margin: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { padding: 4px 3px; border-bottom: 1px solid var(--grid); text-align: right; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+  td:first-child, th:first-child { text-align: left; }
+  td.est { color: var(--muted); }
+  td .sub { display: block; color: var(--muted); font-size: 11px; }
+  td.off { opacity: .35; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  #tip { position: fixed; pointer-events: none; background: rgba(255,255,255,.97); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.12); display: none; z-index: 10; }
+  #tip div { white-space: nowrap; }
+  #tip b { font-weight: 600; }
+  details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+  details p, details li { font-size: 12px; line-height: 1.6; color: var(--fg); }
+  details ul { padding-left: 18px; margin: 4px 0; }
+  code { font-size: 12px; background: var(--bg); padding: 0 3px; border-radius: 3px; }
+  svg text { font-family: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MLCC のサイズと容量の傾向</h1><span class="ver">v2026.11.19.1</span>
+  <a href="../">ツール一覧</a>
+</header>
+<main>
+  <aside>
+    <h2>誘電体</h2>
+    <span class="seg" id="dielSeg"><button data-d="X5R" class="on">X5R / X6S</button><button data-d="X7R">X7R / X7S</button></span>
+
+    <h2>定格電圧</h2>
+    <div class="vchk" id="vchk"></div>
+    <div class="row"><button class="btn" id="vAll">全部</button><button class="btn" id="vNone">外す</button></div>
+
+    <h2>実効容量の条件 (DC バイアス)</h2>
+    <div class="row"><span class="lbl">印加電圧</span>
+      <span class="seg" id="biasSeg"><button data-b="ratio" class="on">定格の比</button><button data-b="fixed">固定電圧</button></span></div>
+    <div class="row" id="rowRatio"><span class="lbl">定格の</span><input id="ratio" type="number" step="5" min="0" max="100" value="50"><span class="unit">%</span></div>
+    <div class="row" id="rowFixed" hidden><span class="lbl">電圧</span><input id="vfix" type="number" step="any" min="0" value="3.3"><span class="unit">V (定格未満の電圧だけ)</span></div>
+    <p class="note">mlcc-dcbias と同じモデル (電界で正規化した共通曲線、層厚はサイズと容量から推定) で、各セルの最大容量品の実効容量を出す。</p>
+    <div class="row"><span class="lbl">E50</span><input id="e50" type="number" step="0.1" min="0.3" value="2.2"><span class="unit">V/µm</span></div>
+    <p class="note">E50 = 容量が半分になる電界。既定は X5R/X6S 2.2、X7R/X7S 2.8。</p>
+    <button class="btn" id="resetBtn">初期状態に戻す</button>
+  </aside>
+
+  <section id="center">
+    <div class="card big">
+      <div class="head"><h2>サイズごとの最大容量 (量産品)</h2>
+        <span class="seg" id="ySeg"><button data-y="both" class="on">公称+実効</button><button data-y="nom">公称</button><button data-y="eff">実効</button></span></div>
+      <div class="legend" id="lg1"></div>
+      <svg id="ch1"></svg>
+    </div>
+    <div class="card">
+      <div class="head"><h2>最大容量品の DC バイアス後の残り (容量変化率)</h2></div>
+      <div class="legend" id="lg2"></div>
+      <svg id="ch2"></svg>
+    </div>
+  </section>
+
+  <section id="right">
+    <div class="card">
+      <h2>最大容量の表 <span class="unit" id="tblCond"></span></h2>
+      <div style="overflow:auto"><table>
+        <thead id="thead"></thead>
+        <tbody id="tbody"></tbody>
+      </table></div>
+      <p class="note">上段: 公称の最大容量 (µF)。下段: 印加電圧での実効容量。灰色はその定格の品がなく、より高い定格の品で代用した値。「−」は量産品なし。セルにマウスを載せると根拠の品番が出る。最下行の「傾き」は、体積が10倍になると容量が何倍になるか (両対数の回帰)。</p>
+    </div>
+    <div class="card">
+      <details open>
+        <summary>読み方</summary>
+        <ul>
+          <li>横軸はサイズを外形体積の対数で並べたもの。1段上のサイズで体積はおよそ 2.4〜4.6 倍。</li>
+          <li>X5R/X6S は、同じ定格ならサイズを1段上げると最大容量がおよそ 2 倍 (例: 6.3 V で 0402 22 µF → 0603 47 µF → 0805 100 µF → 1206 220 µF)。</li>
+          <li>同じサイズなら、定格を上げると最大容量は下がる。誘電体層を厚くする必要があるため。4 V と 6.3 V はほぼ同じ。</li>
+          <li>X7R/X7S は X5R/X6S より小さく、0603 以上で 1/2〜1/5 程度。0201 以下は品ぞろえが少なく、桁違いに小さい。</li>
+          <li>実効容量で見ると差がさらに開く。小さいサイズの最大容量品は層が薄く、同じ電圧でも電界が強くて DC バイアスで大きく下がる。</li>
+          <li>傾き (体積10倍あたりの倍率) は品ぞろえの穴に引っ張られる。0201 の 50 V (1.5 nF) のような孤立した点は、表で品番を見て判断する。</li>
+        </ul>
+      </details>
+      <details>
+        <summary>データとモデル</summary>
+        <p>公称容量は、村田の汎用品 GRM シリーズで「量産中 (In Production)」の品番から、各サイズ・定格の最大値を拾ったもの (<span id="asof"></span> 時点、村田の製品検索より)。各サイズで最も厚い品 (GRM022 / 033 / 155 / 188 / 21B / 31C / 32E)。NRND・量産終了予定品と、車載 (GCM)・低 ESL・3端子品は除く。他社 (TDK、Samsung など) には、これより大きい容量の品がある場合がある。</p>
+        <p>1812 (4532) の GRM は、X5R/X7R 系がすべて量産終了予定のため載せていない。1210 の 50V 品も NRND のみ。</p>
+        <p>実効容量は mlcc-dcbias と同じ考え方: 層の厚み <code>t = √(ε0·εr·V<sub>act</sub> / C)</code> (V<sub>act</sub> = 外形体積 × 有効率) を求め、電界 E = V/t を共通曲線 <code>C/C0 = (1 + 7·(E/E50)²)<sup>−1/3</sup></code> に入れる。各セルの最大容量品はサイズいっぱいに積んだ部品なので、この推定が当たりやすい。</p>
+        <p>温度特性・AC 振幅・エージング・容量許容差は含まない。</p>
+      </details>
+    </div>
+  </section>
+</main>
+<div id="tip"></div>
+
+<script>
+'use strict';
+const EPS0 = 8.854e-12;
+const ASOF = '2026-11';
+// Same case model as mlcc-dcbias: L x W x T (mm), active-volume ratio
+const CASES = {
+  '01005': { mm: '0402', d: [0.4, 0.2, 0.2], eta: 0.30 },
+  '0201':  { mm: '0603', d: [0.6, 0.3, 0.3], eta: 0.38 },
+  '0402':  { mm: '1005', d: [1.0, 0.5, 0.5], eta: 0.45 },
+  '0603':  { mm: '1608', d: [1.6, 0.8, 0.8], eta: 0.50 },
+  '0805':  { mm: '2012', d: [2.0, 1.25, 1.25], eta: 0.55 },
+  '1206':  { mm: '3216', d: [3.2, 1.6, 1.6], eta: 0.58 },
+  '1210':  { mm: '3225', d: [3.2, 2.5, 2.5], eta: 0.60 },
+};
+const SIZES = ['01005', '0201', '0402', '0603', '0805', '1206', '1210']; // explicit: '1206' etc. are integer-like keys and would sort first
+const VOLTS = [4, 6.3, 10, 16, 25, 35, 50, 100];
+const DIEL = { X5R: { er: 3500, e50: 2.2, name: 'X5R / X6S' }, X7R: { er: 2500, e50: 2.8, name: 'X7R / X7S' } };
+// ordered voltages -> ordered hue ramp (dark blue .. red)
+const VCOL = ['#1d3f8f', '#2a78d6', '#1798a8', '#1baf7a', '#7f9a00', '#eda100', '#eb6834', '#c0303a'];
+
+/* Max nominal capacitance (µF) of Murata GRM general-purpose parts "In Production",
+   thickest variant of each size (022/033/155/188/21B/31C/32E), X5R+X6S / X7R+X7S(+Z7).
+   Collected from pim.murata.com search on ASOF. Key = rated voltage V.
+   [C, part number, rated V of that part]. If the part's rating is higher than the key,
+   no part exists at that rating and a higher-rated part is the best usable one. */
+const DATA = {"X5R":{"01005":{"4":[1.0,"GRM022C80G105ME01",4],"6.3":[1.0,"GRM022R60J105ME01",6.3],"10":[0.1,"GRM022C81A104ME05",10],"16":[0.1,"GRM022R61C104ME05",16],"25":[0.01,"GRM022R61E103ME01",25]},"0201":{"4":[4.7,"GRM033R60G475ME05",4],"6.3":[4.7,"GRM033R60J475ME05",6.3],"10":[2.2,"GRM033R61A225KE47",10],"16":[1.0,"GRM033R61C105ME15",16],"25":[0.22,"GRM033R61E224KE01",25],"35":[0.1,"GRM033R6YA104KE14",35],"50":[0.0015,"GRM033R61H152KA12",50]},"0402":{"4":[22.0,"GRM155R60G226ME11",4],"6.3":[22.0,"GRM155R60J226ME11",6.3],"10":[10.0,"GRM155R61A106ME11",10],"16":[4.7,"GRM155R61C475ME01",16],"25":[2.2,"GRM155C81E225KE11",25],"35":[2.2,"GRM155R6YA225KE11",35],"50":[1.0,"GRM155R61H105KE05",50],"100":[0.1,"GRM155R62A104KE14",100]},"0603":{"4":[47.0,"GRM188C80G476ME01",4],"6.3":[47.0,"GRM188R60J476ME01",6.3],"10":[22.0,"GRM188C81A226ME01",10],"16":[22.0,"GRM188R61C226ME01",16],"25":[10.0,"GRM188C81E106ME01",25],"35":[10.0,"GRM188R6YA106MA73",35],"50":[2.2,"GRM188R61H225KE11",50]},"0805":{"4":[100.0,"GRM21BC80G107ME15",4],"6.3":[100.0,"GRM21BR60J107ME15",6.3],"10":[47.0,"GRM21BR61A476ME15",10],"16":[22.0,"GRM21BC81C226ME44",16],"25":[22.0,"GRM21BC81E226ME44",25],"35":[10.0,"GRM21BC8YA106KE11",35],"50":[10.0,"GRM21BR61H106KE43",50]},"1206":{"4":[220.0,"GRM31CC80G227ME11",4],"6.3":[220.0,"GRM31CR60J227ME11",6.3],"10":[100.0,"GRM31CR61A107MEA8",10],"16":[47.0,"GRM31CR61C476ME44",16],"25":[22.0,"GRM31CC81E226KE11",25],"35":[4.7,"GRM31CR61H475KA12",50],"50":[4.7,"GRM31CR61H475KA12",50]},"1210":{"4":[330.0,"GRM32ER60G337ME05",4],"6.3":[220.0,"GRM32EC80J227ME01",6.3],"10":[100.0,"GRM32ER61A107ME20",10],"16":[47.0,"GRM32EC81C476KE15",16],"25":[22.0,"GRM32EC81E226KE15",25]}},"X7R":{"01005":{"4":[0.01,"GRM022C71A103KE01",10],"6.3":[0.01,"GRM022C71A103KE01",10],"10":[0.01,"GRM022C71A103KE01",10],"16":[0.001,"GRM022R71C102KE14",16]},"0201":{"4":[0.1,"GRM033C70J104KE14",6.3],"6.3":[0.1,"GRM033C70J104KE14",6.3],"10":[0.1,"GRM033C71A104KE14",10],"16":[0.1,"GRM033C71C104KE14",16],"25":[0.01,"GRM033R71E103KE14",25],"35":[0.0015,"GRM033R71H152KA12",50],"50":[0.0015,"GRM033R71H152KA12",50]},"0402":{"4":[2.2,"GRM155C70G225ME11",4],"6.3":[2.2,"GRM155C70J225KE11",6.3],"10":[2.2,"GRM155C71A225KE11",10],"16":[1.0,"GRM155C71C105KE11",16],"25":[0.1,"GRM155R71E104KE14",25],"35":[0.1,"GRM155C71H104JE19",50],"50":[0.1,"GRM155C71H104JE19",50],"100":[0.0047,"GRM155R72A472KA01",100]},"0603":{"4":[10.0,"GRM188Z71A106KA73",10],"6.3":[10.0,"GRM188Z71A106KA73",10],"10":[10.0,"GRM188Z71A106KA73",10],"16":[4.7,"GRM188C71C475KE21",16],"25":[2.2,"GRM188C71E225KE11",25],"35":[0.47,"GRM188R7YA474KE05",35],"50":[0.22,"GRM188R71H224KAC4",50],"100":[0.1,"GRM188R72A104KA35",100]},"0805":{"4":[22.0,"GRM21BZ70J226ME44",6.3],"6.3":[22.0,"GRM21BZ70J226ME44",6.3],"10":[22.0,"GRM21BZ71A226ME15",10],"16":[10.0,"GRM21BC71C106KE11",16],"25":[10.0,"GRM21BC71E106KE01",25],"35":[4.7,"GRM21BC7YA475KE11",35],"50":[4.7,"GRM21BC71H475KE11",50],"100":[1.0,"GRM21BC72A105KE01",100]},"1206":{"4":[22.0,"GRM31CR70J226KE19",6.3],"6.3":[22.0,"GRM31CR70J226KE19",6.3],"10":[22.0,"GRM31CR71A226KE15",10],"16":[22.0,"GRM31CC71C226ME11",16],"25":[22.0,"GRM31CC71E226ME15",25],"35":[4.7,"GRM31CR71H475KA12",50],"50":[4.7,"GRM31CR71H475KA12",50],"100":[4.7,"GRM31CC72A475KE11",100]},"1210":{"4":[100.0,"GRM32EC70G107ME15",4],"6.3":[100.0,"GRM32EC70J107ME15",6.3],"10":[47.0,"GRM32ER71A476KE15",10],"16":[22.0,"GRM32ER71C226KEA8",16],"25":[22.0,"GRM32ER71E226KE15",25],"35":[10.0,"GRM32EC72A106KE05",100],"50":[10.0,"GRM32EC72A106KE05",100],"100":[10.0,"GRM32EC72A106KE05",100]}}};
+
+const DEF = { d: 'X5R', vs: [4, 6.3, 10, 16, 25, 50, 100], b: 'ratio', r: 50, vf: 3.3, e50: { X5R: 2.2, X7R: 2.8 }, y: 'both' };
+let state = JSON.parse(JSON.stringify(DEF));
+const $ = id => document.getElementById(id);
+
+// ---------- model ----------
+const ret = (E, e50) => Math.pow(1 + 7 * (E / e50) ** 2, -1 / 3);
+const vol = cs => { const c = CASES[cs]; return c.d[0] * c.d[1] * c.d[2]; }; // mm^3
+function layerT(cs, C_uF, diel) { // µm
+  const c = CASES[cs];
+  return Math.sqrt(EPS0 * DIEL[diel].er * vol(cs) * 1e-9 * c.eta / (C_uF * 1e-6)) * 1e6;
+}
+function vApplied(vr) {
+  if (state.b === 'ratio') return vr * state.r / 100;
+  return state.vf < vr ? state.vf : NaN;
+}
+function cell(cs, vr) {
+  const e = DATA[state.d][cs] && DATA[state.d][cs][vr];
+  if (!e) return null;
+  const C = e[0], pn = e[1], up = e[2] !== vr, t = layerT(cs, C, state.d), va = vApplied(vr);
+  const r = isFinite(va) ? ret(va / t, state.e50[state.d]) : NaN;
+  return { C, pn, up, vpart: e[2], t, va, r, Ceff: C * r, Er: vr / t };
+}
+function fmtUF(u) {
+  if (!isFinite(u)) return '—';
+  if (u >= 1) return String(+u.toPrecision(3)) + ' µF';
+  if (u >= 1e-3) return String(+(u * 1e3).toPrecision(3)) + ' nF';
+  return String(+(u * 1e6).toPrecision(3)) + ' pF';
+}
+function slope(vr) { // log-log regression of C vs volume
+  const pts = SIZES.map(cs => [cs, cell(cs, vr)]).filter(([, c]) => c).map(([cs, c]) => [Math.log10(vol(cs)), Math.log10(c.C)]);
+  if (pts.length < 3) return NaN;
+  const n = pts.length, mx = pts.reduce((s, p) => s + p[0], 0) / n, my = pts.reduce((s, p) => s + p[1], 0) / n;
+  const sxy = pts.reduce((s, p) => s + (p[0] - mx) * (p[1] - my), 0), sxx = pts.reduce((s, p) => s + (p[0] - mx) ** 2, 0);
+  return 10 ** (sxy / sxx); // factor per decade of volume
+}
+
+// ---------- chart ----------
+function svgEl(tag, attrs, parent) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e); return e;
+}
+const lv = cs => Math.log10(vol(cs));
+const XMIN = lv(SIZES[0]) - 0.25, XMAX = lv(SIZES[SIZES.length - 1]) + 0.25;
+/* cfg: {ylog, ymin, ymax, ylabel, yfmt, series:[{color, dash, pts:[[cs, y]], hollow}], hover(cs)->rows} */
+function drawChart(svg, cfg) {
+  const W = svg.clientWidth || 600, H = svg.clientHeight || 300;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = '';
+  const m = { l: 58, r: 14, t: 8, b: 40 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const X = x => m.l + (x - XMIN) / (XMAX - XMIN) * pw;
+  const yt = cfg.ylog ? Math.log10 : v => v;
+  const y0 = yt(cfg.ymin), y1 = yt(cfg.ymax);
+  const Y = v => m.t + ph - (yt(v) - y0) / (y1 - y0) * ph;
+  const g = svgEl('g', {}, svg);
+  // y grid
+  const ticks = [];
+  if (cfg.ylog) {
+    for (let d = Math.floor(y0); d <= Math.ceil(y1); d++) for (const k of [1, 2, 5]) { const v = k * 10 ** d; if (v >= cfg.ymin * 0.999 && v <= cfg.ymax * 1.001) ticks.push([v, k === 1]); }
+  } else for (let v = cfg.ymin; v <= cfg.ymax + 1e-9; v += 20) ticks.push([v, true]);
+  for (const [v, major] of ticks) {
+    svgEl('line', { x1: m.l, x2: m.l + pw, y1: Y(v), y2: Y(v), stroke: major ? '#d8dee4' : '#eef1f4' }, g);
+    svgEl('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end', 'font-size': 11, fill: major ? '#59636e' : '#8c959f' }, g).textContent = cfg.yfmt(v);
+  }
+  // x: one tick per case size
+  for (const cs of SIZES) {
+    const x = X(lv(cs));
+    svgEl('line', { x1: x, x2: x, y1: m.t, y2: m.t + ph, stroke: '#eef1f4' }, g);
+    svgEl('text', { x, y: m.t + ph + 14, 'text-anchor': 'middle', 'font-size': 11, fill: '#1f2328' }, g).textContent = cs;
+    svgEl('text', { x, y: m.t + ph + 27, 'text-anchor': 'middle', 'font-size': 10, fill: '#8c959f' }, g).textContent = CASES[cs].mm;
+  }
+  svgEl('text', { x: 12, y: m.t + ph / 2, 'text-anchor': 'middle', 'font-size': 12, fill: '#59636e', transform: `rotate(-90 12 ${m.t + ph / 2})` }, g).textContent = cfg.ylabel;
+  const clip = 'c' + Math.random().toString(36).slice(2);
+  const cp = svgEl('clipPath', { id: clip }, svgEl('defs', {}, svg));
+  svgEl('rect', { x: m.l, y: m.t - 6, width: pw, height: ph + 12 }, cp);
+  const pg = svgEl('g', { 'clip-path': `url(#${clip})` }, svg);
+  for (const s of cfg.series) {
+    // break the line where a size has no part
+    let segs = [[]];
+    for (const cs of SIZES) {
+      const p = s.pts.find(q => q[0] === cs);
+      if (p && isFinite(p[1]) && p[1] > 0) segs[segs.length - 1].push(p); else if (segs[segs.length - 1].length) segs.push([]);
+    }
+    for (const sg of segs) if (sg.length > 1) svgEl('path', { d: sg.map((p, i) => (i ? 'L' : 'M') + X(lv(p[0])).toFixed(1) + ' ' + Y(p[1]).toFixed(1)).join(''), fill: 'none', stroke: s.color, 'stroke-width': s.width || 2, 'stroke-dasharray': s.dash || '', 'stroke-linejoin': 'round' }, pg);
+    for (const p of s.pts) if (isFinite(p[1]) && p[1] > 0) {
+      svgEl('circle', { cx: X(lv(p[0])), cy: Y(p[1]), r: s.r || 4, fill: p[2] ? '#fff' : (s.hollow ? '#fff' : s.color), stroke: s.color, 'stroke-width': s.hollow || p[2] ? 1.8 : 1.5 }, pg);
+    }
+  }
+  const cross = svgEl('line', { y1: m.t, y2: m.t + ph, stroke: '#59636e', 'stroke-width': 1, 'stroke-dasharray': '3 3', visibility: 'hidden' }, svg);
+  const hit = svgEl('rect', { x: m.l, y: m.t, width: pw, height: ph, fill: 'transparent' }, svg);
+  const tip = $('tip');
+  hit.addEventListener('pointermove', ev => {
+    const r = svg.getBoundingClientRect();
+    const px = (ev.clientX - r.left) * W / r.width;
+    const cs = SIZES.reduce((a, b) => Math.abs(X(lv(b)) - px) < Math.abs(X(lv(a)) - px) ? b : a);
+    cross.setAttribute('x1', X(lv(cs))); cross.setAttribute('x2', X(lv(cs))); cross.setAttribute('visibility', 'visible');
+    tip.innerHTML = cfg.hover(cs).map(o => `<div>${o.color ? `<span class="sw" style="background:${o.color}"></span>` : ''}${o.text}</div>`).join('');
+    tip.style.display = 'block';
+    const tx = ev.clientX + 14, tw = tip.offsetWidth;
+    tip.style.left = (tx + tw > innerWidth - 8 ? ev.clientX - tw - 14 : tx) + 'px';
+    tip.style.top = Math.min(ev.clientY + 10, innerHeight - tip.offsetHeight - 8) + 'px';
+  });
+  hit.addEventListener('pointerleave', () => { cross.setAttribute('visibility', 'hidden'); tip.style.display = 'none'; });
+}
+
+// ---------- render ----------
+const vsSel = () => VOLTS.filter(v => state.vs.includes(v));
+const vcol = v => VCOL[VOLTS.indexOf(v)];
+function condText() {
+  return state.b === 'ratio' ? `実効 = 定格の ${state.r} % を印加` : `実効 = ${state.vf} V を印加`;
+}
+function hoverRows(cs, mode) {
+  const c = CASES[cs];
+  const rows = [{ text: `<b>${cs} (${c.mm})</b> ${c.d.join('×')} mm, ${DIEL[state.d].name}` }];
+  for (const v of vsSel()) {
+    const x = cell(cs, v);
+    if (!x) { rows.push({ color: vcol(v), text: `${v} V: 量産品なし` }); continue; }
+    const est = x.up ? ` (${x.vpart} V 品)` : '';
+    const eff = isFinite(x.r) ? ` → ${x.va.toFixed(1)} V で ${fmtUF(x.Ceff)} (${((x.r - 1) * 100).toFixed(0)} %)` : '';
+    rows.push({ color: vcol(v), text: `${v} V: ${fmtUF(x.C)}${est}${eff}<span class="unit"> ${x.pn} / 層 ${x.t.toFixed(2)} µm</span>` });
+  }
+  return rows;
+}
+function render() {
+  const vs = vsSel();
+  // chart 1
+  const series = [];
+  let lo = Infinity, hi = 0;
+  for (const v of vs) {
+    const cells = SIZES.map(cs => [cs, cell(cs, v)]).filter(([, x]) => x);
+    if (state.y !== 'eff') series.push({ color: vcol(v), pts: cells.map(([cs, x]) => [cs, x.C, x.up]) });
+    if (state.y !== 'nom') series.push({ color: vcol(v), dash: state.y === 'both' ? '5 4' : '', width: state.y === 'both' ? 1.5 : 2, r: state.y === 'both' ? 3 : 4, hollow: state.y === 'both', pts: cells.map(([cs, x]) => [cs, x.Ceff]) });
+    for (const [, x] of cells) { if (state.y !== 'eff') { lo = Math.min(lo, x.C); hi = Math.max(hi, x.C); } if (state.y !== 'nom' && x.Ceff > 0) { lo = Math.min(lo, x.Ceff); hi = Math.max(hi, x.Ceff); } }
+  }
+  if (!isFinite(lo)) { lo = 0.01; hi = 100; }
+  const ymin = 10 ** Math.floor(Math.log10(lo)), ymax = 10 ** Math.ceil(Math.log10(hi));
+  const lg = vs.map(v => `<span><i style="background:${vcol(v)}"></i>${v} V</span>`);
+  if (state.y === 'both') lg.push('<span>実線 ● = 公称、破線 ○ = 実効 (' + condText().replace('実効 = ', '') + ')</span>');
+  lg.push('<span>実線上の白抜き ○ = その定格の品がなく、上の定格の品で代用</span>');
+  $('lg1').innerHTML = lg.join('');
+  drawChart($('ch1'), { ylog: true, ymin, ymax, ylabel: '容量 (µF, 対数)', yfmt: fmtUF, series, hover: cs => hoverRows(cs) });
+  // chart 2
+  const s2 = vs.map(v => ({ color: vcol(v), pts: SIZES.map(cs => { const x = cell(cs, v); return [cs, x && isFinite(x.r) ? x.r * 100 : NaN]; }) }));
+  $('lg2').innerHTML = vs.map(v => `<span><i style="background:${vcol(v)}"></i>${v} V</span>`).join('') + `<span>${condText()}</span>`;
+  drawChart($('ch2'), { ylog: false, ymin: 0, ymax: 100, ylabel: '容量 C/C0 (%)', yfmt: v => v + ' %', series: s2, hover: cs => hoverRows(cs) });
+  renderTable();
+  saveUrl();
+}
+function renderTable() {
+  $('tblCond').textContent = `(${DIEL[state.d].name}、${condText()})`;
+  $('thead').innerHTML = '<tr><th>サイズ</th>' + VOLTS.map(v => `<th><span class="sw" style="background:${vcol(v)}"></span>${v} V</th>`).join('') + '</tr>';
+  const on = v => state.vs.includes(v);
+  const rows = SIZES.map(cs => `<tr><td>${cs}<span class="unit"> ${CASES[cs].mm}</span></td>` + VOLTS.map(v => {
+    const x = cell(cs, v);
+    if (!x) return `<td class="${on(v) ? '' : 'off'}">−</td>`;
+    const eff = isFinite(x.r) ? `<span class="sub">${fmtUF(x.Ceff)}</span>` : '<span class="sub">—</span>';
+    return `<td class="${x.up ? 'est' : ''} ${on(v) ? '' : 'off'}" title="${x.pn}${x.up ? ` (${x.vpart} V 品で代用)` : ''} / 層 ${x.t.toFixed(2)} µm / 定格時 ${x.Er.toFixed(1)} V/µm">${+x.C.toPrecision(3)}${eff}</td>`;
+  }).join('') + '</tr>');
+  rows.push('<tr><td>傾き<span class="unit"> /体積10倍</span></td>' + VOLTS.map(v => { const s = slope(v); return `<td class="${on(v) ? '' : 'off'}">${isFinite(s) ? '×' + s.toFixed(1) : '—'}</td>`; }).join('') + '</tr>');
+  $('tbody').innerHTML = rows.join('');
+}
+
+// ---------- inputs ----------
+function loadForm() {
+  for (const b of $('dielSeg').children) b.classList.toggle('on', b.dataset.d === state.d);
+  for (const b of $('biasSeg').children) b.classList.toggle('on', b.dataset.b === state.b);
+  for (const b of $('ySeg').children) b.classList.toggle('on', b.dataset.y === state.y);
+  $('rowRatio').hidden = state.b !== 'ratio'; $('rowFixed').hidden = state.b !== 'fixed';
+  $('ratio').value = state.r; $('vfix').value = state.vf; $('e50').value = state.e50[state.d];
+  $('vchk').innerHTML = VOLTS.map(v => `<label><input type="checkbox" value="${v}" ${state.vs.includes(v) ? 'checked' : ''}><span class="sw" style="background:${vcol(v)}"></span>${v} V</label>`).join('');
+}
+const seg = (id, key, attr) => $(id).addEventListener('click', ev => {
+  const b = ev.target.closest('button'); if (!b) return;
+  state[key] = b.dataset[attr]; loadForm(); render();
+});
+seg('dielSeg', 'd', 'd'); seg('biasSeg', 'b', 'b'); seg('ySeg', 'y', 'y');
+$('vchk').addEventListener('change', () => { state.vs = [...$('vchk').querySelectorAll('input:checked')].map(i => +i.value); render(); });
+$('vAll').addEventListener('click', () => { state.vs = VOLTS.slice(); loadForm(); render(); });
+$('vNone').addEventListener('click', () => { state.vs = []; loadForm(); render(); });
+$('ratio').addEventListener('input', () => { const v = parseFloat($('ratio').value); if (v >= 0 && v <= 100) { state.r = v; render(); } });
+$('vfix').addEventListener('input', () => { const v = parseFloat($('vfix').value); if (v >= 0) { state.vf = v; render(); } });
+$('e50').addEventListener('input', () => { const v = parseFloat($('e50').value); if (v > 0) { state.e50[state.d] = v; render(); } });
+$('resetBtn').addEventListener('click', () => { state = JSON.parse(JSON.stringify(DEF)); loadForm(); render(); });
+addEventListener('resize', render);
+
+// ---------- URL state ----------
+function saveUrl() { history.replaceState(null, '', '#' + encodeURIComponent(JSON.stringify(state))); }
+function loadUrl() {
+  try {
+    const s = JSON.parse(decodeURIComponent(location.hash.slice(1)));
+    if (DIEL[s.d]) state.d = s.d;
+    if (Array.isArray(s.vs)) state.vs = s.vs.map(Number).filter(v => VOLTS.includes(v));
+    if (s.b === 'ratio' || s.b === 'fixed') state.b = s.b;
+    if (s.r >= 0) state.r = +s.r; if (s.vf >= 0) state.vf = +s.vf;
+    if (s.e50) for (const k in DIEL) if (s.e50[k] > 0) state.e50[k] = +s.e50[k];
+    if (['both', 'nom', 'eff'].includes(s.y)) state.y = s.y;
+  } catch { /* defaults */ }
+}
+$('asof').textContent = ASOF;
+loadUrl(); loadForm(); render();
+</script>
+</body>
+</html>
