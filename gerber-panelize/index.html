@@ -118,7 +118,7 @@
 </head>
 <body>
 <header>
-  <h1>ガーバーの面付け</h1><span class="ver" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.22.2</span>
+  <h1>ガーバーの面付け</h1><span class="ver" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.22.3</span>
   <span class="sub">KiCad のガーバーから JLCPCB 向けの面付けパネルを作る (データはブラウザの外に出ません)</span>
   <a href="../">ツール一覧</a>
 </header>
@@ -1267,60 +1267,6 @@ function checkPanel(pp, boardArea) {
   };
 }
 
-/* closed ring -> D01 ops; runs of vertices on one circle (board arcs, mill fillets) become arcs again */
-function ringOps(q, tol = 0.0005) {
-  const n = q.length;
-  const turn = i => {
-    const a = q[(i - 1 + n) % n], b = q[i], c = q[(i + 1) % n];
-    return Math.atan2((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]), (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]));
-  };
-  const th = q.map((_, i) => turn(i));
-  const onArc = i => Math.abs(th[i]) > 1e-5 && Math.abs(th[i]) < 0.5;
-  // start at a corner so that no arc wraps around the start
-  let s = th.findIndex((_, i) => !onArc(i));
-  if (s < 0) s = 0;
-  const p = [];
-  for (let k = 0; k <= n; k++) p.push(q[(s + k) % n]);
-  const T = k => th[(s + k) % n];
-  const circle = (a, b, c) => {
-    const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
-    if (Math.abs(d) < 1e-12) return null;
-    const a2 = a[0] * a[0] + a[1] * a[1], b2 = b[0] * b[0] + b[1] * b[1], c2 = c[0] * c[0] + c[1] * c[1];
-    const x = (a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d;
-    const y = (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d;
-    return [x, y, Math.hypot(a[0] - x, a[1] - y)];
-  };
-  const fits = (i, j) => {
-    const c = circle(p[i], p[(i + j) >> 1], p[j]);
-    if (!c || c[2] > 1000) return null;
-    for (let k = i + 1; k < j; k++) if (Math.abs(Math.hypot(p[k][0] - c[0], p[k][1] - c[1]) - c[2]) > tol) return null;
-    return c;
-  };
-  const ops = [];
-  let i = 0;
-  while (i < n) {
-    // grow the run while the inner vertices turn the same way, the total turn stays within a half circle and all lie on one circle
-    let best = null, bj = i, sum = 0;
-    for (let j = i + 2; j <= n; j++) {
-      const t = T(j - 1);
-      if (!onArc((s + j - 1) % n) || (j > i + 2 && Math.sign(t) !== Math.sign(T(i + 1)))) break;
-      sum += Math.abs(t);
-      if (sum > Math.PI) break;
-      const c = fits(i, j);
-      if (!c) break;
-      best = c; bj = j;
-    }
-    if (best && bj - i >= 3) {
-      ops.push({ t: 'D01', x: p[bj][0], y: p[bj][1], arc: T(i + 1) > 0 ? 'CCW' : 'CW', cx: best[0], cy: best[1] });
-      i = bj;
-    } else {
-      ops.push({ t: 'D01', x: p[i + 1][0], y: p[i + 1][1] });
-      i++;
-    }
-  }
-  return { start: p[0], ops };
-}
-
 /* ================================================================ output files */
 /* board: { name, gerbers: [{name, g, L}], drills: [{name, d}], job: {name, text}|null } */
 function panelFiles(board, pp) {
@@ -1343,8 +1289,10 @@ function panelFiles(board, pp) {
       extra.ops.push({ t: 'ap', code: nd });
       for (const p of C.Clipper.CleanPolygons(pp.substrate, 0.001 * SC)) {
         if (p.length < 3) continue;
-        const ops = ringOps(pathF(p));
-        extra.ops.push({ t: 'D02', x: ops.start[0], y: ops.start[1] }, ...ops.ops);
+        // straight segments only, like KiKit (post.reconstructarcs is off by default)
+        const q = pathF(p);
+        extra.ops.push({ t: 'D02', x: q[0][0], y: q[0][1] });
+        for (const r of q.slice(1).concat([q[0]])) extra.ops.push({ t: 'D01', x: r[0], y: r[1] });
       }
       // only the panel outline (TA/TD attributes of the board apertures are kept, they are harmless)
       out.push({ name, text: writeGerber({ ...g, ops: [] }, [], pp.rot, extra, note) });
@@ -1567,6 +1515,9 @@ function classify(e) {
   const n = e.name.toLowerCase();
   if (n.endsWith('.gbrjob')) return 'job';
   if (n.endsWith('.json')) return 'json';
+  // known side files of Fabrication Toolkit: IPC-D-356 netlist and designators.csv ("C1:1" per line); not used
+  if (n.endsWith('.ipc') || /^P {2}CODE /.test(e.text.replace(/^\uFEFF/, ''))) return 'netlist';
+  if (n.endsWith('.csv') && /^(\uFEFF)?([^,\s:]+:\d+\s*\n?)+$/.test(e.text.trim() + '\n')) return 'designators';
   if (n.endsWith('.csv')) return GP.csvKind(e.text) || 'csv?';
   if (GP.looksDrill(e.text)) return 'drill';
   if (GP.looksGerber(e.text)) return 'gerber';
@@ -1580,6 +1531,8 @@ async function addFiles(files) {
   for (const e of entries) e.kind = classify(e);
   const cad = entries.filter(e => e.kind === 'gerber' || e.kind === 'drill' || e.kind === 'job');
   const jsons = entries.filter(e => e.kind === 'json');
+  // a new board replaces the old one: drop the CPL / BOM of the old board unless this drop brings new ones
+  if (cad.length && board) { cpl = null; bom = null; }
   for (const e of entries) {
     if (e.kind === 'cpl') cpl = { name: e.name, text: e.text };
     if (e.kind === 'bom') bom = { name: e.name, text: e.text };
@@ -1652,14 +1605,15 @@ function loadBoard(cad, all) {
   refreshCandidates(true);
 }
 $('bname').addEventListener('input', () => { if (board) { board.name = $('bname').value.trim() || 'board'; select(selKey, true); } });
-const kindLabel = e => ({ gerber: 'ガーバー', drill: 'ドリル', job: 'ジョブ', cpl: 'CPL', bom: 'BOM', json: '設定', drillmap: 'ドリルマップ (出力しない)', 'csv?': '不明な CSV', other: '使わない' })[e] || e;
+const kindLabel = e => ({ gerber: 'ガーバー', drill: 'ドリル', job: 'ジョブ', cpl: 'CPL', bom: 'BOM', json: '設定', drillmap: 'ドリルマップ (出力しない)', netlist: 'ネットリスト (使わない)', designators: '部品番号の一覧 (使わない)', 'csv?': '不明な CSV', other: '使わない' })[e] || e;
+const IGNORED = new Set(['drillmap', 'netlist', 'designators']); // known files that are left out on purpose (not an error)
 function renderFileList() {
   const li = [];
   if (board) {
     for (const x of board.gerbers) li.push(`<li><span class="n" title="${esc(x.name)}">${esc(x.name)}</span><span class="k">${esc(x.L.key)}</span></li>`);
     for (const x of board.drills) li.push(`<li><span class="n" title="${esc(x.name)}">${esc(x.name)}</span><span class="k">${x.d.plated === false ? 'NPTH' : x.d.plated ? 'PTH' : 'ドリル'} ${x.d.holes.length}穴</span></li>`);
     if (board.job) li.push(`<li><span class="n">${esc(board.job.name)}</span><span class="k">ジョブ</span></li>`);
-    for (const e of board.others) li.push(`<li${e.kind === 'drillmap' ? '' : ' class="bad"'}><span class="n" title="${esc(e.name)}">${esc(e.name)}</span><span class="k">${kindLabel(e.kind)}</span></li>`);
+    for (const e of board.others) li.push(`<li${IGNORED.has(e.kind) ? '' : ' class="bad"'}><span class="n" title="${esc(e.name)}">${esc(e.name)}</span><span class="k">${kindLabel(e.kind)}</span></li>`);
     for (const m of board.errors) li.push(`<li class="bad"><span class="n">${esc(m)}</span></li>`);
   }
   if (cpl) li.push(`<li><span class="n">${esc(cpl.name)}</span><span class="k">CPL</span></li>`);
