@@ -1,0 +1,2066 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ガーバーの面付け</title>
+<script src="https://cdn.jsdelivr.net/npm/clipper-lib@6.4.2/clipper.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<style>
+  :root {
+    --fg: #1f2328; --muted: #59636e; --line: #d0d7de; --bg: #f6f8fa; --panel: #fff;
+    --accent: #0969da; --ok: #1a7f37; --okbg: #dafbe1; --ng: #cf222e; --ngbg: #ffebe9; --warn: #9a6700; --warnbg: #fff8c5;
+    --sel: #ddebff; --view: #10161d;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; color: var(--fg); background: var(--bg); font-size: 14px; display: flex; flex-direction: column; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header { flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; white-space: nowrap; }
+  @media (max-width: 760px) { header .sub { display: none; } }
+  header .ver { color: var(--muted); font-size: 12px; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  header a { margin-left: auto; color: var(--accent); text-decoration: none; white-space: nowrap; }
+  /* 3 columns: input + conditions | candidates + preview | check + download. Each column scrolls on its own. */
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px minmax(0, 1fr) 320px; gap: 12px; padding: 12px; }
+  main > * { min-height: 0; overflow: auto; }
+  #left, #right { display: flex; flex-direction: column; gap: 12px; }
+  #center { display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .card h2 { font-size: 13px; margin: 0 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 6px; }
+  .card h2 .sp { flex: 1; }
+  .card h3 { font-size: 12px; margin: 10px 0 4px; color: var(--muted); }
+  #tblCard { flex: 0 0 auto; max-height: 34%; display: flex; flex-direction: column; min-height: 120px; }
+  #tblCard .tblwrap { flex: 1; min-height: 0; overflow: auto; }
+  #viewCard { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  @media (max-width: 1100px) {
+    html, body { height: auto; }
+    body { display: block; }
+    main { display: flex; flex-direction: column; }
+    main > * { overflow: visible; }
+    #center { overflow: visible; }
+    #tblCard { max-height: 50vh; }
+    #viewCard { height: 80vh; }
+  }
+  .row { display: flex; align-items: center; gap: 5px; margin: 4px 0; flex-wrap: wrap; }
+  .row > span.lbl { width: 96px; flex: none; color: var(--muted); font-size: 12px; }
+  input[type=number] { width: 58px; padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+  input[type=text] { padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; font: inherit; width: 100%; }
+  select { padding: 3px 4px; border: 1px solid var(--line); border-radius: 4px; font: inherit; background: var(--panel); }
+  .unit { color: var(--muted); font-size: 12px; }
+  button.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+  button.btn:hover:not(:disabled) { background: var(--bg); }
+  button.btn:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: #0757b8; }
+  button.danger { background: var(--ng); border-color: var(--ng); color: #fff; }
+  .note { color: var(--muted); font-size: 12px; margin: 4px 0; line-height: 1.5; }
+  .drop { border: 2px dashed var(--line); border-radius: 8px; padding: 14px 10px; text-align: center; color: var(--muted); font-size: 12px; cursor: pointer; }
+  .drop.over { border-color: var(--accent); background: #eef5ff; color: var(--accent); }
+  .drop b { color: var(--fg); font-size: 13px; }
+  ul.files { list-style: none; padding: 0; margin: 6px 0 0; font-size: 12px; max-height: 160px; overflow: auto; }
+  ul.files li { display: flex; gap: 6px; padding: 1px 0; }
+  ul.files li .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  ul.files li .k { color: var(--muted); flex: none; }
+  ul.files li.bad .k { color: var(--ng); }
+  dl.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; font-size: 13px; }
+  dl.kv dt { color: var(--muted); font-size: 12px; }
+  dl.kv dd { margin: 0; }
+  details { font-size: 12px; margin-top: 6px; }
+  details summary { cursor: pointer; color: var(--accent); }
+  details ul { padding-left: 18px; margin: 4px 0; }
+  details li { margin: 2px 0; line-height: 1.5; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; white-space: nowrap; }
+  th, td { padding: 3px 6px; border-bottom: 1px solid var(--line); text-align: right; }
+  th { background: var(--bg); position: sticky; top: 0; font-weight: 600; font-size: 12px; z-index: 1; }
+  td.l, th.l { text-align: left; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #f3f6fa; }
+  tr.sel { background: var(--sel) !important; outline: 2px solid var(--accent); outline-offset: -2px; }
+  tr.over { color: #a0a7b0; }
+  .tag { display: inline-block; padding: 0 6px; border-radius: 10px; font-size: 11px; line-height: 18px; }
+  .tag.ok { background: var(--okbg); color: var(--ok); }
+  .tag.ng { background: var(--ngbg); color: var(--ng); font-weight: 700; }
+  .tag.wait { color: var(--muted); }
+  .tag.std { background: #ddf4ff; color: #0550ae; }
+  .tag.eco { background: #f6f8fa; color: var(--muted); border: 1px solid var(--line); }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .toolbar .sp { flex: 1; }
+  .layers { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12px; margin-bottom: 6px; }
+  .layers label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; white-space: nowrap; }
+  .layers i { display: inline-block; width: 12px; height: 10px; border-radius: 2px; border: 1px solid #0003; }
+  .viewwrap { flex: 1; min-height: 0; position: relative; }
+  svg#view { position: absolute; inset: 0; width: 100%; height: 100%; background: var(--view); border-radius: 6px; display: block; user-select: none; cursor: grab; touch-action: none; }
+  svg#view.drag { cursor: grabbing; }
+  .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #8c959f; font-size: 13px; pointer-events: none; text-align: center; padding: 20px; }
+  .empty[hidden] { display: none; }
+  .zoombtns { position: absolute; right: 8px; top: 8px; display: flex; gap: 4px; }
+  .zoombtns button { width: 28px; height: 26px; border-radius: 4px; border: 1px solid #ffffff40; background: #ffffff1a; color: #fff; cursor: pointer; font-size: 14px; }
+  .verdict { border-radius: 8px; padding: 10px 12px; font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  .verdict.ok { background: var(--okbg); color: var(--ok); border: 1px solid #4ac26b; }
+  .verdict.ng { background: var(--ngbg); color: var(--ng); border: 2px solid var(--ng); font-size: 16px; }
+  .verdict.wait { background: var(--bg); color: var(--muted); border: 1px solid var(--line); font-weight: 400; font-size: 13px; }
+  ul.checks { list-style: none; padding: 0; margin: 8px 0 0; font-size: 12.5px; }
+  ul.checks li { padding: 3px 0 3px 20px; position: relative; line-height: 1.45; }
+  ul.checks li::before { position: absolute; left: 2px; top: 3px; font-weight: 700; }
+  ul.checks li.ok::before { content: "✓"; color: var(--ok); }
+  ul.checks li.ng::before { content: "✕"; color: var(--ng); }
+  ul.checks li.ng { color: var(--ng); font-weight: 600; }
+  ul.checks li.warn::before { content: "!"; color: var(--warn); left: 6px; }
+  ul.checks li.info::before { content: "・"; color: var(--muted); }
+  .dl { display: flex; flex-direction: column; gap: 6px; }
+  .dl button { width: 100%; text-align: left; }
+  .dl .fn { display: block; font-size: 11px; opacity: .8; font-weight: 400; }
+  .err { color: var(--ng); font-size: 12px; white-space: pre-wrap; }
+  kbd { font-size: 11px; border: 1px solid var(--line); border-radius: 3px; padding: 0 3px; background: var(--bg); }
+</style>
+</head>
+<body>
+<header>
+  <h1>ガーバーの面付け</h1><span class="ver" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.22.1</span>
+  <span class="sub">KiCad のガーバーから JLCPCB 向けの面付けパネルを作る (データはブラウザの外に出ません)</span>
+  <a href="../">ツール一覧</a>
+</header>
+<main>
+  <!-- ======================= left: input and conditions -->
+  <div id="left">
+    <section class="card">
+      <h2>入力</h2>
+      <div class="drop" id="drop" tabindex="0">
+        <b>ガーバー一式をドロップ</b><br>zip でも、複数ファイルでも可。<br>CPL・BOM (csv) も一緒に入れられます。<br><span style="font-size:11px">クリックでファイルを選択</span>
+      </div>
+      <input type="file" id="fileIn" multiple accept=".zip,.gbr,.ger,.drl,.xln,.gbrjob,.csv,.gtl,.gbl,.gts,.gbs,.gto,.gbo,.gtp,.gbp,.gm1,.gko,.g1,.g2,.g3,.g4,.txt" hidden>
+      <div id="loadErr" class="err"></div>
+      <ul class="files" id="fileList"></ul>
+    </section>
+
+    <section class="card" id="boardCard" hidden>
+      <h2>基板単品</h2>
+      <div class="row"><span class="lbl">名前</span><input type="text" id="bname" style="flex:1;width:auto"></div>
+      <dl class="kv" id="boardInfo"></dl>
+    </section>
+
+    <section class="card">
+      <h2>条件<span class="sp"></span><button class="btn" id="reset" title="面付け規格の標準値に戻す">標準値に戻す</button></h2>
+      <h3>パネル</h3>
+      <div class="row"><span class="lbl">最大寸法</span><input type="number" id="maxW" step="any" min="1"> × <input type="number" id="maxH" step="any" min="1"><span class="unit">mm</span></div>
+      <div class="row"><span class="lbl">レールの向き</span><select id="rails"><option value="both">両方を比べる</option><option value="tb">上下だけ</option><option value="lr">左右だけ</option></select></div>
+      <div class="row"><span class="lbl">基板の回転</span><select id="rot"><option value="both">0° と 90° を比べる</option><option value="0">0° だけ</option><option value="90">90° だけ</option></select></div>
+      <div class="row"><span class="lbl">基板間</span><input type="number" id="gap" step="any" min="0"><span class="unit">mm</span></div>
+      <div class="row"><span class="lbl">レール幅</span><input type="number" id="railW" step="any" min="1"><span class="unit">mm</span></div>
+      <div class="row"><span class="lbl">レールとのすき間</span><input type="number" id="railGap" step="any" min="0"><span class="unit">mm</span></div>
+      <h3>タブ・マウスバイト</h3>
+      <div class="row"><span class="lbl">タブ幅</span><input type="number" id="tabW" step="any" min="1"><span class="unit">mm</span></div>
+      <div class="row"><span class="lbl">左右の辺の本数</span><select id="hcount"></select></div>
+      <div class="row"><span class="lbl">上下の辺の本数</span><select id="vcount"></select></div>
+      <p class="note">「自動」はレールに向かう辺に1本 (左右レールなら左右の辺、上下レールなら上下の辺)。本数は基板の外接矩形の辺を等分した位置に置きます (KiKit の fixed タブと同じ)。</p>
+      <div class="row"><span class="lbl">穴径 / 中心間</span><input type="number" id="mbDrill" step="any" min="0.1"> / <input type="number" id="mbSpacing" step="any" min="0.1"><span class="unit">mm</span></div>
+      <div class="row"><span class="lbl">外側へのずれ</span><input type="number" id="mbOffset" step="any"><span class="unit">mm (穴の中心と基板端の距離)</span></div>
+      <div class="row"><span class="lbl">線の延長</span><input type="number" id="mbProlong" step="any" min="0"><span class="unit">mm</span></div>
+      <div class="row"><span class="lbl">内角 R</span><input type="number" id="millR" step="any" min="0"><span class="unit">mm</span></div>
+      <details>
+        <summary>タブを置かない方がよい場所 (規格 5章)</summary>
+        <ul>
+          <li><b>端までピンや穴が並んでいる辺</b>: マウスバイトと穴が干渉する。</li>
+          <li><b>コネクタの差し込み口の前</b>: 切り離した後の出っ張りでプラグが入りにくくなる。避けられないなら、やすりで仕上げる前提を基板の README に書く。</li>
+          <li><b>アンテナの禁止領域</b>: キープアウトに穴が入る。マウスバイトを外側に置く標準値なら、基板端までのキープアウトには掛からない。</li>
+          <li><b>製品と捨て板のすき間が 2mm 未満になる場所</b>: 内角 R の処理ですき間が埋まり、製品が捨て板とくっつく。L 字などでタブが長い棒になると起きやすい (切り離しチェックで NG になる)。</li>
+          <li>1辺1本で支えるなら反対側の辺にも必ず1本置き、偏らないようにする。L 字や凹みのある基板は、タブが製品の辺に短く届く向きを選ぶ。</li>
+        </ul>
+      </details>
+      <h3>ツーリングホール・フィデューシャル</h3>
+      <div class="row"><span class="lbl">付ける条件</span><span class="unit">パネルの短辺が</span><input type="number" id="pcbaMin" step="any" min="0"><span class="unit">mm 以上</span></div>
+      <div class="row"><span class="lbl">ツーリング穴径</span><input type="number" id="toolingDia" step="any" min="0.1"><span class="unit">mm (NPTH、4隅)</span></div>
+      <div class="row"><span class="lbl">フィデューシャル</span><span class="unit">銅</span><input type="number" id="fidCu" step="any" min="0.1"><span class="unit">開口</span><input type="number" id="fidMask" step="any" min="0.1"><span class="unit">mm</span></div>
+      <p class="note">70×70mm 未満のパネルは Economic PCBA 向けとして、ツーリングホールとフィデューシャルを付けません (レールは残す)。</p>
+      <h3>タイトル (レールのシルク)</h3>
+      <div class="row"><input type="text" id="title"></div>
+      <div class="row"><span class="lbl">文字の高さ</span><input type="number" id="titleH" step="any" min="0.5"><span class="unit">mm、線幅</span><input type="number" id="titleW" step="any" min="0.05"><span class="unit">mm</span></div>
+      <p class="note"><code>{name}</code> 基板名、<code>{rows}</code> 行、<code>{cols}</code> 列、<code>{date}</code> 今日の日付。空欄なら付けません。レールに入らないとき (1文字 1.3mm + 両端 12mm で見積もり) は省きます。英小文字は大文字の字形で描きます。</p>
+      <h3>設定ファイル</h3>
+      <div class="row"><button class="btn" id="loadCfg">設定 JSON を読み込む</button><input type="file" id="cfgIn" accept=".json" hidden></div>
+      <p class="note">このツールで保存した設定のほか、embedded-projects の <code>panel/&lt;種類&gt;.json</code> (KiKit) も読めます (行×列・タブ本数・レールの向き)。</p>
+    </section>
+  </div>
+
+  <!-- ======================= center: candidates and preview -->
+  <div id="center">
+    <section class="card" id="tblCard">
+      <div class="toolbar"><b>面付けの案</b><span class="note" id="tblNote" style="margin:0"></span></div>
+      <div class="tblwrap"><table id="tbl">
+        <thead><tr><th>枚数</th><th class="l">行×列</th><th class="l">レール</th><th>回転</th><th>パネル (mm)</th><th>基板の割合</th><th class="l">実装</th><th class="l">切り離し</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </section>
+    <section class="card" id="viewCard">
+      <div class="toolbar"><b id="viewTitle">プレビュー</b><span class="sp"></span><span class="note" style="margin:0">ホイールで拡大縮小、ドラッグで移動</span></div>
+      <div class="layers" id="layers"></div>
+      <div class="viewwrap">
+        <svg id="view" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div class="empty" id="empty">ガーバー一式を読み込むと、ここにパネルが表示されます</div>
+        <div class="zoombtns"><button id="zin" title="拡大">+</button><button id="zout" title="縮小">−</button><button id="zfit" title="全体を表示">⤢</button></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ======================= right: check and download -->
+  <div id="right">
+    <section class="card">
+      <h2>切り離しチェック</h2>
+      <div class="verdict wait" id="verdict">案を選ぶとチェックします</div>
+      <ul class="checks" id="checks"></ul>
+      <p class="note">マウスバイトの線でパネルを折ったとき、各基板が基板単品と同じ形 (面積の差 0.5% 以内) の1片として外れ、折る前のパネルが1枚につながっていることを確かめます (embedded-projects の <code>scripts/check_panel.py</code> と同じ考え方)。DRC はしないので、KiCad で確認してください。</p>
+    </section>
+    <section class="card">
+      <h2>パネル</h2>
+      <dl class="kv" id="panelInfo"><dt>—</dt><dd></dd></dl>
+      <ul class="checks" id="notes"></ul>
+    </section>
+    <section class="card">
+      <h2>ダウンロード</h2>
+      <div class="dl">
+        <button class="btn primary" id="dlZip" disabled>ガーバー zip (JLCPCB 入稿用)<span class="fn" id="fnZip"></span></button>
+        <button class="btn" id="dlCpl" disabled>CPL (部品座標、パネル用)<span class="fn" id="fnCpl">CPL を読み込むと使えます</span></button>
+        <button class="btn" id="dlBom" disabled>BOM (入力のまま)<span class="fn" id="fnBom">BOM を読み込むと使えます</span></button>
+        <button class="btn" id="dlCfg" disabled>面付け設定 JSON<span class="fn" id="fnCfg"></span></button>
+      </div>
+      <details>
+        <summary>KiCad での確認のしかた</summary>
+        <ul>
+          <li>zip を展開し、KiCad の <b>ガーバービューア</b> (gerbview) で「ファイル → ガーバーとドリルのファイルを開く」から全ファイルを開く。</li>
+          <li>外形 (Edge_Cuts)、マウスバイトの穴 (NPTH)、タブの位置、タイトル、フィデューシャルを目で確かめる。</li>
+          <li>DRC をするなら、gerbview の「ファイル → PCB エディターへエクスポート」で .kicad_pcb にし、PCB エディターで開く (ネット情報はないので、クリアランスの目安として使う)。</li>
+          <li>部品の位置 (CPL) は、JLCPCB の発注画面のプレビューで確認する。</li>
+        </ul>
+      </details>
+    </section>
+  </div>
+</main>
+
+<script id="core">
+/* gerber-panelize core (no DOM). Units: mm, Gerber Y-up. Needs ClipperLib. */
+const GP = (() => {
+const C = globalThis.ClipperLib;
+const SC = 1e4;             // clipper integer units per mm
+const TOL = 0.002;          // max chord deviation for arcs (mm)
+const NZ = C.PolyFillType.pftNonZero, EO = C.PolyFillType.pftEvenOdd;
+const VERSION_GEN = 'gerber-panelize';
+
+/* ================================================================ geometry */
+const toI = (x, y) => ({ X: Math.round(x * SC), Y: Math.round(y * SC) });
+const pathI = pts => pts.map(([x, y]) => toI(x, y));
+const pathF = p => p.map(q => [q.X / SC, q.Y / SC]);
+function clip(subj, clp, type, fill = NZ) {
+  const c = new C.Clipper();
+  c.AddPaths(subj, C.PolyType.ptSubject, true);
+  if (clp && clp.length) c.AddPaths(clp, C.PolyType.ptClip, true);
+  const out = [];
+  c.Execute(type, out, fill, fill);
+  return out;
+}
+const union = (a, fill) => a.length ? clip(a, null, C.ClipType.ctUnion, fill) : [];
+const diff = (a, b) => !a.length ? [] : !b.length ? union(a) : clip(a, b, C.ClipType.ctDifference);
+const inter = (a, b) => (!a.length || !b.length) ? [] : clip(a, b, C.ClipType.ctIntersection);
+const area = paths => paths.reduce((s, p) => s + C.Clipper.Area(p), 0) / (SC * SC);
+function offset(paths, d, join = C.JoinType.jtRound) {
+  const co = new C.ClipperOffset(2, TOL * SC);
+  co.AddPaths(paths, join, C.EndType.etClosedPolygon);
+  const out = [];
+  co.Execute(out, d * SC);
+  return out;
+}
+function strokeOpen(pts, r) {
+  const co = new C.ClipperOffset(2, TOL * SC);
+  co.AddPath(pathI(pts), C.JoinType.jtRound, C.EndType.etOpenRound);
+  const out = [];
+  co.Execute(out, r * SC);
+  return out;
+}
+/* connected pieces: [[outer, hole, ...], ...] */
+function components(paths) {
+  const c = new C.Clipper();
+  c.AddPaths(paths, C.PolyType.ptSubject, true);
+  const t = new C.PolyTree();
+  c.Execute(C.ClipType.ctUnion, t, NZ, NZ);
+  const out = [];
+  const walk = node => {
+    for (const ch of node.Childs()) {
+      const comp = [ch.Contour()];
+      for (const h of ch.Childs()) { comp.push(h.Contour()); walk(h); }
+      out.push(comp);
+    }
+  };
+  walk(t);
+  return out;
+}
+function bboxI(paths) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of paths) for (const q of p) {
+    if (q.X < x0) x0 = q.X; if (q.X > x1) x1 = q.X; if (q.Y < y0) y0 = q.Y; if (q.Y > y1) y1 = q.Y;
+  }
+  return [x0 / SC, y0 / SC, x1 / SC, y1 / SC];
+}
+/* inside a union result (outers + holes, non-zero): odd number of rings around the point; on a ring counts as inside */
+function pointIn(paths, x, y) {
+  const pt = toI(x, y);
+  let n = 0;
+  for (const p of paths) {
+    const r = C.Clipper.PointInPolygon(pt, p);
+    if (r === -1) return true;
+    if (r === 1) n += C.Clipper.Orientation(p) ? 1 : -1;
+  }
+  return n !== 0;
+}
+const rectI = (x0, y0, x1, y1) => pathI([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]);
+function segCount(r) {
+  if (r <= TOL) return 8;
+  const n = Math.ceil(Math.PI / Math.acos(1 - TOL / r));
+  return Math.min(256, Math.max(8, Math.ceil(n / 4) * 4));
+}
+function circlePts(cx, cy, r, n = segCount(r)) {
+  const pts = [];
+  for (let i = 0; i < n; i++) { const a = 2 * Math.PI * i / n; pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); }
+  return pts;
+}
+/* signed sweep (rad) from start to end around the centre; CCW positive. Same start/end = full circle. */
+function arcSweep(xs, ys, xe, ye, xc, yc, cw) {
+  const a0 = Math.atan2(ys - yc, xs - xc), a1 = Math.atan2(ye - yc, xe - xc);
+  let s;
+  if (cw) { s = a0 - a1; if (s <= 1e-9) s += 2 * Math.PI; return -s; }
+  s = a1 - a0; if (s <= 1e-9) s += 2 * Math.PI; return s;
+}
+function arcPoints(xs, ys, xe, ye, xc, yc, cw) {
+  const r = Math.hypot(xs - xc, ys - yc);
+  const a0 = Math.atan2(ys - yc, xs - xc);
+  const sweep = arcSweep(xs, ys, xe, ye, xc, yc, cw);
+  const n = Math.max(2, Math.ceil(Math.abs(sweep) / (2 * Math.PI) * segCount(r)));
+  const pts = [];
+  for (let i = 0; i <= n; i++) pts.push([xc + r * Math.cos(a0 + sweep * i / n), yc + r * Math.sin(a0 + sweep * i / n)]);
+  pts[n] = [xe, ye];
+  return pts;
+}
+/* affine transform {a,b,c,d,e,f}: x' = a x + b y + e, y' = c x + d y + f */
+const ap = (T, x, y) => [T.a * x + T.b * y + T.e, T.c * x + T.d * y + T.f];
+const xfPaths = (T, paths) => paths.map(p => p.map(q => { const [x, y] = ap(T, q.X / SC, q.Y / SC); return toI(x, y); }));
+
+/* ================================================================ Gerber RS-274X */
+function fmtNum(s) { return s; }
+function parseCoord(str, int, dec, trailing) {
+  if (str.includes('.')) return parseFloat(str);
+  let neg = false, s = str;
+  if (s[0] === '+' || s[0] === '-') { neg = s[0] === '-'; s = s.slice(1); }
+  if (trailing) while (s.length < int + dec) s += '0';
+  const v = parseInt(s, 10) / Math.pow(10, dec);
+  return neg ? -v : v;
+}
+function tokenize(text) {
+  const st = [];
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    const ch = text[i];
+    if (ch === '%') {
+      const j = text.indexOf('%', i + 1);
+      if (j < 0) break;
+      const b = text.slice(i + 1, j).replace(/[\r\n]/g, '');
+      if (b.startsWith('AM')) st.push({ ext: true, s: b });
+      else for (const part of b.split('*')) if (part.trim()) st.push({ ext: true, s: part.trim() });
+      i = j + 1;
+    } else if (ch === '\r' || ch === '\n' || ch === ' ' || ch === '\t') i++;
+    else {
+      const j = text.indexOf('*', i);
+      if (j < 0) break;
+      st.push({ ext: false, s: text.slice(i, j).replace(/[\r\n]/g, '') });
+      i = j + 1;
+    }
+  }
+  return st;
+}
+/* centre of a single-quadrant (G74) arc: I/J are unsigned, pick the signs that make a <= 90 deg arc */
+function sqCenter(x0, y0, x1, y1, I, J, cw) {
+  let best = null, be = Infinity;
+  for (const sx of [1, -1]) for (const sy of [1, -1]) {
+    const cx = x0 + sx * Math.abs(I), cy = y0 + sy * Math.abs(J);
+    const sw = Math.abs(arcSweep(x0, y0, x1, y1, cx, cy, cw));
+    if (sw > Math.PI / 2 + 1e-6 && !(x0 === x1 && y0 === y1)) continue;
+    const e = Math.abs(Math.hypot(x0 - cx, y0 - cy) - Math.hypot(x1 - cx, y1 - cy));
+    if (e < be) { be = e; best = [cx, cy]; }
+  }
+  return best || [x0 + I, y0 + J];
+}
+function parseGerber(text, name = '') {
+  const g = { name, unit: 1, tf: [], defs: [], ops: [], aps: new Map(), macros: new Map(), maxD: 9, warnings: [] };
+  let fs = { xi: 4, xd: 6, yi: 4, yd: 6, trailing: false };
+  let x = 0, y = 0, interp = 'L', quad = 'M', lastD = null, inHeader = true;
+  const unsupported = m => { throw new Error(`${name}: 対応していない Gerber の命令です (${m})`); };
+  for (const { ext, s } of tokenize(text)) {
+    if (ext) {
+      const k = s.slice(0, 2);
+      if (k === 'FS') {
+        const m = /^FS([LTD]?)([AI]?)(?:N\d)?(?:G\d)?(?:D\d)?(?:M\d)?X(\d)(\d)Y(\d)(\d)/.exec(s);
+        if (!m) unsupported(s);
+        if (m[2] === 'I') unsupported('相対座標 (FSI)');
+        fs = { xi: +m[3], xd: +m[4], yi: +m[5], yd: +m[6], trailing: m[1] === 'T' };
+      } else if (k === 'MO') g.unit = s.slice(2, 4) === 'IN' ? 25.4 : 1;
+      else if (k === 'AD') {
+        const m = /^ADD(\d+)([^,]+)(?:,(.*))?$/.exec(s);
+        if (!m) unsupported(s);
+        const code = +m[1];
+        const params = m[3] ? m[3].split('X').map(v => v.trim()) : [];
+        const ad = { code, tmpl: m[2], params };
+        g.aps.set(code, ad);
+        g.defs.push({ k: 'AD', ...ad });
+        if (code > g.maxD) g.maxD = code;
+      } else if (k === 'AM') {
+        const parts = s.split('*').map(v => v.trim());
+        const nm = parts[0].slice(2);
+        const prims = parts.slice(1).filter(v => v.length);
+        g.macros.set(nm, { name: nm, prims });
+        g.defs.push({ k: 'AM', name: nm });
+      } else if (k === 'TF') g.tf.push(s);
+      else if (k === 'TA') g.defs.push({ k: 'raw', s });
+      else if (k === 'TD') (inHeader ? g.defs.push({ k: 'raw', s }) : g.ops.push({ t: 'raw', s }));
+      else if (k === 'TO') g.ops.push({ t: 'raw', s });
+      else if (k === 'LP') g.ops.push({ t: 'lp', v: s[2] === 'C' ? 'C' : 'D' });
+      else if (k === 'LR') { if (parseFloat(s.slice(2)) !== 0) unsupported(s); }
+      else if (k === 'LS') { if (parseFloat(s.slice(2)) !== 1) unsupported(s); }
+      else if (k === 'LM') { if (s.slice(2) !== 'N') unsupported(s); }
+      else if (k === 'SR') { if (/[XY]/.test(s) && !/^SRX1Y1/.test(s)) unsupported('ステップ&リピート (SR)'); }
+      else if (k === 'AB') unsupported('アパーチャブロック (AB)');
+      else if (k === 'IP') { if (s !== 'IPPOS') unsupported(s); }
+      else if (k === 'OF') { if (/[1-9]/.test(s)) unsupported(s); }
+      // IN, LN, AS, IR, MI, SF: ignored (deprecated, normally absent or identity)
+      continue;
+    }
+    let w = s.trim();
+    if (!w) continue;
+    if (/^G0*4(\D|$)/.test(w)) continue;           // comment
+    if (/^M0*[02]$/.test(w)) break;                 // end of file
+    // leading G codes
+    for (;;) {
+      const m = /^G0*(\d+)/.exec(w);
+      if (!m) break;
+      const gc = +m[1];
+      w = w.slice(m[0].length);
+      if (gc === 1) interp = 'L';
+      else if (gc === 2) interp = 'CW';
+      else if (gc === 3) interp = 'CCW';
+      else if (gc === 36) { g.ops.push({ t: 'G36' }); inHeader = false; }
+      else if (gc === 37) g.ops.push({ t: 'G37' });
+      else if (gc === 74) quad = 'S';
+      else if (gc === 75) quad = 'M';
+      else if (gc === 70) g.unit = 25.4;
+      else if (gc === 71) g.unit = 1;
+      else if (gc === 91) unsupported('相対座標 (G91)');
+      // 54, 55, 90: no-op
+    }
+    if (!w) continue;
+    let m = /^D0*(\d+)$/.exec(w);
+    if (m && +m[1] >= 10) { g.ops.push({ t: 'ap', code: +m[1] }); inHeader = false; continue; }
+    const c = {};
+    const re = /([XYIJD])([+-]?[\d.]+)/g;
+    let mm, any = false;
+    while ((mm = re.exec(w))) { c[mm[1]] = mm[2]; any = true; }
+    if (!any) continue;
+    const u = g.unit;
+    const nx = c.X != null ? parseCoord(c.X, fs.xi, fs.xd, fs.trailing) * u : x;
+    const ny = c.Y != null ? parseCoord(c.Y, fs.yi, fs.yd, fs.trailing) * u : y;
+    let d = c.D != null ? +c.D : lastD;
+    if (d == null) d = 1;
+    if (d >= 10) { g.ops.push({ t: 'ap', code: d }); continue; }
+    lastD = d;
+    inHeader = false;
+    if (d === 1) {
+      if (interp === 'L') g.ops.push({ t: 'D01', x: nx, y: ny });
+      else {
+        const I = c.I != null ? parseCoord(c.I, fs.xi, fs.xd, fs.trailing) * u : 0;
+        const J = c.J != null ? parseCoord(c.J, fs.yi, fs.yd, fs.trailing) * u : 0;
+        const [cx, cy] = quad === 'M' ? [x + I, y + J] : sqCenter(x, y, nx, ny, I, J, interp === 'CW');
+        g.ops.push({ t: 'D01', x: nx, y: ny, arc: interp, cx, cy });
+      }
+    } else if (d === 2) g.ops.push({ t: 'D02', x: nx, y: ny });
+    else if (d === 3) g.ops.push({ t: 'D03', x: nx, y: ny });
+    x = nx; y = ny;
+  }
+  return g;
+}
+
+/* ---- aperture macro expressions */
+function evalExpr(src, vars) {
+  const s = src.replace(/\s/g, '').replace(/x/gi, '*');
+  let i = 0;
+  const num = () => {
+    if (s[i] === '(') { i++; const v = add(); i++; return v; }
+    if (s[i] === '-') { i++; return -num(); }
+    if (s[i] === '+') { i++; return num(); }
+    if (s[i] === '$') { const m = /^\$(\d+)/.exec(s.slice(i)); i += m[0].length; return vars[+m[1]] || 0; }
+    const m = /^[\d.]+(?:[eE][+-]?\d+)?/.exec(s.slice(i));
+    if (!m) throw new Error('式を読めません: ' + src);
+    i += m[0].length;
+    return parseFloat(m[0]);
+  };
+  const mul = () => { let v = num(); while (s[i] === '*' || s[i] === '/') { const o = s[i++]; const r = num(); v = o === '*' ? v * r : v / r; } return v; };
+  const add = () => { let v = mul(); while (s[i] === '+' || s[i] === '-') { const o = s[i++]; const r = mul(); v = o === '+' ? v + r : v - r; } return v; };
+  return add();
+}
+const rotPts = (pts, deg) => {
+  if (!deg) return pts;
+  const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  return pts.map(([x, y]) => [x * c - y * s, x * s + y * c]);
+};
+/* polygons (aperture units) of one macro instance; each {pts, on} */
+function macroShapes(macro, params) {
+  const vars = {};
+  params.forEach((v, i) => { vars[i + 1] = parseFloat(v); });
+  const out = [];
+  for (const p of macro.prims) {
+    if (/^0(\s|$)/.test(p)) continue;
+    let m = /^\$(\d+)=(.*)$/.exec(p);
+    if (m) { vars[+m[1]] = evalExpr(m[2], vars); continue; }
+    const a = p.split(',');
+    const code = +a[0];
+    const v = a.slice(1).map(e => evalExpr(e, vars));
+    const on = v[0] !== 0;
+    if (code === 1) out.push({ on, pts: rotPts(circlePts(v[2], v[3], v[1] / 2), v[4] || 0) });
+    else if (code === 20 || code === 2) {
+      const [, w, xs, ys, xe, ye, r] = v;
+      const L = Math.hypot(xe - xs, ye - ys) || 1e-9, nx = -(ye - ys) / L * w / 2, ny = (xe - xs) / L * w / 2;
+      out.push({ on, pts: rotPts([[xs + nx, ys + ny], [xe + nx, ye + ny], [xe - nx, ye - ny], [xs - nx, ys - ny]], r || 0) });
+    } else if (code === 21) {
+      const [, w, h, cx, cy, r] = v;
+      out.push({ on, pts: rotPts([[cx - w / 2, cy - h / 2], [cx + w / 2, cy - h / 2], [cx + w / 2, cy + h / 2], [cx - w / 2, cy + h / 2]], r || 0) });
+    } else if (code === 22) {
+      const [, w, h, x0, y0, r] = v;
+      out.push({ on, pts: rotPts([[x0, y0], [x0 + w, y0], [x0 + w, y0 + h], [x0, y0 + h]], r || 0) });
+    } else if (code === 4) {
+      const n = v[1];
+      const pts = [];
+      for (let k = 0; k <= n; k++) pts.push([v[2 + 2 * k], v[3 + 2 * k]]);
+      out.push({ on, pts: rotPts(pts, v[4 + 2 * n] || 0) });
+    } else if (code === 5) {
+      const [, n, cx, cy, d, r] = v;
+      const pts = [];
+      for (let k = 0; k < n; k++) { const t = 2 * Math.PI * k / n; pts.push([cx + d / 2 * Math.cos(t), cy + d / 2 * Math.sin(t)]); }
+      out.push({ on, pts: rotPts(pts, r || 0) });
+    } else if (code === 6 || code === 7) {
+      // moire / thermal: outer circle only (preview approximation)
+      const cx = code === 6 ? v[0] : v[0], cy = v[1], d = code === 6 ? v[2] : v[2];
+      out.push({ on: true, pts: circlePts(cx, cy, d / 2) });
+    }
+  }
+  return out;
+}
+/* aperture -> list of polygons in mm, centred at the flash point */
+function apertureShapes(g, ad) {
+  const k = g.unit;
+  const p = ad.params.map(v => parseFloat(v) * k);
+  if (ad.tmpl === 'C') return [{ on: true, pts: circlePts(0, 0, p[0] / 2) }];
+  if (ad.tmpl === 'R') { const w = p[0] / 2, h = p[1] / 2; return [{ on: true, pts: [[-w, -h], [w, -h], [w, h], [-w, h]] }]; }
+  if (ad.tmpl === 'O') {
+    const w = p[0], h = p[1], r = Math.min(w, h) / 2;
+    const pts = [];
+    const n = segCount(r) / 2;
+    if (w >= h) {
+      const dx = w / 2 - r;
+      for (let i = 0; i <= n; i++) { const t = -Math.PI / 2 + Math.PI * i / n; pts.push([dx + r * Math.cos(t), r * Math.sin(t)]); }
+      for (let i = 0; i <= n; i++) { const t = Math.PI / 2 + Math.PI * i / n; pts.push([-dx + r * Math.cos(t), r * Math.sin(t)]); }
+    } else {
+      const dy = h / 2 - r;
+      for (let i = 0; i <= n; i++) { const t = Math.PI * i / n; pts.push([r * Math.cos(t), dy + r * Math.sin(t)]); }
+      for (let i = 0; i <= n; i++) { const t = Math.PI + Math.PI * i / n; pts.push([r * Math.cos(t), -dy + r * Math.sin(t)]); }
+    }
+    return [{ on: true, pts }];
+  }
+  if (ad.tmpl === 'P') {
+    const d = p[0], n = Math.round(parseFloat(ad.params[1])), r0 = parseFloat(ad.params[2] || 0);
+    const pts = [];
+    for (let i = 0; i < n; i++) { const t = (r0 + 360 * i / n) * Math.PI / 180; pts.push([d / 2 * Math.cos(t), d / 2 * Math.sin(t)]); }
+    return [{ on: true, pts }];
+  }
+  const mac = g.macros.get(ad.tmpl);
+  if (!mac) return [];
+  return macroShapes(mac, ad.params).map(s => ({ on: s.on, pts: s.pts.map(([x, y]) => [x * k, y * k]) }));
+}
+/* stroke width of an aperture used for D01 (mm) */
+function apertureWidth(g, ad) {
+  if (!ad) return 0.1;
+  const p = ad.params.map(v => parseFloat(v) * g.unit);
+  if (ad.tmpl === 'C') return p[0];
+  if (ad.tmpl === 'R' || ad.tmpl === 'O') return Math.min(p[0], p[1]);
+  if (ad.tmpl === 'P') return p[0];
+  return 0.1;
+}
+
+/* ---- rotate apertures and macros by +90 deg (CCW) */
+const isNum = s => /^[+-]?(\d+\.?\d*|\.\d+)$/.test(s.trim());
+const fmtVal = v => { const r = Math.round(v * 1e6) / 1e6; return String(r); };
+function rotateDefs(g) {
+  // macros: rotation term of each primitive. A plain $n is handled by adding 90 to that AD parameter.
+  const macros = new Map(), paramAdd = new Map(); // name -> Set of param indexes (1-based)
+  for (const [nm, mac] of g.macros) {
+    const used = new Map();          // $n -> count of uses as rotation / elsewhere
+    const prims = mac.prims.map(p => {
+      if (/^0(\s|$)/.test(p) || p.startsWith('$')) return p;
+      const a = p.split(',');
+      const code = a[0].trim();
+      if (code === '1') {
+        if (a.length === 5) { a.push('90'); return a.join(','); }
+        if (a.length < 5) return p;
+      } else if (!['2', '20', '21', '22', '4', '5', '6', '7'].includes(code)) return p;
+      const last = a[a.length - 1].trim();
+      if (isNum(last)) a[a.length - 1] = fmtVal(parseFloat(last) + 90);
+      else if (/^\$\d+$/.test(last)) { const n = +last.slice(1); used.set(n, true); a[a.length - 1] = last; a._var = n; }
+      else a[a.length - 1] = '(' + last + ')+90';
+      return a.join(',');
+    });
+    // a $n used as rotation must not be used for anything else; otherwise rewrite as an expression
+    const set = new Set();
+    for (const n of used.keys()) {
+      const re = new RegExp('\\$' + n + '(?!\\d)', 'g');
+      const total = mac.prims.filter(p => !/^0(\s|$)/.test(p)).reduce((s, p) => s + (p.match(re) || []).length, 0);
+      const asRot = mac.prims.filter(p => !/^0(\s|$)/.test(p) && !p.startsWith('$')).filter(p => {
+        const a = p.split(','); return a[a.length - 1].trim() === '$' + n && (a[0].trim() !== '1' || a.length >= 6);
+      }).length;
+      if (total === asRot) set.add(n);
+    }
+    const prims2 = prims.map(p => {
+      if (/^0(\s|$)/.test(p) || p.startsWith('$')) return p;
+      const a = p.split(',');
+      const last = a[a.length - 1].trim();
+      if (/^\$\d+$/.test(last) && !set.has(+last.slice(1)) && (a[0].trim() !== '1' || a.length >= 6)) a[a.length - 1] = '(' + last + ')+90';
+      return a.join(',');
+    });
+    macros.set(nm, { name: nm, prims: prims2 });
+    paramAdd.set(nm, set);
+  }
+  const aps = new Map();
+  for (const [code, ad] of g.aps) {
+    const p = ad.params.slice();
+    if (ad.tmpl === 'R' || ad.tmpl === 'O') { const t = p[0]; p[0] = p[1]; p[1] = t; }
+    else if (ad.tmpl === 'P') { while (p.length < 3) p.push('0'); p[2] = fmtVal(parseFloat(p[2]) + 90); }
+    else if (ad.tmpl !== 'C') {
+      const set = paramAdd.get(ad.tmpl);
+      if (set) for (const n of set) { while (p.length < n) p.push('0'); p[n - 1] = fmtVal(parseFloat(p[n - 1] || 0) + 90); }
+    }
+    aps.set(code, { code, tmpl: ad.tmpl, params: p });
+  }
+  return { aps, macros };
+}
+
+/* ---- Gerber writer
+   instances: transforms (all with the same rotation). extra: { aps: [{code, d}], ops: [...] } in panel coordinates. */
+function writeGerber(g, instances, rot, extra, note) {
+  const k = g.unit;
+  const mm = k === 1;
+  const scale = 1e6;
+  const n = v => String(Math.round(v / k * scale));
+  const out = [];
+  for (const s of g.tf) out.push('%' + s + '*%');
+  out.push('G04 Panelized by ' + VERSION_GEN + (note ? ' (' + note + ')' : '') + '*');
+  out.push(mm ? '%FSLAX46Y46*%' : '%FSLAX26Y26*%');
+  out.push(mm ? '%MOMM*%' : '%MOIN*%');
+  out.push('%LPD*%');
+  const R = rot ? rotateDefs(g) : { aps: g.aps, macros: g.macros };
+  for (const d of g.defs) {
+    if (d.k === 'raw') out.push('%' + d.s + '*%');
+    else if (d.k === 'AM') { const m = R.macros.get(d.name); out.push('%AM' + m.name + '*\n' + m.prims.join('*\n') + '*%'); }
+    else if (d.k === 'AD') { const a = R.aps.get(d.code); out.push('%ADD' + a.code + a.tmpl + (a.params.length ? ',' + a.params.join('X') : '') + '*%'); }
+  }
+  if (extra) for (const a of extra.aps) out.push('%ADD' + a.code + 'C,' + fmtVal(a.d / k) + '*%');
+  out.push('G75*');
+  let interp = null, pol = 'D';
+  const emitOps = (ops, T) => {
+    let cx = 0, cy = 0; // current point (panel coords)
+    for (const o of ops) {
+      if (o.t === 'ap') out.push('D' + o.code + '*');
+      else if (o.t === 'lp') { if (o.v !== pol) { out.push('%LP' + o.v + '*%'); pol = o.v; } }
+      else if (o.t === 'raw') out.push('%' + o.s + '*%');
+      else if (o.t === 'G36' || o.t === 'G37') out.push(o.t + '*');
+      else {
+        const [x, y] = T ? ap(T, o.x, o.y) : [o.x, o.y];
+        if (o.t === 'D01' && o.arc) {
+          const [ax, ay] = T ? ap(T, o.cx, o.cy) : [o.cx, o.cy];
+          const g2 = o.arc === 'CW' ? 'G02' : 'G03';
+          if (interp !== g2) { out.push(g2 + '*'); interp = g2; }
+          out.push('X' + n(x) + 'Y' + n(y) + 'I' + n(ax - cx) + 'J' + n(ay - cy) + 'D01*');
+        } else if (o.t === 'D01') {
+          if (interp !== 'G01') { out.push('G01*'); interp = 'G01'; }
+          out.push('X' + n(x) + 'Y' + n(y) + 'D01*');
+        } else out.push('X' + n(x) + 'Y' + n(y) + (o.t === 'D02' ? 'D02*' : 'D03*'));
+        cx = x; cy = y;
+      }
+    }
+    if (pol !== 'D') { out.push('%LPD*%'); pol = 'D'; }
+  };
+  instances.forEach((T, i) => {
+    out.push('G04 board ' + (i + 1) + '*');
+    emitOps(g.ops, T);
+  });
+  if (extra && extra.ops.length) { out.push('G04 panel features*'); emitOps(extra.ops, null); }
+  out.push('M02*');
+  return out.join('\n') + '\n';
+}
+
+/* ---- render a parsed layer as SVG (mm, Y-up; the caller flips) */
+const f4 = v => (Math.round(v * 1e4) / 1e4).toString();
+function polyD(pts, dx = 0, dy = 0) {
+  let s = 'M' + f4(pts[0][0] + dx) + ' ' + f4(pts[0][1] + dy);
+  for (let i = 1; i < pts.length; i++) s += 'L' + f4(pts[i][0] + dx) + ' ' + f4(pts[i][1] + dy);
+  return s + 'Z';
+}
+function arcD(x0, y0, o) {
+  const r = Math.hypot(x0 - o.cx, y0 - o.cy);
+  const cw = o.arc === 'CW';
+  const sw = arcSweep(x0, y0, o.x, o.y, o.cx, o.cy, cw);
+  const sweepFlag = cw ? 0 : 1;
+  if (Math.abs(Math.abs(sw) - 2 * Math.PI) < 1e-6 || (Math.abs(x0 - o.x) < 1e-9 && Math.abs(y0 - o.y) < 1e-9)) {
+    const mx = 2 * o.cx - x0, my = 2 * o.cy - y0;
+    return 'A' + f4(r) + ' ' + f4(r) + ' 0 0 ' + sweepFlag + ' ' + f4(mx) + ' ' + f4(my) +
+           'A' + f4(r) + ' ' + f4(r) + ' 0 0 ' + sweepFlag + ' ' + f4(o.x) + ' ' + f4(o.y);
+  }
+  const large = Math.abs(sw) > Math.PI ? 1 : 0;
+  return 'A' + f4(r) + ' ' + f4(r) + ' 0 ' + large + ' ' + sweepFlag + ' ' + f4(o.x) + ' ' + f4(o.y);
+}
+/* returns { items: [{pol, svg}], bbox } with svg using currentColor */
+function layerSvg(g, idp) {
+  const apDefs = new Map(); // code -> path d (centred)
+  const apD = code => {
+    if (apDefs.has(code)) return apDefs.get(code);
+    const ad = g.aps.get(code);
+    const d = ad ? apertureShapes(g, ad).filter(s => s.on && s.pts.length > 2).map(s => polyD(s.pts)).join('') : '';
+    apDefs.set(code, d);
+    return d;
+  };
+  const groups = [];   // [{pol, parts: []}]
+  let cur = null;
+  const grp = pol => { if (!cur || cur.pol !== pol) { cur = { pol, strokes: new Map(), fills: [], flashes: [] }; groups.push(cur); } return cur; };
+  let pol = 'D', apc = null, x = 0, y = 0, region = false, rpath = '', last = null;
+  let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+  const bb = (px, py, r = 0) => { if (px - r < bx0) bx0 = px - r; if (px + r > bx1) bx1 = px + r; if (py - r < by0) by0 = py - r; if (py + r > by1) by1 = py + r; };
+  for (const o of g.ops) {
+    if (o.t === 'ap') { apc = o.code; continue; }
+    if (o.t === 'lp') { pol = o.v; continue; }
+    if (o.t === 'G36') { region = true; rpath = ''; continue; }
+    if (o.t === 'G37') { if (rpath) grp(pol).fills.push(rpath + 'Z'); region = false; rpath = ''; continue; }
+    if (o.t === 'raw') continue;
+    if (region) {
+      if (o.t === 'D02') { if (rpath) rpath += 'Z'; rpath += 'M' + f4(o.x) + ' ' + f4(o.y); }
+      else if (o.t === 'D01') { if (!rpath) rpath = 'M' + f4(x) + ' ' + f4(y); rpath += o.arc ? arcD(x, y, o) : 'L' + f4(o.x) + ' ' + f4(o.y); }
+      bb(o.x, o.y);
+      x = o.x; y = o.y;
+      continue;
+    }
+    if (o.t === 'D03') {
+      const d = apD(apc);
+      if (d) grp(pol).flashes.push([apc, o.x, o.y]);
+      const ad = g.aps.get(apc);
+      bb(o.x, o.y, ad ? apertureWidth(g, ad) / 2 : 0);
+    } else if (o.t === 'D01') {
+      const w = apertureWidth(g, g.aps.get(apc));
+      const G = grp(pol);
+      const key = f4(w);
+      let sp = G.strokes.get(key) || '';
+      if (!(last && last.g === G && last.key === key && last.x === x && last.y === y)) sp += 'M' + f4(x) + ' ' + f4(y);
+      sp += o.arc ? arcD(x, y, o) : 'L' + f4(o.x) + ' ' + f4(o.y);
+      G.strokes.set(key, sp);
+      last = { g: G, key, x: o.x, y: o.y };
+      bb(x, y, w / 2); bb(o.x, o.y, w / 2);
+      if (o.arc) { const r = Math.hypot(x - o.cx, y - o.cy); bb(o.cx, o.cy, r); }
+    }
+    x = o.x; y = o.y;
+  }
+  const defs = [];
+  for (const [code, d] of apDefs) if (d) defs.push(`<path id="${idp}a${code}" d="${d}"/>`);
+  const items = groups.map(G => {
+    let s = '';
+    for (const [w, d] of G.strokes) s += `<path d="${d}" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>`;
+    if (G.fills.length) s += `<path d="${G.fills.join('')}" fill="currentColor"/>`;
+    for (const [c, fx, fy] of G.flashes) s += `<use href="#${idp}a${c}" x="${f4(fx)}" y="${f4(fy)}" fill="currentColor"/>`;
+    return { pol: G.pol, svg: s };
+  });
+  return { defs: defs.join(''), items, bbox: isFinite(bx0) ? [bx0, by0, bx1, by1] : null, hasClear: groups.some(G => G.pol === 'C') };
+}
+
+/* ---- board outline from the Edge.Cuts layer */
+function outlineFromGerber(g) {
+  const segs = [];
+  let x = 0, y = 0;
+  for (const o of g.ops) {
+    if (o.t === 'D01') {
+      const pts = o.arc ? arcPoints(x, y, o.x, o.y, o.cx, o.cy, o.arc === 'CW') : [[x, y], [o.x, o.y]];
+      if (!(Math.abs(o.x - x) < 1e-9 && Math.abs(o.y - y) < 1e-9 && !o.arc)) segs.push(pts);
+    }
+    if (o.t === 'D01' || o.t === 'D02' || o.t === 'D03') { x = o.x; y = o.y; }
+  }
+  const E = 0.003;
+  const near = (a, b) => Math.abs(a[0] - b[0]) < E && Math.abs(a[1] - b[1]) < E;
+  const used = new Array(segs.length).fill(false);
+  const loops = [], open = [];
+  for (let i = 0; i < segs.length; i++) {
+    if (used[i]) continue;
+    used[i] = true;
+    let chain = segs[i].slice();
+    const closed = () => chain.length > 2 && near(chain[0], chain[chain.length - 1]) && polyLen(chain) > 0.1;
+    let grew = true;
+    // attach the unused segment whose end point is nearest (within E) to the chain end, then to the chain start
+    const nearest = p => {
+      let best = -1, bd = E, rev = false;
+      for (let j = 0; j < segs.length; j++) {
+        if (used[j]) continue;
+        const s = segs[j];
+        const d0 = Math.hypot(s[0][0] - p[0], s[0][1] - p[1]), d1 = Math.hypot(s[s.length - 1][0] - p[0], s[s.length - 1][1] - p[1]);
+        if (d0 < bd) { bd = d0; best = j; rev = false; }
+        if (d1 < bd) { bd = d1; best = j; rev = true; }
+      }
+      return best < 0 ? null : { j: best, rev };
+    };
+    while (!closed() && grew) {
+      grew = false;
+      let f = nearest(chain[chain.length - 1]);
+      if (f) {
+        const s = segs[f.j]; used[f.j] = true; grew = true;
+        chain = chain.concat(f.rev ? s.slice(0, -1).reverse() : s.slice(1));
+        continue;
+      }
+      f = nearest(chain[0]);
+      if (f) {
+        const s = segs[f.j]; used[f.j] = true; grew = true;
+        chain = (f.rev ? s.slice(0, -1) : s.slice(1).reverse()).concat(chain);
+      }
+    }
+    if (closed()) { chain.pop(); loops.push(chain); } else open.push(chain);
+  }
+  const paths = union(loops.map(pathI), EO);
+  return { paths, open: open.length, loops: loops.length };
+}
+
+/* ================================================================ Excellon */
+function parseDrill(text, name = '') {
+  const d = { name, tools: new Map(), holes: [], attrs: [], fileFunction: null, plated: null, comments: [] };
+  let unit = 1, lz = null, fmt = null, header = true, tool = null, x = 0, y = 0, pendingAttr = null, route = null;
+  const conv = s => {
+    if (s.includes('.')) return parseFloat(s) * unit;
+    let neg = false; if (s[0] === '-' || s[0] === '+') { neg = s[0] === '-'; s = s.slice(1); }
+    const [ni, nd] = fmt || (unit === 1 ? [3, 3] : [2, 4]);
+    let v;
+    if (lz === 'LZ') { while (s.length < ni + nd) s += '0'; v = parseInt(s, 10) / Math.pow(10, nd); }
+    else v = parseInt(s, 10) / Math.pow(10, nd);
+    return (neg ? -v : v) * unit;
+  };
+  const xy = s => {
+    const mx = /X([+-]?[\d.]+)/.exec(s), my = /Y([+-]?[\d.]+)/.exec(s);
+    return [mx ? conv(mx[1]) : x, my ? conv(my[1]) : y];
+  };
+  for (let line of text.split(/\r?\n/)) {
+    line = line.trim();
+    if (!line) continue;
+    if (line[0] === ';') {
+      const m = /#@!\s*(T[FA]\..*)$/.exec(line);
+      if (m) {
+        if (m[1].startsWith('TF.FileFunction')) { d.fileFunction = m[1]; d.plated = !/NonPlated|NPTH/i.test(m[1]); }
+        if (m[1].startsWith('TA.')) pendingAttr = m[1];
+        else if (header && !m[1].startsWith('TF.FileFunction')) d.attrs.push(m[1]);
+      }
+      continue;
+    }
+    if (header) {
+      if (line === 'M48') continue;
+      if (/^(METRIC|M71)/.test(line)) { unit = 1; if (/LZ/.test(line)) lz = 'LZ'; if (/TZ/.test(line)) lz = 'TZ'; const f = /(0+)\.(0+)/.exec(line); if (f) fmt = [f[1].length, f[2].length]; continue; }
+      if (/^(INCH|M72)/.test(line)) { unit = 25.4; if (/LZ/.test(line)) lz = 'LZ'; if (/TZ/.test(line)) lz = 'TZ'; const f = /(0+)\.(0+)/.exec(line); if (f) fmt = [f[1].length, f[2].length]; continue; }
+      const t = /^T(\d+)(?:[FSB][\d.]+)*C([\d.]+)/.exec(line);
+      if (t) { d.tools.set(+t[1], { num: +t[1], dia: parseFloat(t[2]) * unit, attr: pendingAttr }); pendingAttr = null; continue; }
+      if (line === '%' || line === 'M95') { header = false; continue; }
+      continue;
+    }
+    if (/^M30|^M00/.test(line)) break;
+    let m = /^T(\d+)(?:C([\d.]+))?$/.exec(line);
+    if (m) {
+      tool = +m[1];
+      if (m[2] && !d.tools.has(tool)) d.tools.set(tool, { num: tool, dia: parseFloat(m[2]) * unit, attr: null });
+      continue;
+    }
+    if (/^(G90|G05|G93|M71|M72|%)/.test(line) && !/[XY]/.test(line)) {
+      if (line.startsWith('M71')) unit = 1;
+      if (line.startsWith('M72')) unit = 25.4;
+      continue;
+    }
+    if (/^G91/.test(line)) throw new Error(name + ': 相対座標のドリルファイルには対応していません');
+    if (/G85/.test(line)) {
+      const [a, b] = line.split('G85');
+      const [x0, y0] = xy(a); x = x0; y = y0;
+      const [x1, y1] = xy(b);
+      d.holes.push({ t: tool, x: x0, y: y0, x2: x1, y2: y1 });
+      x = x1; y = y1;
+      continue;
+    }
+    if (/^G00/.test(line)) { [x, y] = xy(line); route = { x, y }; continue; }
+    if (/^M15/.test(line)) continue;
+    if (/^G01/.test(line) && route) { const [x1, y1] = xy(line); d.holes.push({ t: tool, x: route.x, y: route.y, x2: x1, y2: y1 }); x = x1; y = y1; route = { x, y }; continue; }
+    if (/^(M16|M17)/.test(line)) { route = null; continue; }
+    if (/[XY]/.test(line)) {
+      [x, y] = xy(line);
+      d.holes.push({ t: tool, x, y });
+    }
+  }
+  if (d.plated == null) d.plated = /NPTH/i.test(name) ? false : /PTH/i.test(name) ? true : null;
+  return d;
+}
+/* holes: [{dia, x, y, x2?, y2?, attr?}] in panel coordinates */
+function writeDrill(d, instances, extraHoles) {
+  const tools = [];   // {dia, attr, holes}
+  const toolOf = (dia, attr) => {
+    let t = tools.find(t => Math.abs(t.dia - dia) < 5e-4 && (t.attr || '') === (attr || ''));
+    if (!t) { t = { dia, attr, holes: [] }; tools.push(t); }
+    return t;
+  };
+  if (d) for (const T of instances) for (const h of d.holes) {
+    const tl = d.tools.get(h.t);
+    if (!tl) continue;
+    const [x, y] = ap(T, h.x, h.y);
+    const e = { x, y };
+    if (h.x2 != null) [e.x2, e.y2] = ap(T, h.x2, h.y2);
+    toolOf(tl.dia, tl.attr).holes.push(e);
+  }
+  for (const h of extraHoles) toolOf(h.dia, h.attr).holes.push(h);
+  tools.sort((a, b) => a.dia - b.dia);
+  // always with a decimal point: without one, readers apply the integer format (e.g. X94 is not 94 mm)
+  const c = v => { let s = v.toFixed(4).replace(/0+$/, ''); if (s.endsWith('.')) s += '0'; return s === '-0.0' ? '0.0' : s; };
+  const out = ['M48', '; DRILL file ' + VERSION_GEN, '; FORMAT={-:-/ absolute / metric / decimal}'];
+  for (const a of (d ? d.attrs : [])) out.push('; #@! ' + a);
+  if (d && d.fileFunction) out.push('; #@! ' + d.fileFunction);
+  out.push('FMAT,2', 'METRIC');
+  tools.forEach((t, i) => { if (t.attr) out.push('; #@! ' + t.attr); out.push('T' + (i + 1) + 'C' + t.dia.toFixed(3)); });
+  out.push('%', 'G90', 'G05');
+  tools.forEach((t, i) => {
+    out.push('T' + (i + 1));
+    for (const h of t.holes) {
+      if (h.x2 != null) out.push('X' + c(h.x) + 'Y' + c(h.y) + 'G85X' + c(h.x2) + 'Y' + c(h.y2), 'G05');
+      else out.push('X' + c(h.x) + 'Y' + c(h.y));
+    }
+  });
+  out.push('M30');
+  return out.join('\n') + '\n';
+}
+
+/* ================================================================ stroke font for the title (grid 4 x 6, y up) */
+const FONT = {
+  '0': '103041453616050110 0145', '1': '152620 1030', '2': '05163645440040', '3': '05163645443313 334241301001',
+  '4': '30360242', '5': '460603334241301001', '6': '4536160501103041423303', '7': '064610',
+  '8': '13040516364544331302011030414233', '9': '4313040516364541301001',
+  'A': '0004264440 0242', 'B': '00063645443303 3342413000', 'C': '4536160501103041', 'D': '00062644422000',
+  'E': '46060040 0333', 'F': '460600 0333', 'G': '45361605011030414323', 'H': '0006 4640 0343', 'I': '1636 2620 1030',
+  'J': '4641301001', 'K': '0006 4602 1340', 'L': '060040', 'M': '0006234640', 'N': '00064046', 'O': '103041453616050110',
+  'P': '00063645443303', 'Q': '103041453616050110 2240', 'R': '00063645443303 2340', 'S': '453616050413334241301001',
+  'T': '0646 2620', 'U': '060110304146', 'V': '062046', 'W': '0610233046', 'X': '0046 0640', 'Y': '0623 4623 2320', 'Z': '06464000',
+  '-': '1333', '_': '0040', '.': '2021', '+': '1333 2224', '/': '0046', ':': '2122 2425', '(': '36252130', ')': '16252110',
+  '#': '1016 3036 0242 0444', '=': '0242 0444', ',': '2110', ' ': ''
+};
+/* each stroke is a polyline of x/y digit pairs */
+function glyphStrokes(ch) {
+  let s = FONT[ch];
+  if (s == null) s = FONT[ch.toUpperCase()];
+  if (s == null) s = FONT['#'];
+  return s.split(' ').filter(v => v.length >= 4).map(st => {
+    const pts = [];
+    for (let i = 0; i + 1 < st.length; i += 2) pts.push([+st[i], +st[i + 1]]);
+    return pts;
+  });
+}
+/* strokes of a text line centred at (cx, cy); h = character height (mm); vertical = rotated 90 deg CCW */
+function textStrokes(text, cx, cy, h, vertical) {
+  const u = h / 6, adv = 6 * u * 0.95;
+  const W = text.length * adv - 2 * u;
+  const out = [];
+  [...text].forEach((ch, i) => {
+    for (const st of glyphStrokes(ch)) {
+      out.push(st.map(([gx, gy]) => {
+        const lx = -W / 2 + i * adv + gx * u, ly = -h / 2 + gy * u;
+        return vertical ? [cx - ly, cy + lx] : [cx + lx, cy + ly];
+      }));
+    }
+  });
+  return out;
+}
+
+/* ================================================================ panel */
+const DEFAULTS = {
+  maxW: 100, maxH: 100, pcbaMin: 70,
+  gap: 2, railW: 5, railGap: 2,
+  tabW: 5, hcount: 'auto', vcount: 'auto',
+  mbDrill: 0.6, mbSpacing: 0.85, mbOffset: 0.3, mbProlong: 0.5,
+  millR: 1,
+  toolingDia: 2, fidCu: 1, fidMask: 2,
+  titleH: 1.5, titleW: 0.25, title: '{name} {rows}x{cols}',
+  rails: 'both', rot: 'both',
+};
+function tabCounts(P, rails) {
+  const h = P.hcount === 'auto' ? (rails === 'lr' ? 1 : 0) : +P.hcount;
+  const v = P.vcount === 'auto' ? (rails === 'tb' ? 1 : 0) : +P.vcount;
+  return { h, v };
+}
+function panelSize(bw, bh, rot, rails, rows, cols, P) {
+  const w = rot ? bh : bw, h = rot ? bw : bh;
+  const m = P.railW + P.railGap;
+  const Wb = cols * w + (cols - 1) * P.gap, Hb = rows * h + (rows - 1) * P.gap;
+  return rails === 'tb' ? { W: Wb, H: Hb + 2 * m, w, h } : { W: Wb + 2 * m, H: Hb, w, h };
+}
+function candidates(bw, bh, P) {
+  const out = [];
+  const railsList = P.rails === 'both' ? ['tb', 'lr'] : [P.rails];
+  const rots = P.rot === 'both' ? [0, 90] : [+P.rot];
+  for (const rails of railsList) for (const rot of rots) {
+    let any = false;
+    for (let rows = 1; rows <= 60; rows++) for (let cols = 1; cols <= 60; cols++) {
+      const s = panelSize(bw, bh, rot, rails, rows, cols, P);
+      if (s.W > P.maxW + 1e-9 || s.H > P.maxH + 1e-9) continue;
+      any = true;
+      out.push({ rails, rot, rows, cols, n: rows * cols, ...s, fits: true });
+    }
+    if (!any) { const s = panelSize(bw, bh, rot, rails, 1, 1, P); out.push({ rails, rot, rows: 1, cols: 1, n: 1, ...s, fits: false }); }
+  }
+  out.sort((a, b) => (b.fits - a.fits) || (b.n - a.n) || (a.W * a.H - b.W * b.H) || (a.rails < b.rails ? 1 : a.rails > b.rails ? -1 : 0) || (a.rot - b.rot));
+  return out;
+}
+function maxTabCount(len, w, minDist = 0) {
+  if (len < w) return 0;
+  return Math.max(0, Math.floor(1 + (len - minDist) / (minDist + w)));
+}
+/* open-path intersection: parts of the closed rings `rings` inside `clipPaths` */
+function ringsInside(rings, clipPaths) {
+  const c = new C.Clipper();
+  for (const r of rings) c.AddPath(r.concat([r[0]]), C.PolyType.ptSubject, false);
+  c.AddPaths(clipPaths, C.PolyType.ptClip, true);
+  const t = new C.PolyTree();
+  c.Execute(C.ClipType.ctIntersection, t, NZ, NZ);
+  const lines = C.Clipper.OpenPathsFromPolyTree(t).map(pathF);
+  // join pieces that share end points
+  const E = 1e-3, near = (a, b) => Math.abs(a[0] - b[0]) < E && Math.abs(a[1] - b[1]) < E;
+  let merged = true;
+  while (merged) {
+    merged = false;
+    outer: for (let i = 0; i < lines.length; i++) for (let j = 0; j < lines.length; j++) {
+      if (i === j) continue;
+      const a = lines[i], b = lines[j];
+      let m = null;
+      if (near(a[a.length - 1], b[0])) m = a.concat(b.slice(1));
+      else if (near(a[a.length - 1], b[b.length - 1])) m = a.concat(b.slice(0, -1).reverse());
+      if (m) { lines[i] = m; lines.splice(j, 1); merged = true; break outer; }
+    }
+  }
+  return lines.filter(l => l.length >= 2);
+}
+function polyLen(pts) { let L = 0; for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); return L; }
+function pointAt(pts, s) {
+  for (let i = 1; i < pts.length; i++) {
+    const L = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    if (s <= L || i === pts.length - 1) { const t = L > 0 ? Math.min(1, s / L) : 0; return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t]; }
+    s -= L;
+  }
+  return pts[pts.length - 1];
+}
+function prolong(pts, d) {
+  const p = pts.map(q => q.slice());
+  const u = (a, b) => { const L = Math.hypot(a[0] - b[0], a[1] - b[1]) || 1; return [(a[0] - b[0]) / L, (a[1] - b[1]) / L]; };
+  const a = u(p[0], p[1]), b = u(p[p.length - 1], p[p.length - 2]);
+  p[0] = [p[0][0] + a[0] * d, p[0][1] + a[1] * d];
+  p[p.length - 1] = [p[p.length - 1][0] + b[0] * d, p[p.length - 1][1] + b[1] * d];
+  return p;
+}
+/* offset an open polyline sideways by d (positive = left of the direction of travel) */
+function offsetLine(pts, d) {
+  const n = [];
+  for (let i = 1; i < pts.length; i++) {
+    const dx = pts[i][0] - pts[i - 1][0], dy = pts[i][1] - pts[i - 1][1], L = Math.hypot(dx, dy) || 1;
+    n.push([-dy / L, dx / L]);
+  }
+  return pts.map((p, i) => {
+    const a = n[Math.max(0, i - 1)], b = n[Math.min(n.length - 1, i)];
+    let mx = a[0] + b[0], my = a[1] + b[1];
+    const ml = Math.hypot(mx, my) || 1;
+    mx /= ml; my /= ml;
+    const cos = mx * b[0] + my * b[1];
+    const k = d / Math.max(0.3, cos);
+    return [p[0] + mx * k, p[1] + my * k];
+  });
+}
+function simplifyLine(pts) {
+  // drop collinear points
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = out[out.length - 1], b = pts[i], c = pts[i + 1];
+    const cr = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    if (Math.abs(cr) > 1e-7) out.push(b);
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+
+/* board: { outline (clipper paths, original coords), bbox [x0,y0,x1,y1] } */
+function buildPanel(board, cand, P, opts = {}) {
+  const [bx0, by0, bx1, by1] = board.bbox;
+  const bw = bx1 - bx0, bh = by1 - by0;
+  const { rails, rot, rows, cols } = cand;
+  const S = panelSize(bw, bh, rot, rails, rows, cols, P);
+  const { W, H, w, h } = S;
+  const m = P.railW + P.railGap;
+  const mx = rails === 'lr' ? m : 0, my = rails === 'tb' ? m : 0;
+  const warnings = [];
+  // instances
+  const inst = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const px = mx + c * (w + P.gap), py = my + (rows - 1 - r) * (h + P.gap);
+    const T = rot ? { a: 0, b: -1, c: 1, d: 0, e: by0 + bh + px, f: -bx0 + py } : { a: 1, b: 0, c: 0, d: 1, e: px - bx0, f: py - by0 };
+    inst.push({ r, c, px, py, T, poly: xfPaths(T, board.outline) });
+  }
+  const railRects = rails === 'tb'
+    ? [[0, 0, W, P.railW], [0, H - P.railW, W, H]]
+    : [[0, 0, P.railW, H], [W - P.railW, 0, W, H]];
+  const railPaths = railRects.map(r => rectI(...r));
+  const pre = union(inst.flatMap(i => i.poly).concat(railPaths));
+  // tabs
+  const { h: hc, v: vc } = tabCounts(P, rails);
+  const tabs = [], cuts = [];
+  const at = (r, c) => (r >= 0 && r < rows && c >= 0 && c < cols) ? inst[r * cols + c] : null;
+  const EPS = 0.001;
+  for (const I of inst) {
+    const sides = [];
+    // [side, count, partition, far coordinate, edge range]
+    if (hc > 0) {
+      const L = at(I.r, I.c - 1), R = at(I.r, I.c + 1);
+      const lp = L ? I.px - P.gap / 2 : (rails === 'lr' ? P.railW : null);
+      const rp = R ? I.px + w + P.gap / 2 : (rails === 'lr' ? W - P.railW : null);
+      if (lp != null) sides.push({ side: 'L', count: hc, part: lp, rail: !L });
+      if (rp != null) sides.push({ side: 'R', count: hc, part: rp, rail: !R });
+    }
+    if (vc > 0) {
+      const T_ = at(I.r - 1, I.c), B = at(I.r + 1, I.c);
+      const tp = T_ ? I.py + h + P.gap / 2 : (rails === 'tb' ? H - P.railW : null);
+      const bp = B ? I.py - P.gap / 2 : (rails === 'tb' ? P.railW : null);
+      if (tp != null) sides.push({ side: 'T', count: vc, part: tp, rail: !T_ });
+      if (bp != null) sides.push({ side: 'B', count: vc, part: bp, rail: !B });
+    }
+    for (const sd of sides) {
+      const horiz = sd.side === 'L' || sd.side === 'R';
+      const len = horiz ? h : w;
+      const n = Math.min(sd.count, maxTabCount(len, P.tabW));
+      if (n < sd.count) warnings.push(`辺の長さ ${len.toFixed(1)}mm にタブ ${sd.count} 本は入らないため ${n} 本にした`);
+      for (let k = 1; k <= n; k++) {
+        const pos = (horiz ? I.py : I.px) + len * k / (n + 1);
+        const ext = sd.rail ? 0.05 : EPS;
+        let strip;
+        if (sd.side === 'L') strip = [sd.part - ext, pos - P.tabW / 2, I.px + w, pos + P.tabW / 2];
+        else if (sd.side === 'R') strip = [I.px, pos - P.tabW / 2, sd.part + ext, pos + P.tabW / 2];
+        else if (sd.side === 'B') strip = [pos - P.tabW / 2, sd.part - ext, pos + P.tabW / 2, I.py + h];
+        else strip = [pos - P.tabW / 2, I.py, pos + P.tabW / 2, sd.part + ext];
+        const rest = components(diff([rectI(...strip)], I.poly));
+        // the piece that starts at the partition side
+        const startsAtPart = comp => {
+          const [x0, y0, x1, y1] = bboxI(comp);
+          if (sd.side === 'L') return x0 <= strip[0] + 1e-6;
+          if (sd.side === 'R') return x1 >= strip[2] - 1e-6;
+          if (sd.side === 'B') return y0 <= strip[1] + 1e-6;
+          return y1 >= strip[3] - 1e-6;
+        };
+        const reachesFar = comp => {
+          const [x0, y0, x1, y1] = bboxI(comp);
+          if (sd.side === 'L') return x1 >= strip[2] - 1e-6;
+          if (sd.side === 'R') return x0 <= strip[0] + 1e-6;
+          if (sd.side === 'B') return y1 >= strip[3] - 1e-6;
+          return y0 <= strip[1] + 1e-6;
+        };
+        const comp = rest.find(startsAtPart);
+        if (!comp || reachesFar(comp)) { warnings.push(`基板 ${I.r + 1}-${I.c + 1} の${{ L: '左', R: '右', T: '上', B: '下' }[sd.side]}のタブが基板に届かないため省いた`); continue; }
+        tabs.push(comp);
+        // cut = board edge touching the tab
+        const lines = ringsInside(I.poly, offset(comp, 0.005, C.JoinType.jtMiter));
+        for (const ln of lines) {
+          if (polyLen(ln) < 0.05) continue;
+          cuts.push({ inst: inst.indexOf(I), side: sd.side, line: simplifyLine(ln) });
+        }
+      }
+    }
+  }
+  let substrate = union(pre.concat(tabs.flat()));
+  const beforeMill = substrate;
+  // mouse bites
+  const npth = [];
+  for (const cut of cuts) {
+    let ln = prolong(cut.line, P.mbProlong);
+    // offset to the side away from the board
+    const probe = offsetLine(cut.line, 0.02);
+    const mid = pointAt(probe, polyLen(probe) / 2);
+    const I = inst[cut.inst];
+    const sign = pointIn(I.poly, mid[0], mid[1]) ? -1 : 1;
+    ln = offsetLine(ln, sign * P.mbOffset);
+    const L = polyLen(ln);
+    const count = Math.floor(L / P.mbSpacing) + 1;
+    const holes = [];
+    for (let i = 0; i < count; i++) {
+      const p = count === 1 ? pointAt(ln, L / 2) : pointAt(ln, i * L / (count - 1));
+      if (pointIn(offset(beforeMill, 0.001), p[0], p[1])) holes.push(p);
+    }
+    cut.offsetLine = ln;
+    cut.holes = holes;
+    for (const p of holes) npth.push({ x: p[0], y: p[1], dia: P.mbDrill, kind: 'mb' });
+  }
+  // mill fillets (closing) on the outside; holes inside each board are kept as drawn
+  if (P.millR > 0) {
+    const r = P.millR;
+    substrate = offset(offset(substrate, r - 0.0001), -r);
+    substrate = offset(substrate, 0.0001);
+    const holes = [];
+    for (const I of inst) for (const p of I.poly) if (!C.Clipper.Orientation(p)) holes.push(p.slice().reverse());
+    if (holes.length) substrate = diff(substrate, holes);
+    substrate = union(substrate);
+  }
+  // tooling holes + fiducials
+  const big = Math.min(W, H) >= P.pcbaMin;
+  const fids = [];
+  if (big) {
+    const [th, tv] = rails === 'tb' ? [5, P.railW / 2] : [P.railW / 2, 5];
+    const [fh, fv] = rails === 'tb' ? [7, 3.85] : [3.85, 7];
+    const corners = (hh, vv) => [[hh, H - vv], [W - hh, H - vv], [hh, vv], [W - hh, vv]];
+    for (const [x, y] of corners(th, tv)) npth.push({ x, y, dia: P.toolingDia, kind: 'tool' });
+    for (const [x, y] of corners(fh, fv).slice(0, 3)) fids.push({ x, y });
+  }
+  // title
+  let title = null;
+  const railLen = rails === 'tb' ? W : H;
+  const text = (opts.title || '').trim();
+  if (text) {
+    if (text.length * 1.3 + 12 > railLen) title = { text, omitted: true };
+    else {
+      const vertical = rails === 'lr';
+      const [cx, cy] = rails === 'tb' ? [W / 2, H - P.railW / 2] : [P.railW / 2, H / 2];
+      title = { text, omitted: false, strokes: textStrokes(text, cx, cy, P.titleH, vertical) };
+    }
+  }
+  return { W, H, w, h, rails, rot, rows, cols, boardBbox: board.bbox, inst, railRects, tabs, cuts, npth, fids, substrate, beforeMill, title, big, warnings, P };
+}
+
+/* breakaway check (same idea as embedded-projects/scripts/check_panel.py) */
+function checkPanel(pp, boardArea) {
+  const TOLA = 0.005, EXTEND = 1.5;
+  const pieces0 = components(pp.substrate);
+  const cutPolys = [];
+  for (const cut of pp.cuts) {
+    if (!cut.holes.length) continue;
+    let pts = cut.holes;
+    if (pts.length === 1) { cutPolys.push(...strokeOpen([pts[0], [pts[0][0] + 1e-4, pts[0][1]]], pp.P.mbDrill / 2 + 0.01)); continue; }
+    pts = prolong(pts, EXTEND);
+    cutPolys.push(...strokeOpen(pts, pp.P.mbDrill / 2 + 0.01));
+  }
+  const broken = cutPolys.length ? diff(pp.substrate, union(cutPolys)) : pp.substrate;
+  const pieces = components(broken).map(c => ({ paths: c, area: area(c) }));
+  const boards = pp.inst.map((I, i) => {
+    const Ia = area(I.poly);
+    const hits = pieces.filter(p => area(inter(p.paths, I.poly)) > Ia * 0.01);
+    const ok = hits.length === 1 && Math.abs(hits[0].area - boardArea) <= boardArea * TOLA;
+    return { i, ok, pieces: hits.length, area: hits.length ? hits.reduce((s, p) => s + p.area, 0) : 0 };
+  });
+  const others = pieces.filter(p => !boards.some(b => b.ok && Math.abs(p.area - b.area) < 1e-6)).map(p => p.area);
+  return {
+    connected: pieces0.length === 1, piecesBefore: pieces0.length, piecesAfter: pieces.length,
+    cuts: pp.cuts.filter(c => c.holes.length).length, boards, others,
+    ok: pieces0.length === 1 && boards.every(b => b.ok),
+  };
+}
+
+/* closed ring -> D01 ops; runs of vertices on one circle (board arcs, mill fillets) become arcs again */
+function ringOps(q, tol = 0.0005) {
+  const n = q.length;
+  const turn = i => {
+    const a = q[(i - 1 + n) % n], b = q[i], c = q[(i + 1) % n];
+    return Math.atan2((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]), (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]));
+  };
+  const th = q.map((_, i) => turn(i));
+  const onArc = i => Math.abs(th[i]) > 1e-5 && Math.abs(th[i]) < 0.5;
+  // start at a corner so that no arc wraps around the start
+  let s = th.findIndex((_, i) => !onArc(i));
+  if (s < 0) s = 0;
+  const p = [];
+  for (let k = 0; k <= n; k++) p.push(q[(s + k) % n]);
+  const T = k => th[(s + k) % n];
+  const circle = (a, b, c) => {
+    const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+    if (Math.abs(d) < 1e-12) return null;
+    const a2 = a[0] * a[0] + a[1] * a[1], b2 = b[0] * b[0] + b[1] * b[1], c2 = c[0] * c[0] + c[1] * c[1];
+    const x = (a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d;
+    const y = (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d;
+    return [x, y, Math.hypot(a[0] - x, a[1] - y)];
+  };
+  const fits = (i, j) => {
+    const c = circle(p[i], p[(i + j) >> 1], p[j]);
+    if (!c || c[2] > 1000) return null;
+    for (let k = i + 1; k < j; k++) if (Math.abs(Math.hypot(p[k][0] - c[0], p[k][1] - c[1]) - c[2]) > tol) return null;
+    return c;
+  };
+  const ops = [];
+  let i = 0;
+  while (i < n) {
+    // grow the run while the inner vertices turn the same way, the total turn stays within a half circle and all lie on one circle
+    let best = null, bj = i, sum = 0;
+    for (let j = i + 2; j <= n; j++) {
+      const t = T(j - 1);
+      if (!onArc((s + j - 1) % n) || (j > i + 2 && Math.sign(t) !== Math.sign(T(i + 1)))) break;
+      sum += Math.abs(t);
+      if (sum > Math.PI) break;
+      const c = fits(i, j);
+      if (!c) break;
+      best = c; bj = j;
+    }
+    if (best && bj - i >= 3) {
+      ops.push({ t: 'D01', x: p[bj][0], y: p[bj][1], arc: T(i + 1) > 0 ? 'CCW' : 'CW', cx: best[0], cy: best[1] });
+      i = bj;
+    } else {
+      ops.push({ t: 'D01', x: p[i + 1][0], y: p[i + 1][1] });
+      i++;
+    }
+  }
+  return { start: p[0], ops };
+}
+
+/* ================================================================ output files */
+/* board: { name, gerbers: [{name, g, L}], drills: [{name, d}], job: {name, text}|null } */
+function panelFiles(board, pp) {
+  const P = pp.P;
+  const T = pp.inst.map(i => i.T);
+  const note = `${pp.rows}x${pp.cols}, ${pp.rails === 'tb' ? 'rails top/bottom' : 'rails left/right'}, rot ${pp.rot}`;
+  const out = [];
+  for (const { name, g, L } of board.gerbers) {
+    const nd = g.maxD + 1;
+    const extra = { aps: [], ops: [] };
+    const flash = (d, pts) => {
+      if (!pts.length) return;
+      const code = nd + extra.aps.length;
+      extra.aps.push({ code, d });
+      extra.ops.push({ t: 'ap', code });
+      for (const p of pts) extra.ops.push({ t: 'D03', x: p.x, y: p.y });
+    };
+    if (L.key === 'Edge_Cuts') {
+      extra.aps.push({ code: nd, d: 0.05 });
+      extra.ops.push({ t: 'ap', code: nd });
+      for (const p of C.Clipper.CleanPolygons(pp.substrate, 0.001 * SC)) {
+        if (p.length < 3) continue;
+        const ops = ringOps(pathF(p));
+        extra.ops.push({ t: 'D02', x: ops.start[0], y: ops.start[1] }, ...ops.ops);
+      }
+      // only the panel outline (TA/TD attributes of the board apertures are kept, they are harmless)
+      out.push({ name, text: writeGerber({ ...g, ops: [] }, [], pp.rot, extra, note) });
+      continue;
+    }
+    if (L.kind === 'cu' && (L.side === 'F' || L.side === 'B')) flash(P.fidCu, pp.fids);
+    if (L.kind === 'mask' && (L.side === 'F' || L.side === 'B')) flash(P.fidMask, pp.fids);
+    if (L.kind === 'silk' && L.side === 'F' && pp.title && !pp.title.omitted) {
+      const code = nd + extra.aps.length;
+      extra.aps.push({ code, d: P.titleW });
+      extra.ops.push({ t: 'ap', code });
+      for (const st of pp.title.strokes) {
+        extra.ops.push({ t: 'D02', x: st[0][0], y: st[0][1] });
+        for (const p of st.slice(1)) extra.ops.push({ t: 'D01', x: p[0], y: p[1] });
+      }
+    }
+    out.push({ name, text: writeGerber(g, T, pp.rot, extra, note) });
+  }
+  // drills: mouse bites and tooling holes go to the NPTH file (made if the board has none)
+  let npthDone = false;
+  const extraHoles = pp.npth.map(h => ({ x: h.x, y: h.y, dia: h.dia, attr: 'TA.AperFunction,NonPlated,NPTH,ComponentDrill' }));
+  const npthIdx = (() => {
+    let i = board.drills.findIndex(x => x.d.plated === false);
+    if (i < 0) i = board.drills.findIndex(x => /Mixed/i.test(x.d.fileFunction || ''));
+    return i;
+  })();
+  board.drills.forEach(({ name, d }, i) => {
+    const add = i === npthIdx;
+    if (add) npthDone = true;
+    out.push({ name, text: writeDrill(d, T, add ? extraHoles : []) });
+  });
+  if (!npthDone && extraHoles.length) {
+    const base = board.drills.length ? board.drills[0].name.replace(/(-PTH)?\.(\w+)$/i, '') : board.name;
+    out.push({ name: base + '-NPTH.drl', text: writeDrill({ tools: new Map(), holes: [], attrs: [], fileFunction: 'TF.FileFunction,NonPlated,1,2,NPTH' }, [], extraHoles) });
+  }
+  if (board.job) {
+    try {
+      const j = JSON.parse(board.job.text);
+      if (j.GeneralSpecs) j.GeneralSpecs.Size = { X: +pp.W.toFixed(4), Y: +pp.H.toFixed(4) };
+      if (j.Header && j.Header.GenerationSoftware) j.Header.GenerationSoftware.Application = (j.Header.GenerationSoftware.Application || '') + ' + ' + VERSION_GEN;
+      if (!npthDone && extraHoles.length && Array.isArray(j.FilesAttributes)) {
+        const nm = out[out.length - 1].name;
+        j.FilesAttributes.push({ Path: nm, FileFunction: 'NonPlated,1,2,NPTH', FilePolarity: 'Positive' });
+      }
+      out.push({ name: board.job.name, text: JSON.stringify(j, null, 2) + '\n' });
+    } catch (e) { out.push({ name: board.job.name, text: board.job.text }); }
+  }
+  return out;
+}
+
+/* ================================================================ CPL */
+function parseCsv(text) {
+  const rows = [];
+  let row = [], f = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; }
+      else f += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ',' || ch === '\t' && !text.includes(',')) { row.push(f); f = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(f); rows.push(row); row = []; f = ''; }
+    else f += ch;
+  }
+  if (f.length || row.length) { row.push(f); rows.push(row); }
+  return rows.filter(r => r.some(v => v.trim() !== ''));
+}
+function csvKind(text) {
+  const rows = parseCsv(text.slice(0, 4000));
+  if (!rows.length) return null;
+  const h = rows[0].map(v => v.trim().toLowerCase());
+  const has = re => h.some(v => re.test(v));
+  if ((has(/^posx$|^mid ?x$|^center ?x$|^x$/) && has(/^posy$|^mid ?y$|^center ?y$|^y$/))) return 'cpl';
+  if (has(/designator|^ref/) && has(/comment|value|^val$|lcsc|footprint|quantity|qty/)) return 'bom';
+  return null;
+}
+const csvField = v => /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+function panelCpl(text, pp) {
+  const rows = parseCsv(text);
+  const h = rows[0].map(v => v.trim());
+  const lc = h.map(v => v.toLowerCase());
+  const idx = re => lc.findIndex(v => re.test(v));
+  const iRef = idx(/^ref$|designator|^reference/), iVal = idx(/^val$|^value$|comment/), iPkg = idx(/package|footprint/);
+  const iX = idx(/^posx$|^mid ?x$|^center ?x$|^x$/), iY = idx(/^posy$|^mid ?y$|^center ?y$|^y$/);
+  const iRot = idx(/^rot$|rotation/), iSide = idx(/^side$|^layer$/);
+  if (iRef < 0 || iX < 0 || iY < 0) throw new Error('CPL の列 (Ref/Designator, PosX/Mid X, PosY/Mid Y) が見つかりません');
+  const num = v => parseFloat(String(v).replace(/mm$/i, ''));
+  const out = [['Designator', 'Val', 'Package', 'Mid X', 'Mid Y', 'Rotation', 'Layer']];
+  let n = 0, outside = 0;
+  const [x0, y0, x1, y1] = pp.boardBbox;
+  for (const r of rows.slice(1)) {
+    const x = num(r[iX]), y = num(r[iY]);
+    if (isFinite(x) && isFinite(y) && (x < x0 - 1 || x > x1 + 1 || y < y0 - 1 || y > y1 + 1)) outside++;
+  }
+  for (const I of pp.inst) for (const r of rows.slice(1)) {
+    if (r.length <= Math.max(iX, iY)) continue;
+    const x = num(r[iX]), y = num(r[iY]);
+    if (!isFinite(x) || !isFinite(y)) continue;
+    const [X, Y] = ap(I.T, x, y);
+    let rot = iRot >= 0 ? num(r[iRot]) || 0 : 0;
+    rot += pp.rot;
+    while (rot > 180) rot -= 360;
+    while (rot <= -180) rot += 360;
+    let side = iSide >= 0 ? r[iSide].trim() : 'top';
+    side = /^b/i.test(side) ? 'bottom' : 'top';
+    out.push([r[iRef].trim(), iVal >= 0 ? r[iVal] : '', iPkg >= 0 ? r[iPkg] : '', X.toFixed(4), Y.toFixed(4), fmtVal(rot), side]);
+    n++;
+  }
+  return { csv: out.map(r => r.map(csvField).join(',')).join('\n') + '\n', count: n, perBoard: n / pp.inst.length, outside };
+}
+
+/* ================================================================ files */
+function layerOf(name, tf) {
+  const ff = (tf.find(s => s.startsWith('TF.FileFunction')) || '').split(',');
+  const base = name.replace(/^.*\//, '');
+  if (ff.length > 1) {
+    const f = ff[0].replace('TF.FileFunction', '').replace(/^,/, '') || ff[1];
+    const t = ff[1], a = ff.slice(1);
+    if (t === 'Copper') {
+      const side = a[2] || '';
+      if (side === 'Top') return { key: 'F_Cu', kind: 'cu', side: 'F', order: 30 };
+      if (side === 'Bot') return { key: 'B_Cu', kind: 'cu', side: 'B', order: 10 };
+      const n = (a[1] || 'L2').replace('L', '');
+      return { key: 'In' + (n - 1) + '_Cu', kind: 'cu', side: 'I', order: 20 };
+    }
+    if (t === 'Soldermask') return a[1] === 'Top' ? { key: 'F_Mask', kind: 'mask', side: 'F', order: 32 } : { key: 'B_Mask', kind: 'mask', side: 'B', order: 12 };
+    if (t === 'Paste') return a[1] === 'Top' ? { key: 'F_Paste', kind: 'paste', side: 'F', order: 31 } : { key: 'B_Paste', kind: 'paste', side: 'B', order: 11 };
+    if (t === 'Legend') return a[1] === 'Top' ? { key: 'F_Silkscreen', kind: 'silk', side: 'F', order: 33 } : { key: 'B_Silkscreen', kind: 'silk', side: 'B', order: 13 };
+    if (t === 'Profile') return { key: 'Edge_Cuts', kind: 'edge', side: '', order: 50 };
+  }
+  const m = /-(F_Cu|B_Cu|In\d+_Cu|F_Mask|B_Mask|F_Paste|B_Paste|F_Silkscreen|B_Silkscreen|F_SilkS|B_SilkS|Edge_Cuts)\.\w+$/.exec(base);
+  const ext = (/\.(\w+)$/.exec(base) || [])[1];
+  const k = m ? m[1].replace('SilkS', 'Silkscreen') : ({ gtl: 'F_Cu', gbl: 'B_Cu', gts: 'F_Mask', gbs: 'B_Mask', gtp: 'F_Paste', gbp: 'B_Paste', gto: 'F_Silkscreen', gbo: 'B_Silkscreen', gm1: 'Edge_Cuts', gko: 'Edge_Cuts' })[(ext || '').toLowerCase()];
+  if (k) {
+    const kind = /Cu$/.test(k) ? 'cu' : /Mask/.test(k) ? 'mask' : /Paste/.test(k) ? 'paste' : /Silk/.test(k) ? 'silk' : 'edge';
+    const side = k[0] === 'F' ? 'F' : k[0] === 'B' ? 'B' : k.startsWith('In') ? 'I' : '';
+    const order = { cu: 0, paste: 1, mask: 2, silk: 3 }[kind];
+    return { key: k, kind, side, order: kind === 'edge' ? 50 : (side === 'F' ? 30 : side === 'B' ? 10 : 20) + (order || 0) };
+  }
+  const other = (/-([A-Za-z0-9_.]+)\.\w+$/.exec(base) || [, base])[1];
+  return { key: other, kind: 'other', side: /^F_/.test(other) ? 'F' : /^B_/.test(other) ? 'B' : '', order: 40 };
+}
+const isGerberName = n => /\.(gbr|ger|pho|art|gtl|gbl|gts|gbs|gtp|gbp|gto|gbo|gm\d*|gko|gml|gba|gta|g\d+|gp\d+)$/i.test(n);
+const isDrillName = n => /\.(drl|xln|exc|txt|nc|drd)$/i.test(n);
+const looksGerber = t => /%FS[LTD]?[AI]?X\d\dY\d\d\*%/.test(t.slice(0, 5000)) || /%MO(MM|IN)\*%/.test(t.slice(0, 5000));
+const looksDrill = t => /^\s*M48/m.test(t.slice(0, 200));
+
+return {
+  SC, DEFAULTS, parseGerber, writeGerber, apertureShapes, layerSvg, outlineFromGerber, parseDrill, writeDrill, rotateDefs,
+  candidates, panelSize, buildPanel, checkPanel, panelFiles, tabCounts, textStrokes, panelCpl, parseCsv, csvKind, layerOf,
+  isGerberName, isDrillName, looksGerber, looksDrill, area, bboxI, pathF, components, ap, f4, polyD, union, offset,
+};
+})();
+</script>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const NUM_KEYS = ['maxW', 'maxH', 'gap', 'railW', 'railGap', 'tabW', 'mbDrill', 'mbSpacing', 'mbOffset', 'mbProlong', 'millR', 'pcbaMin', 'toolingDia', 'fidCu', 'fidMask', 'titleH', 'titleW'];
+const SEL_KEYS = ['rails', 'rot', 'hcount', 'vcount'];
+let P = { ...GP.DEFAULTS };
+let board = null;          // loaded board
+let cpl = null, bom = null; // {name, text}
+let cands = [], selKey = null, pp = null, ck = null;
+const checkCache = new Map();
+let checkQueue = [], checkBusy = false, gen = 0;
+
+/* ---------------------------------------------------------------- settings UI */
+for (const id of ['hcount', 'vcount']) {
+  const s = $(id);
+  s.innerHTML = '<option value="auto">自動</option>' + [0, 1, 2, 3, 4, 5].map(n => `<option value="${n}">${n} 本</option>`).join('');
+}
+function writeInputs() {
+  for (const k of NUM_KEYS) $(k).value = P[k];
+  for (const k of SEL_KEYS) $(k).value = String(P[k]);
+  $('title').value = P.title;
+}
+function readInputs() {
+  for (const k of NUM_KEYS) { const v = parseFloat($(k).value); if (isFinite(v)) P[k] = v; }
+  for (const k of SEL_KEYS) P[k] = $(k).value;
+  P.title = $('title').value;
+}
+const paramKey = () => JSON.stringify(Object.keys(GP.DEFAULTS).filter(k => k !== 'title' && k !== 'rails' && k !== 'rot').map(k => P[k]));
+const candKey = c => `${c.rails}/${c.rot}/${c.rows}x${c.cols}`;
+let inputTimer = null;
+function onInput() {
+  readInputs();
+  clearTimeout(inputTimer);
+  inputTimer = setTimeout(() => { refreshCandidates(true); }, 250);
+}
+for (const k of NUM_KEYS.concat(SEL_KEYS)) $(k).addEventListener('input', onInput);
+$('title').addEventListener('input', () => { readInputs(); clearTimeout(inputTimer); inputTimer = setTimeout(() => select(selKey, true), 300); });
+$('reset').addEventListener('click', () => { P = { ...GP.DEFAULTS }; writeInputs(); refreshCandidates(true); });
+writeInputs();
+
+/* ---------------------------------------------------------------- loading */
+const drop = $('drop');
+drop.addEventListener('click', () => $('fileIn').click());
+drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') $('fileIn').click(); });
+$('fileIn').addEventListener('change', e => { addFiles([...e.target.files]); e.target.value = ''; });
+for (const t of ['dragenter', 'dragover']) document.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); });
+for (const t of ['dragleave', 'drop']) document.addEventListener(t, e => { e.preventDefault(); if (t === 'drop' || e.target === document.documentElement) drop.classList.remove('over'); });
+document.addEventListener('drop', e => { drop.classList.remove('over'); if (e.dataTransfer.files.length) addFiles([...e.dataTransfer.files]); });
+
+async function readEntries(files) {
+  const out = [];
+  for (const f of files) {
+    if (/\.zip$/i.test(f.name)) {
+      const z = await JSZip.loadAsync(f);
+      for (const e of Object.values(z.files)) {
+        if (e.dir || /(^|\/)(__MACOSX|\.)/.test(e.name)) continue;
+        out.push({ name: e.name.replace(/^.*\//, ''), path: e.name, text: await e.async('string') });
+      }
+    } else out.push({ name: f.name, path: f.name, text: await f.text() });
+  }
+  return out;
+}
+function classify(e) {
+  const n = e.name.toLowerCase();
+  if (n.endsWith('.gbrjob')) return 'job';
+  if (n.endsWith('.json')) return 'json';
+  if (n.endsWith('.csv')) return GP.csvKind(e.text) || 'csv?';
+  if (GP.looksDrill(e.text)) return 'drill';
+  if (GP.looksGerber(e.text)) return 'gerber';
+  return 'other';
+}
+async function addFiles(files) {
+  $('loadErr').textContent = '';
+  let entries;
+  try { entries = await readEntries(files); }
+  catch (err) { $('loadErr').textContent = 'ファイルを読めませんでした: ' + err.message; return; }
+  for (const e of entries) e.kind = classify(e);
+  const cad = entries.filter(e => e.kind === 'gerber' || e.kind === 'drill' || e.kind === 'job');
+  const jsons = entries.filter(e => e.kind === 'json');
+  for (const e of entries) {
+    if (e.kind === 'cpl') cpl = { name: e.name, text: e.text };
+    if (e.kind === 'bom') bom = { name: e.name, text: e.text };
+  }
+  if (cad.length) {
+    try { loadBoard(cad, entries); }
+    catch (err) { console.error(err); $('loadErr').textContent = err.message; }
+  } else if (board) {
+    board.others = board.others.concat(entries.filter(e => !['cpl', 'bom', 'json'].includes(e.kind)));
+    renderFileList(); updateDownloads();
+  } else if (!jsons.length) {
+    if (cpl || bom) renderFileList();
+    else $('loadErr').textContent = 'ガーバーもドリルも見つかりませんでした。';
+  }
+  for (const j of jsons) applyConfig(j.text, j.name);
+  if (cpl && board) updateDownloads();
+}
+function projectName(gerbers) {
+  for (const x of gerbers) {
+    const pid = x.g.tf.find(s => s.startsWith('TF.ProjectId,'));
+    if (pid) return pid.split(',')[1];
+  }
+  const names = gerbers.map(x => x.name.replace(/\.\w+$/, ''));
+  if (!names.length) return 'board';
+  let p = names[0];
+  for (const n of names) while (!n.startsWith(p)) p = p.slice(0, -1);
+  p = p.replace(/[-_]+$/, '');
+  return p || 'board';
+}
+function loadBoard(cad, all) {
+  const gerbers = [], drills = [], errors = [];
+  let job = null;
+  for (const e of cad) {
+    try {
+      if (e.kind === 'gerber') { const g = GP.parseGerber(e.text, e.name); gerbers.push({ name: e.name, g, L: GP.layerOf(e.name, g.tf) }); }
+      else if (e.kind === 'drill') drills.push({ name: e.name, d: GP.parseDrill(e.text, e.name) });
+      else if (e.kind === 'job') job = { name: e.name, text: e.text };
+    } catch (err) { errors.push(err.message); }
+  }
+  const edge = gerbers.find(x => x.L.key === 'Edge_Cuts');
+  if (!edge) throw new Error('外形 (Edge.Cuts / Profile) のガーバーが見つかりません。KiCad で Edge.Cuts レイヤーも出力してください。' + (errors.length ? '\n' + errors.join('\n') : ''));
+  const o = GP.outlineFromGerber(edge.g);
+  if (!o.paths.length) throw new Error('Edge.Cuts から閉じた外形を作れませんでした。外形の線がつながっているか確認してください。');
+  const bbox = GP.bboxI(o.paths);
+  gerbers.sort((a, b) => a.L.order - b.L.order || a.name.localeCompare(b.name));
+  board = {
+    name: projectName(gerbers), gerbers, drills, job, errors,
+    outline: o.paths, openChains: o.open, loops: o.loops, bbox, area: GP.area(o.paths),
+    others: all.filter(e => !['gerber', 'drill', 'job', 'cpl', 'bom', 'json'].includes(e.kind)),
+    svg: null,
+  };
+  $('bname').value = board.name;
+  $('boardCard').hidden = false;
+  const w = bbox[2] - bbox[0], h = bbox[3] - bbox[1];
+  const outers = o.paths.filter(p => ClipperLib.Clipper.Orientation(p)).length;
+  $('boardInfo').innerHTML =
+    `<dt>外形の寸法</dt><dd><b>${w.toFixed(2)} × ${h.toFixed(2)}</b> mm</dd>` +
+    `<dt>面積</dt><dd>${board.area.toFixed(1)} mm²</dd>` +
+    `<dt>外形</dt><dd>${outers === 1 ? '1片' : outers + ' 片 (要確認)'}${o.paths.length - outers ? `、穴 ${o.paths.length - outers}` : ''}${o.open ? `<br><span style="color:var(--ng)">閉じていない線が ${o.open} 本あります</span>` : ''}</dd>` +
+    `<dt>レイヤー</dt><dd>ガーバー ${gerbers.length}、ドリル ${drills.length}</dd>`;
+  renderFileList();
+  buildBoardSvg();
+  checkCache.clear();
+  selKey = null;
+  refreshCandidates(true);
+}
+$('bname').addEventListener('input', () => { if (board) { board.name = $('bname').value.trim() || 'board'; select(selKey, true); } });
+const kindLabel = e => ({ gerber: 'ガーバー', drill: 'ドリル', job: 'ジョブ', cpl: 'CPL', bom: 'BOM', json: '設定', 'csv?': '不明な CSV', other: '使わない' })[e] || e;
+function renderFileList() {
+  const li = [];
+  if (board) {
+    for (const x of board.gerbers) li.push(`<li><span class="n" title="${esc(x.name)}">${esc(x.name)}</span><span class="k">${esc(x.L.key)}</span></li>`);
+    for (const x of board.drills) li.push(`<li><span class="n" title="${esc(x.name)}">${esc(x.name)}</span><span class="k">${x.d.plated === false ? 'NPTH' : x.d.plated ? 'PTH' : 'ドリル'} ${x.d.holes.length}穴</span></li>`);
+    if (board.job) li.push(`<li><span class="n">${esc(board.job.name)}</span><span class="k">ジョブ</span></li>`);
+    for (const e of board.others) li.push(`<li class="bad"><span class="n" title="${esc(e.name)}">${esc(e.name)}</span><span class="k">${kindLabel(e.kind)}</span></li>`);
+    for (const m of board.errors) li.push(`<li class="bad"><span class="n">${esc(m)}</span></li>`);
+  }
+  if (cpl) li.push(`<li><span class="n">${esc(cpl.name)}</span><span class="k">CPL</span></li>`);
+  if (bom) li.push(`<li><span class="n">${esc(bom.name)}</span><span class="k">BOM</span></li>`);
+  $('fileList').innerHTML = li.join('');
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+/* ---------------------------------------------------------------- candidates */
+function refreshCandidates(keepSel) {
+  if (!board) return;
+  gen++;
+  const w = board.bbox[2] - board.bbox[0], h = board.bbox[3] - board.bbox[1];
+  const prev = selKey;
+  cands = GP.candidates(w, h, P);
+  if (P.forced) {
+    const f = P.forced;
+    if (!cands.some(c => candKey(c) === candKey(f))) {
+      const s = GP.panelSize(w, h, f.rot, f.rails, f.rows, f.cols, P);
+      cands.unshift({ ...f, n: f.rows * f.cols, ...s, fits: s.W <= P.maxW && s.H <= P.maxH });
+    }
+  }
+  const fitN = cands.filter(c => c.fits).length;
+  $('tblNote').textContent = fitN ? `${P.maxW}×${P.maxH}mm に収まる ${fitN} 案 (枚数の多い順)` : `${P.maxW}×${P.maxH}mm に収まる案がありません (1枚の案を参考に表示)`;
+  let key = keepSel && prev && cands.some(c => candKey(c) === prev) ? prev : null;
+  if (P.forced && cands.some(c => candKey(c) === candKey(P.forced))) { key = candKey(P.forced); P.forced = null; }
+  if (!key) {
+    // the first candidate (most boards) that passes the breakaway check
+    for (const c of cands.slice(0, 12)) {
+      const ck2 = checkOf(c);
+      if (ck2 && ck2.ok) { key = candKey(c); break; }
+    }
+  }
+  if (!key) key = cands.length ? candKey(cands[0]) : null;
+  renderTable();
+  select(key, true);
+  // check the first rows in the background
+  checkQueue = cands.slice(0, 40).map(candKey);
+  runChecks();
+}
+function rowHtml(c) {
+  const k = candKey(c);
+  const area = (board.area * c.n) / (c.W * c.H) * 100;
+  const std = Math.min(c.W, c.H) >= P.pcbaMin;
+  const r = checkCache.get(k + '|' + paramKey());
+  const chk = r ? (r.ok ? '<span class="tag ok">OK</span>' : '<span class="tag ng">NG</span>') : '<span class="tag wait">…</span>';
+  return `<tr data-k="${k}" class="${k === selKey ? 'sel' : ''} ${c.fits ? '' : 'over'}"><td><b>${c.n}</b></td><td class="l">${c.rows}×${c.cols}</td><td class="l">${c.rails === 'tb' ? '上下' : '左右'}</td><td>${c.rot}°</td><td>${c.W.toFixed(2)} × ${c.H.toFixed(2)}</td><td>${area.toFixed(0)}%</td><td class="l">${std ? '<span class="tag std">Standard 可</span>' : '<span class="tag eco">Economic</span>'}</td><td class="l">${chk}</td></tr>`;
+}
+function renderTable() {
+  $('tbl').tBodies[0].innerHTML = cands.map(rowHtml).join('');
+}
+$('tbl').tBodies[0].addEventListener('click', e => { const tr = e.target.closest('tr'); if (tr) select(tr.dataset.k); });
+$('tbl').addEventListener('keydown', e => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  const i = cands.findIndex(c => candKey(c) === selKey);
+  const j = Math.max(0, Math.min(cands.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)));
+  e.preventDefault();
+  select(candKey(cands[j]));
+  const tr = $('tbl').querySelector('tr.sel'); if (tr) tr.scrollIntoView({ block: 'nearest' });
+});
+$('tbl').tabIndex = 0;
+function updateRow(k) {
+  const c = cands.find(c => candKey(c) === k);
+  const tr = $('tbl').querySelector(`tr[data-k="${k}"]`);
+  if (c && tr) tr.outerHTML = rowHtml(c);
+}
+function titleText(c) {
+  const d = new Date();
+  const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  return (P.title || '').replace(/\{name\}/g, board.name).replace(/\{rows\}/g, c.rows).replace(/\{cols\}/g, c.cols).replace(/\{date\}/g, date);
+}
+function build(c) {
+  return GP.buildPanel({ outline: board.outline, bbox: board.bbox }, c, P, { title: titleText(c) });
+}
+function checkOf(c) {
+  const key = candKey(c) + '|' + paramKey();
+  if (!checkCache.has(key)) {
+    try { checkCache.set(key, GP.checkPanel(build(c), board.area)); } catch (e) { console.error(e); checkCache.set(key, { ok: false, error: e.message }); }
+  }
+  return checkCache.get(key);
+}
+const tick = () => new Promise(r => setTimeout(r, 0));
+async function runChecks() {
+  if (checkBusy) return;
+  checkBusy = true;
+  const g0 = gen;
+  while (checkQueue.length && g0 === gen) {
+    const k = checkQueue.shift();
+    const key = k + '|' + paramKey();
+    if (checkCache.has(key)) { updateRow(k); continue; }
+    const c = cands.find(c => candKey(c) === k);
+    if (!c) continue;
+    await tick();
+    if (g0 !== gen) break;
+    try { const p = build(c); checkCache.set(key, GP.checkPanel(p, board.area)); } catch (e) { console.error(e); checkCache.set(key, { ok: false, error: e.message }); }
+    updateRow(k);
+  }
+  checkBusy = false;
+  if (g0 !== gen && checkQueue.length) runChecks();
+}
+
+/* ---------------------------------------------------------------- select + build */
+function select(k, force) {
+  if (!board || !k) return;
+  if (k === selKey && !force && pp) return;
+  selKey = k;
+  for (const tr of $('tbl').tBodies[0].rows) tr.classList.toggle('sel', tr.dataset.k === k);
+  const c = cands.find(c => candKey(c) === k);
+  if (!c) return;
+  try {
+    pp = build(c);
+    ck = GP.checkPanel(pp, board.area);
+    checkCache.set(k + '|' + paramKey(), ck);
+    updateRow(k);
+  } catch (err) {
+    console.error(err);
+    pp = null; ck = null;
+    $('verdict').className = 'verdict ng'; $('verdict').textContent = '面付けに失敗しました: ' + err.message;
+    return;
+  }
+  renderCheck();
+  renderInfo(c);
+  renderView(true);
+  updateDownloads();
+}
+
+/* ---------------------------------------------------------------- right column */
+function renderCheck() {
+  const v = $('verdict'), ul = $('checks');
+  if (!ck) { v.className = 'verdict wait'; v.textContent = '案を選ぶとチェックします'; ul.innerHTML = ''; return; }
+  const li = [];
+  li.push(ck.connected ? `<li class="ok">折る前のパネルは1枚につながっている</li>` : `<li class="ng">折る前のパネルが ${ck.piecesBefore} 片に分かれている (タブのない浮いた基板がある)</li>`);
+  li.push(`<li class="info">マウスバイトの線 ${ck.cuts} 本、折った後 ${ck.piecesAfter} 片</li>`);
+  const ng = ck.boards.filter(b => !b.ok);
+  const name = b => { const I = pp.inst[b.i]; return `${I.r + 1}行${I.c + 1}列`; };
+  if (!ng.length) li.push(`<li class="ok">${ck.boards.length} 枚とも基板単品と同じ形で外れる (単品 ${board.area.toFixed(1)} mm²)</li>`);
+  for (const b of ng) {
+    if (b.pieces === 0) li.push(`<li class="ng">${name(b)}: 外れない (どの片にも基板がない)</li>`);
+    else if (b.pieces > 1) li.push(`<li class="ng">${name(b)}: ${b.pieces} 片に割れる</li>`);
+    else if (b.area > board.area) li.push(`<li class="ng">${name(b)}: 捨て板とくっついたまま (片の面積 ${b.area.toFixed(1)} mm²)。すき間が狭く内角 R で埋まった、または切られないタブがある</li>`);
+    else li.push(`<li class="ng">${name(b)}: 外れた片の面積 ${b.area.toFixed(1)} mm² が単品と違う</li>`);
+  }
+  if (ck.ok) { v.className = 'verdict ok'; v.textContent = '✓ OK: すべての基板がきれいに外れます'; }
+  else { v.className = 'verdict ng'; v.textContent = '✕ NG: このパネルは発注しないでください'; }
+  ul.innerHTML = li.join('');
+}
+function renderInfo(c) {
+  const std = pp.big;
+  const over = pp.W > P.maxW + 1e-9 || pp.H > P.maxH + 1e-9;
+  $('panelInfo').innerHTML =
+    `<dt>寸法</dt><dd><b>${pp.W.toFixed(2)} × ${pp.H.toFixed(2)}</b> mm</dd>` +
+    `<dt>配置</dt><dd>${pp.rows} 行 × ${pp.cols} 列 = <b>${pp.rows * pp.cols} 枚</b>、回転 ${pp.rot}°</dd>` +
+    `<dt>レール</dt><dd>${pp.rails === 'tb' ? '上下' : '左右'} 幅 ${P.railW}mm</dd>` +
+    `<dt>タブ</dt><dd>${pp.tabs.length} 本、マウスバイト ${pp.npth.filter(h => h.kind === 'mb').length} 穴</dd>` +
+    `<dt>実装</dt><dd>${std ? 'Standard PCBA 可 (ツーリングホール4・フィデューシャル3)' : 'Economic PCBA 向け (ツーリングホール・フィデューシャルなし)'}</dd>`;
+  const li = [];
+  if (over) li.push(`<li class="ng">パネルが ${P.maxW}×${P.maxH}mm を超えている (JLCPCB の追加料金)</li>`);
+  if (pp.title) li.push(pp.title.omitted ? `<li class="warn">タイトル「${esc(pp.title.text)}」はレールに入らないため省いた</li>` : `<li class="info">タイトル「${esc(pp.title.text)}」</li>`);
+  for (const w of [...new Set(pp.warnings)]) li.push(`<li class="warn">${esc(w)}</li>`);
+  if (board.openChains) li.push(`<li class="warn">基板単品の外形に閉じていない線がある (外形として使っていない)</li>`);
+  if (!board.drills.length) li.push(`<li class="warn">ドリルファイルがない (マウスバイトなどは新しい NPTH ファイルに出す)</li>`);
+  $('notes').innerHTML = li.join('');
+  $('viewTitle').textContent = `${board.name}  ${pp.rows}×${pp.cols}  ${pp.rails === 'tb' ? '上下レール' : '左右レール'}  ${pp.rot}°  ${pp.W.toFixed(2)}×${pp.H.toFixed(2)}mm`;
+}
+
+/* ---------------------------------------------------------------- downloads */
+const baseName = () => `${board.name}-panel-${pp.rows}x${pp.cols}`;
+function updateDownloads() {
+  const ok = !!(board && pp);
+  $('dlZip').disabled = !ok; $('dlCfg').disabled = !ok;
+  $('dlCpl').disabled = !(ok && cpl); $('dlBom').disabled = !(ok && bom);
+  if (!ok) return;
+  let cplNote = '';
+  if (cpl) {
+    try {
+      const r = GP.panelCpl(cpl.text, pp);
+      cplNote = r.outside ? ` <b style="color:var(--ng)">注意: ${r.outside} 行が基板の外にあります (CPL とガーバーの原点が違う?)</b>` : '';
+    } catch (e) { cplNote = ` <b style="color:var(--ng)">${esc(e.message)}</b>`; }
+  }
+  $('dlZip').classList.toggle('danger', !!(ck && !ck.ok));
+  $('fnZip').textContent = baseName() + '.zip' + (ck && !ck.ok ? ' (チェック NG)' : '');
+  $('fnCpl').innerHTML = cpl ? `${esc(baseName())}-cpl.csv (${esc(cpl.name)} から ${pp.rows * pp.cols} 枚分)${cplNote}` : 'CPL を読み込むと使えます';
+  $('fnBom').textContent = bom ? `${baseName()}-bom.csv (部品番号は CPL と同じく重複のまま)` : 'BOM を読み込むと使えます';
+  $('fnCfg').textContent = baseName() + '.json';
+}
+function save(name, data, type) {
+  const blob = data instanceof Blob ? data : new Blob([data], { type: type || 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+$('dlZip').addEventListener('click', async () => {
+  if (ck && !ck.ok && !confirm('切り離しチェックが NG です。このパネルは発注しないでください。\n確認用にダウンロードしますか?')) return;
+  const files = GP.panelFiles(board, pp);
+  const z = new JSZip();
+  for (const f of files) z.file(f.name, f.text);
+  save(baseName() + '.zip', await z.generateAsync({ type: 'blob', compression: 'DEFLATE' }));
+});
+$('dlCpl').addEventListener('click', () => {
+  try { const r = GP.panelCpl(cpl.text, pp); save(baseName() + '-cpl.csv', r.csv, 'text/csv'); }
+  catch (e) { alert(e.message); }
+});
+$('dlBom').addEventListener('click', () => save(baseName() + '-bom.csv', bom.text, 'text/csv'));
+function configJson() {
+  const params = {};
+  for (const k of Object.keys(GP.DEFAULTS)) params[k] = P[k];
+  return JSON.stringify({
+    tool: 'gerber-panelize', format: 1, saved: new Date().toISOString(),
+    board: { name: board.name, width: +(board.bbox[2] - board.bbox[0]).toFixed(4), height: +(board.bbox[3] - board.bbox[1]).toFixed(4), area: +board.area.toFixed(3) },
+    layout: { rails: pp.rails, rotation: pp.rot, rows: pp.rows, cols: pp.cols },
+    panel: { width: +pp.W.toFixed(4), height: +pp.H.toFixed(4), title: pp.title ? pp.title.text : '', check: ck ? (ck.ok ? 'OK' : 'NG') : '' },
+    params,
+  }, null, 2) + '\n';
+}
+$('dlCfg').addEventListener('click', () => save(baseName() + '.json', configJson(), 'application/json'));
+$('loadCfg').addEventListener('click', () => $('cfgIn').click());
+$('cfgIn').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (f) applyConfig(await f.text(), f.name); });
+function applyConfig(text, name) {
+  let j;
+  try { j = JSON.parse(text); } catch (e) { alert(name + ': JSON として読めません'); return; }
+  const mm = v => typeof v === 'number' ? v : parseFloat(String(v));
+  if (j.tool === 'gerber-panelize') {
+    P = { ...GP.DEFAULTS, ...j.params };
+    if (j.layout) P.forced = { rails: j.layout.rails, rot: +j.layout.rotation, rows: +j.layout.rows, cols: +j.layout.cols };
+    if (board && j.board && (Math.abs(j.board.width - (board.bbox[2] - board.bbox[0])) > 0.01 || Math.abs(j.board.height - (board.bbox[3] - board.bbox[1])) > 0.01))
+      alert(`設定は ${j.board.name} (${j.board.width}×${j.board.height}mm) 用です。読み込んだ基板とは寸法が違います。`);
+  } else if (j.layout || j.tabs || j.framing) {
+    // KiKit preset (embedded-projects boards/<board>/panel/<variant>.json)
+    P = { ...GP.DEFAULTS };
+    const rails = j.framing && j.framing.type === 'railslr' ? 'lr' : 'tb';
+    if (j.tabs) { if (j.tabs.hcount != null) P.hcount = String(j.tabs.hcount); if (j.tabs.vcount != null) P.vcount = String(j.tabs.vcount); if (j.tabs.width) P.tabW = mm(j.tabs.width); }
+    if (j.layout) {
+      if (j.layout.hspace) P.gap = mm(j.layout.hspace);
+      const rot = j.layout.rotation ? (Math.round(mm(j.layout.rotation)) % 180 ? 90 : 0) : 0;
+      P.forced = { rails, rot, rows: +(j.layout.rows || 1), cols: +(j.layout.cols || 1) };
+    }
+    if (j.framing) { if (j.framing.width) P.railW = mm(j.framing.width); if (j.framing.space) P.railGap = mm(j.framing.space); }
+  } else { alert(name + ': このツールの設定でも KiKit の設定でもありません'); return; }
+  writeInputs();
+  if (board) refreshCandidates(true);
+}
+
+/* ---------------------------------------------------------------- preview (SVG) */
+const COLORS = {
+  F_Cu: ['#d0423a', 1], B_Cu: ['#3f7fd0', 0.9], In: ['#c6a83b', 0.8], F_Mask: ['#c36cf0', 0.35], B_Mask: ['#26c6c2', 0.3],
+  F_Paste: ['#b9b9b9', 0.7], B_Paste: ['#8fa8b8', 0.6], F_Silkscreen: ['#f2eda1', 1], B_Silkscreen: ['#e3a6c6', 0.9], Edge_Cuts: ['#e8e8e0', 1],
+};
+const colorOf = L => COLORS[L.key] || (L.kind === 'cu' ? COLORS.In : ['#8aa', 0.7]);
+const DEFAULT_ON = new Set(['F_Cu', 'F_Silkscreen', 'Edge_Cuts', 'B_Cu']);
+const vis = new Map();   // key -> boolean
+function buildBoardSvg() {
+  const defs = [], groups = [];
+  board.gerbers.forEach((x, i) => {
+    if (x.L.key === 'Edge_Cuts') return;
+    const r = GP.layerSvg(x.g, 'g' + i);
+    defs.push(r.defs);
+    let body;
+    if (r.hasClear && r.bbox) {
+      const [x0, y0, x1, y1] = r.bbox;
+      const m = `<mask id="m${i}" maskUnits="userSpaceOnUse" x="${x0 - 1}" y="${y0 - 1}" width="${x1 - x0 + 2}" height="${y1 - y0 + 2}">` +
+        r.items.map(it => `<g style="color:${it.pol === 'C' ? '#000' : '#fff'}">${it.svg}</g>`).join('') + '</mask>';
+      defs.push(m);
+      body = `<rect x="${x0 - 1}" y="${y0 - 1}" width="${x1 - x0 + 2}" height="${y1 - y0 + 2}" fill="currentColor" mask="url(#m${i})"/>`;
+    } else body = r.items.map(it => it.svg).join('');
+    defs.push(`<g id="L${i}">${body}</g>`);
+    groups.push(i);
+  });
+  // drills
+  board.drills.forEach((x, i) => {
+    let s = '';
+    for (const h of x.d.holes) {
+      const t = x.d.tools.get(h.t); if (!t) continue;
+      if (h.x2 != null) s += `<path d="M${GP.f4(h.x)} ${GP.f4(h.y)}L${GP.f4(h.x2)} ${GP.f4(h.y2)}" stroke-width="${t.dia}" stroke-linecap="round"/>`;
+      else s += `<circle cx="${GP.f4(h.x)}" cy="${GP.f4(h.y)}" r="${GP.f4(t.dia / 2)}"/>`;
+    }
+    defs.push(`<g id="D${i}">${s}</g>`);
+  });
+  board.svg = { defs: defs.join('') };
+  // layer toggles
+  const items = [];
+  const layerKeys = [];
+  board.gerbers.forEach((x, i) => { if (x.L.key !== 'Edge_Cuts') layerKeys.push({ key: 'L' + i, label: x.L.key, color: colorOf(x.L)[0], on: DEFAULT_ON.has(x.L.key) || (x.L.kind === 'cu' && x.L.side === 'F') }); });
+  layerKeys.push({ key: 'drill', label: '穴', color: '#f0f0f0', on: true });
+  layerKeys.push({ key: 'mb', label: 'マウスバイト・治具穴', color: '#3ad1ff', on: true });
+  layerKeys.push({ key: 'edge', label: '外形', color: COLORS.Edge_Cuts[0], on: true });
+  layerKeys.push({ key: 'cut', label: '切り離し線', color: '#ffb000', on: true });
+  layerKeys.push({ key: 'dim', label: '寸法線', color: '#9fb4c8', on: true });
+  for (const l of layerKeys) {
+    if (!vis.has(l.key + ':' + l.label)) vis.set(l.key + ':' + l.label, l.on);
+    items.push(`<label><input type="checkbox" data-k="${l.key}" data-n="${esc(l.label)}" ${vis.get(l.key + ':' + l.label) ? 'checked' : ''}><i style="background:${l.color}"></i>${esc(l.label)}</label>`);
+  }
+  $('layers').innerHTML = items.join('');
+}
+$('layers').addEventListener('change', e => {
+  const cb = e.target; if (!cb.dataset) return;
+  vis.set(cb.dataset.k + ':' + cb.dataset.n, cb.checked);
+  const g = $('view').querySelector(`[data-layer="${cb.dataset.k}"]`);
+  if (g) g.style.display = cb.checked ? '' : 'none';
+});
+const on = (k, label) => vis.get(k + ':' + label) !== false;
+let cam = null; // viewBox [x, y, w, h]
+function renderView(fit) {
+  const svg = $('view');
+  if (!pp) { svg.innerHTML = ''; $('empty').hidden = false; return; }
+  $('empty').hidden = true;
+  const f4 = GP.f4;
+  const mat = T => `matrix(${T.a} ${T.c} ${T.b} ${T.d} ${f4(T.e)} ${f4(T.f)})`;
+  const uses = id => pp.inst.map(I => `<use href="#${id}" transform="${mat(I.T)}"/>`).join('');
+  const sub = pp.substrate.map(p => GP.polyD(GP.pathF(p))).join('');
+  const parts = [];
+  parts.push(`<path d="${sub}" fill="#2f4a3a" fill-rule="nonzero"/>`);
+  board.gerbers.forEach((x, i) => {
+    if (x.L.key === 'Edge_Cuts') return;
+    const [col, op] = colorOf(x.L);
+    let extra = '';
+    if (x.L.kind === 'cu' && x.L.side !== 'I') extra = pp.fids.map(p => `<circle cx="${f4(p.x)}" cy="${f4(p.y)}" r="${P.fidCu / 2}" fill="currentColor"/>`).join('');
+    if (x.L.kind === 'mask' && x.L.side !== 'I') extra = pp.fids.map(p => `<circle cx="${f4(p.x)}" cy="${f4(p.y)}" r="${P.fidMask / 2}" fill="currentColor"/>`).join('');
+    if (x.L.kind === 'silk' && x.L.side === 'F' && pp.title && !pp.title.omitted)
+      extra = `<path d="${pp.title.strokes.map(s => 'M' + s.map(p => f4(p[0]) + ' ' + f4(p[1])).join('L')).join('')}" fill="none" stroke="currentColor" stroke-width="${P.titleW}" stroke-linecap="round" stroke-linejoin="round"/>`;
+    parts.push(`<g data-layer="L${i}" style="color:${col};opacity:${op};${on('L' + i, x.L.key) ? '' : 'display:none'}">${uses('L' + i)}${extra}</g>`);
+  });
+  const drills = board.drills.map((x, i) => uses('D' + i)).join('');
+  parts.push(`<g data-layer="drill" fill="#0b0f14" stroke="#0b0f14" style="${on('drill', '穴') ? '' : 'display:none'}">${drills}</g>`);
+  parts.push(`<g data-layer="mb" fill="#0b0f14" stroke="#3ad1ff" stroke-width="0.08" style="${on('mb', 'マウスバイト・治具穴') ? '' : 'display:none'}">` +
+    pp.npth.map(h => `<circle cx="${f4(h.x)}" cy="${f4(h.y)}" r="${f4(h.dia / 2)}"/>`).join('') + '</g>');
+  parts.push(`<g data-layer="edge" style="${on('edge', '外形') ? '' : 'display:none'}"><path d="${sub}" fill="none" stroke="${COLORS.Edge_Cuts[0]}" stroke-width="1.2" vector-effect="non-scaling-stroke"/></g>`);
+  parts.push(`<g data-layer="cut" fill="none" stroke="#ffb000" stroke-width="1.5" stroke-dasharray="4 3" vector-effect="non-scaling-stroke" style="${on('cut', '切り離し線') ? '' : 'display:none'}">` +
+    pp.cuts.map(c => `<path d="M${c.line.map(p => f4(p[0]) + ' ' + f4(p[1])).join('L')}"/>`).join('') + '</g>');
+  // NG boards
+  if (ck && !ck.ok) {
+    const bad = ck.boards.filter(b => !b.ok).map(b => pp.inst[b.i].poly.map(p => GP.polyD(GP.pathF(p))).join('')).join('');
+    if (bad) parts.push(`<path d="${bad}" fill="#ff3b3b" fill-opacity="0.35" stroke="#ff3b3b" stroke-width="3" vector-effect="non-scaling-stroke"/>`);
+  }
+  // dimensions (drawn without the Y flip)
+  const s = Math.max(pp.W, pp.H);
+  const fs = Math.max(1.2, s / 38), gap = fs * 1.6;
+  const I0 = pp.inst[0];
+  const dims = [];
+  const hd = (x0, x1, y, label) => {
+    dims.push(`<path d="M${f4(x0)} ${f4(y)}H${f4(x1)}M${f4(x0)} ${f4(y - fs * 0.5)}v${f4(fs)}M${f4(x1)} ${f4(y - fs * 0.5)}v${f4(fs)}"/>`);
+    dims.push(`<text x="${f4((x0 + x1) / 2)}" y="${f4(y - fs * 0.35)}" text-anchor="middle" font-size="${f4(fs)}">${label}</text>`);
+  };
+  const vd = (y0, y1, x, label) => {
+    dims.push(`<path d="M${f4(x)} ${f4(y0)}V${f4(y1)}M${f4(x - fs * 0.5)} ${f4(y0)}h${f4(fs)}M${f4(x - fs * 0.5)} ${f4(y1)}h${f4(fs)}"/>`);
+    dims.push(`<text x="${f4(x - fs * 0.35)}" y="${f4((y0 + y1) / 2)}" text-anchor="middle" font-size="${f4(fs)}" transform="rotate(-90 ${f4(x - fs * 0.35)} ${f4((y0 + y1) / 2)})">${label}</text>`);
+  };
+  hd(0, pp.W, gap + fs, `${pp.W.toFixed(2)} mm`);
+  vd(-pp.H, 0, -gap, `${pp.H.toFixed(2)} mm`);
+  // one board (top-left) and the rail
+  const bx = I0.px, by = I0.py;
+  hd(bx, bx + pp.w, -pp.H - gap * 0.6, `${pp.w.toFixed(2)}`);
+  vd(-(by + pp.h), -by, pp.W + gap + fs, `${pp.h.toFixed(2)}`);
+  if (pp.cols > 1) { const x0 = bx + pp.w, x1 = x0 + P.gap; hd(x0, x1, -pp.H - gap * 0.6, `${P.gap}`); }
+  const body = `<g transform="scale(1,-1)">${parts.join('')}</g>` +
+    `<g data-layer="dim" fill="#9fb4c8" stroke="#9fb4c8" stroke-width="1" style="${on('dim', '寸法線') ? '' : 'display:none'}"><g fill="none" vector-effect="non-scaling-stroke">${dims.filter(d => d.startsWith('<path')).map(d => d.replace('<path', '<path vector-effect="non-scaling-stroke"')).join('')}</g><g stroke="none" font-family="system-ui,sans-serif">${dims.filter(d => d.startsWith('<text')).join('')}</g></g>`;
+  svg.innerHTML = `<defs>${board.svg.defs}</defs>${body}`;
+  if (fit || !cam) fitView();
+  else applyCam();
+}
+function fitView() {
+  if (!pp) return;
+  const r = $('view').getBoundingClientRect();
+  const s = Math.max(pp.W, pp.H);
+  const m = s * 0.09;
+  let x = -m * 1.2, y = -pp.H - m, w = pp.W + 2.4 * m, h = pp.H + 2 * m;
+  const ar = (r.width || 1) / (r.height || 1);
+  if (w / h < ar) { const nw = h * ar; x -= (nw - w) / 2; w = nw; } else { const nh = w / ar; y -= (nh - h) / 2; h = nh; }
+  cam = [x, y, w, h];
+  applyCam();
+}
+function applyCam() { $('view').setAttribute('viewBox', cam.map(v => v.toFixed(4)).join(' ')); }
+function zoomAt(px, py, f) {
+  if (!cam) return;
+  const r = $('view').getBoundingClientRect();
+  const sx = cam[2] / r.width, sy = cam[3] / r.height, s = Math.max(sx, sy);
+  // preserveAspectRatio xMidYMid meet: map pointer to user space
+  const ox = cam[0] + (cam[2] - r.width * s) / 2, oy = cam[1] + (cam[3] - r.height * s) / 2;
+  const wx = ox + px * s, wy = oy + py * s;
+  const nw = cam[2] / f, nh = cam[3] / f;
+  cam = [wx - (wx - cam[0]) / f, wy - (wy - cam[1]) / f, nw, nh];
+  applyCam();
+}
+const view = $('view');
+view.addEventListener('wheel', e => { e.preventDefault(); const r = view.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+const ptrs = new Map(); let pinch = null;
+view.addEventListener('pointerdown', e => { view.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); view.classList.add('drag'); });
+view.addEventListener('pointermove', e => {
+  if (!ptrs.has(e.pointerId) || !cam) return;
+  const prev = ptrs.get(e.pointerId);
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const r = view.getBoundingClientRect();
+  const s = Math.max(cam[2] / r.width, cam[3] / r.height);
+  if (ptrs.size === 1) { cam[0] -= (e.clientX - prev.x) * s; cam[1] -= (e.clientY - prev.y) * s; applyCam(); }
+  else if (ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pinch) zoomAt((a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top, d / pinch);
+    pinch = d;
+  }
+});
+const up = e => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null; if (!ptrs.size) view.classList.remove('drag'); };
+view.addEventListener('pointerup', up); view.addEventListener('pointercancel', up);
+$('zin').addEventListener('click', () => { const r = view.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1.4); });
+$('zout').addEventListener('click', () => { const r = view.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1 / 1.4); });
+$('zfit').addEventListener('click', fitView);
+new ResizeObserver(() => { if (pp) fitView(); }).observe(view);
+</script>
+</body>
+</html>

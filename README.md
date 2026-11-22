@@ -26,6 +26,9 @@ tools/
 ├─ panel-yield/       ← 基板の取り数計算
 │   ├─ index.html
 │   └─ README.md
+├─ gerber-panelize/   ← ガーバーの面付け
+│   ├─ index.html
+│   └─ README.md
 ├─ mlcc-dcbias/       ← MLCC の DC バイアス特性
 │   ├─ index.html
 │   └─ README.md
@@ -62,5 +65,6 @@ GitHub Pagesで公開(`main`ブランチのルートを配信)。
 | [overlay-camera](overlay-camera/) | 基準写真をカメラ映像に半透明で重ね、同じ角度・距離・画角で撮り直すカメラ(差分・輪郭表示、前後比較画像の書き出し) |
 | [odb2kicad](odb2kicad/) | ODB++ の基板データを KiCad で閲覧できる .kicad_pcb に変換するツール(部品・ネット・パッド・ビア付き、表/裏のプレビュー) |
 | [panel-yield](panel-yield/) | 基板単品のサイズから、定尺板あたりの取り数が多くなるワークサイズを逆算するツール(定尺板・ワークのプレビューと比較付き) |
+| [gerber-panelize](gerber-panelize/) | KiCad の基板単品のガーバーから、JLCPCB に出す面付けパネルのガーバー zip とずらした CPL を作るツール(レールの向き・回転・行×列の案の一覧、全レイヤーのプレビュー、切り離しチェック付き) |
 | [mlcc-dcbias](mlcc-dcbias/) | MLCC の DC バイアスによる容量低下を、電界で正規化した共通曲線とサイズ・容量からの層厚推定で見積もるツール(データシートの1点で補正可) |
 | [mlcc-size-cap](mlcc-size-cap/) | MLCC のサイズ × 定格電圧ごとの最大容量 (村田 GRM の量産品) をグラフと表で比較し、DC バイアス後の実効容量も重ねて見るツール |
