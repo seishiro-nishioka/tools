@@ -118,7 +118,7 @@
 </head>
 <body>
 <header>
-  <h1>ガーバーの面付け</h1><span class="ver" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.22.1</span>
+  <h1>ガーバーの面付け</h1><span class="ver" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.22.2</span>
   <span class="sub">KiCad のガーバーから JLCPCB 向けの面付けパネルを作る (データはブラウザの外に出ません)</span>
   <a href="../">ツール一覧</a>
 </header>
@@ -1435,6 +1435,8 @@ function panelCpl(text, pp) {
   const out = [['Designator', 'Val', 'Package', 'Mid X', 'Mid Y', 'Rotation', 'Layer']];
   let n = 0, outside = 0;
   const [x0, y0, x1, y1] = pp.boardBbox;
+  // keep the angle range of the input (KiCad: -180..180, Fabrication Toolkit: 0..360)
+  const pos360 = iRot >= 0 && rows.slice(1).some(r => num(r[iRot]) > 180);
   for (const r of rows.slice(1)) {
     const x = num(r[iX]), y = num(r[iY]);
     if (isFinite(x) && isFinite(y) && (x < x0 - 1 || x > x1 + 1 || y < y0 - 1 || y > y1 + 1)) outside++;
@@ -1446,8 +1448,8 @@ function panelCpl(text, pp) {
     const [X, Y] = ap(I.T, x, y);
     let rot = iRot >= 0 ? num(r[iRot]) || 0 : 0;
     rot += pp.rot;
-    while (rot > 180) rot -= 360;
-    while (rot <= -180) rot += 360;
+    rot = ((rot % 360) + 360) % 360;
+    if (!pos360 && rot > 180) rot -= 360;
     let side = iSide >= 0 ? r[iSide].trim() : 'top';
     side = /^b/i.test(side) ? 'bottom' : 'top';
     out.push([r[iRef].trim(), iVal >= 0 ? r[iVal] : '', iPkg >= 0 ? r[iPkg] : '', X.toFixed(4), Y.toFixed(4), fmtVal(rot), side]);
@@ -1612,7 +1614,12 @@ function loadBoard(cad, all) {
   let job = null;
   for (const e of cad) {
     try {
-      if (e.kind === 'gerber') { const g = GP.parseGerber(e.text, e.name); gerbers.push({ name: e.name, g, L: GP.layerOf(e.name, g.tf) }); }
+      if (e.kind === 'gerber') {
+        const g = GP.parseGerber(e.text, e.name);
+        // drill maps (KiCad / Fabrication Toolkit *-drl_map.gbr) are documentation only: not panelized, not in the zip
+        if (g.tf.some(t => /^TF\.FileFunction,Drillmap/i.test(t)) || /-drl_map\.\w+$/i.test(e.name)) { e.kind = 'drillmap'; continue; }
+        gerbers.push({ name: e.name, g, L: GP.layerOf(e.name, g.tf) });
+      }
       else if (e.kind === 'drill') drills.push({ name: e.name, d: GP.parseDrill(e.text, e.name) });
       else if (e.kind === 'job') job = { name: e.name, text: e.text };
     } catch (err) { errors.push(err.message); }
@@ -1645,14 +1652,14 @@ function loadBoard(cad, all) {
   refreshCandidates(true);
 }
 $('bname').addEventListener('input', () => { if (board) { board.name = $('bname').value.trim() || 'board'; select(selKey, true); } });
-const kindLabel = e => ({ gerber: 'ガーバー', drill: 'ドリル', job: 'ジョブ', cpl: 'CPL', bom: 'BOM', json: '設定', 'csv?': '不明な CSV', other: '使わない' })[e] || e;
+const kindLabel = e => ({ gerber: 'ガーバー', drill: 'ドリル', job: 'ジョブ', cpl: 'CPL', bom: 'BOM', json: '設定', drillmap: 'ドリルマップ (出力しない)', 'csv?': '不明な CSV', other: '使わない' })[e] || e;
 function renderFileList() {
   const li = [];
   if (board) {
     for (const x of board.gerbers) li.push(`<li><span class="n" title="${esc(x.name)}">${esc(x.name)}</span><span class="k">${esc(x.L.key)}</span></li>`);
     for (const x of board.drills) li.push(`<li><span class="n" title="${esc(x.name)}">${esc(x.name)}</span><span class="k">${x.d.plated === false ? 'NPTH' : x.d.plated ? 'PTH' : 'ドリル'} ${x.d.holes.length}穴</span></li>`);
     if (board.job) li.push(`<li><span class="n">${esc(board.job.name)}</span><span class="k">ジョブ</span></li>`);
-    for (const e of board.others) li.push(`<li class="bad"><span class="n" title="${esc(e.name)}">${esc(e.name)}</span><span class="k">${kindLabel(e.kind)}</span></li>`);
+    for (const e of board.others) li.push(`<li${e.kind === 'drillmap' ? '' : ' class="bad"'}><span class="n" title="${esc(e.name)}">${esc(e.name)}</span><span class="k">${kindLabel(e.kind)}</span></li>`);
     for (const m of board.errors) li.push(`<li class="bad"><span class="n">${esc(m)}</span></li>`);
   }
   if (cpl) li.push(`<li><span class="n">${esc(cpl.name)}</span><span class="k">CPL</span></li>`);
