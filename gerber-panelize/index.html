@@ -118,7 +118,7 @@
 </head>
 <body>
 <header>
-  <h1>ガーバーの面付け</h1><span class="ver" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.22.3</span>
+  <h1>ガーバーの面付け</h1><span class="ver" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.23.1</span>
   <span class="sub">KiCad のガーバーから JLCPCB 向けの面付けパネルを作る (データはブラウザの外に出ません)</span>
   <a href="../">ツール一覧</a>
 </header>
@@ -1299,7 +1299,12 @@ function panelFiles(board, pp) {
       continue;
     }
     if (L.kind === 'cu' && (L.side === 'F' || L.side === 'B')) flash(P.fidCu, pp.fids);
-    if (L.kind === 'mask' && (L.side === 'F' || L.side === 'B')) flash(P.fidMask, pp.fids);
+    if (L.kind === 'mask' && (L.side === 'F' || L.side === 'B')) {
+      flash(P.fidMask, pp.fids);
+      // mask openings (same diameter as the drill) for mouse bites and tooling holes, so no resist is left over them
+      // (KiKit opens them on B.Mask only; both sides here)
+      for (const dia of [...new Set(pp.npth.map(h => h.dia))]) flash(dia, pp.npth.filter(h => h.dia === dia));
+    }
     if (L.kind === 'silk' && L.side === 'F' && pp.title && !pp.title.omitted) {
       const code = nd + extra.aps.length;
       extra.aps.push({ code, d: P.titleW });
@@ -1932,7 +1937,8 @@ function renderView(fit) {
     const [col, op] = colorOf(x.L);
     let extra = '';
     if (x.L.kind === 'cu' && x.L.side !== 'I') extra = pp.fids.map(p => `<circle cx="${f4(p.x)}" cy="${f4(p.y)}" r="${P.fidCu / 2}" fill="currentColor"/>`).join('');
-    if (x.L.kind === 'mask' && x.L.side !== 'I') extra = pp.fids.map(p => `<circle cx="${f4(p.x)}" cy="${f4(p.y)}" r="${P.fidMask / 2}" fill="currentColor"/>`).join('');
+    if (x.L.kind === 'mask' && x.L.side !== 'I') extra = pp.fids.map(p => `<circle cx="${f4(p.x)}" cy="${f4(p.y)}" r="${P.fidMask / 2}" fill="currentColor"/>`).join('')
+      + pp.npth.map(p => `<circle cx="${f4(p.x)}" cy="${f4(p.y)}" r="${p.dia / 2}" fill="currentColor"/>`).join('');
     if (x.L.kind === 'silk' && x.L.side === 'F' && pp.title && !pp.title.omitted)
       extra = `<path d="${pp.title.strokes.map(s => 'M' + s.map(p => f4(p[0]) + ' ' + f4(p[1])).join('L')).join('')}" fill="none" stroke="currentColor" stroke-width="${P.titleW}" stroke-linecap="round" stroke-linejoin="round"/>`;
     parts.push(`<g data-layer="L${i}" style="color:${col};opacity:${op};${on('L' + i, x.L.key) ? '' : 'display:none'}">${uses('L' + i)}${extra}</g>`);
