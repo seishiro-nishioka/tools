@@ -96,6 +96,7 @@ label.check{display:flex; align-items:center; gap:6px; font-size:12.5px; flex-wr
 label.check input[type=number]{width:60px; font:inherit; font-size:12.5px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:4px; padding:1px 4px}
 .layer-table td.type .cand{display:block; color:var(--warn)}
 .layer-table td.type .src{display:block; word-break:break-all}
+.linkbtn{display:block; margin-top:2px; padding:0; border:0; background:none; color:var(--blue); font:inherit; font-size:11px; cursor:pointer; text-decoration:underline}
 .layer-table td.eye{width:26px; padding:1px 2px}
 .eye-btn{display:flex; align-items:center; justify-content:center; width:24px; height:24px; padding:0; border:0; border-radius:4px; background:none; color:var(--ink); cursor:pointer}
 .eye-btn[aria-pressed="false"]{color:var(--sub)}
@@ -123,7 +124,7 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
 <body>
 <header>
   <a class="back-link" href="../">← 一覧</a>
-  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.25.1</span></h1>
+  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.25.2</span></h1>
   <p>ODB++ の基板データを KiCad で閲覧できる .kicad_pcb (KiCad 9/10 用) に変換します。ファイルはサーバーに送信されず、処理はすべてブラウザ内で完結します。</p>
 </header>
 <main>
@@ -901,7 +902,7 @@ async function ownStep(job, step, progress) {
   }
   const profText = await fs.text(sp + 'profile');
   const profile = profText ? layerGeometry(parseFeatures(profText, lib, 'profile')) : [];
-  return { step, layers, profile: profile.slice(), ownProfile: profile, profSrc: new Map(profile.length ? [[step, 1]] : []), boards: [], nets, hasEda: !!edaText, datum: hdr.datum, repeats: hdr.repeats, instances: 0 };
+  return { step, layers, profile: profile.slice(), ownProfile: profile, profSrc: new Map(profile.length ? [[step, 1]] : []), boardIdx: [], nets, hasEda: !!edaText, datum: hdr.datum, repeats: hdr.repeats, instances: 0 };
 }
 
 /* Step-repeat: child coordinates -> parent. Mirror x first, then rotate clockwise, about the child datum. */
@@ -949,9 +950,10 @@ function mergeInstance(out, child, T, sfx, netOffset) {
     }
     ol.count = (ol.count || 0) + cl.count;
   });
+  const base = out.profile.length;
   out.profile.push(...T.paths(child.profile));
   for (const [s, n] of child.profSrc) out.profSrc.set(s, (out.profSrc.get(s) || 0) + n);
-  for (const b of child.boards) out.boards.push(T.paths(b));
+  for (const b of child.boardIdx) out.boardIdx.push(b.map(i => base + i));
 }
 async function flatStep(job, step, progress, stack, cache) {
   if (cache.has(step)) return cache.get(step);
@@ -974,7 +976,7 @@ async function flatStep(job, step, progress, stack, cache) {
       out.instances += child.instances || 1; // count leaf boards
     }
   }
-  if (!inst && out.profile.length) out.boards = [out.profile.slice()]; // a leaf board
+  if (!inst && out.profile.length) out.boardIdx = [out.profile.map((_, i) => i)]; // a leaf board
   cache.set(step, out);
   return out;
 }
@@ -985,9 +987,19 @@ async function loadStep(job, step, progress) {
   // auxiliary layers (would go to User.n) are excluded by default; the user can assign them in the table
   if (!flat.profile.length) warn('外形 (profile) がない');
   if (!flat.nets.length) warn('ネットの情報 (eda/data) がないため、ネット名なしで変換');
-  const vcutAuto = isVcutPanel(flat.boards);
-  return { step, layers, profile: flat.profile, ownProfile: flat.ownProfile, profSrc: [...flat.profSrc], boards: flat.boards, nets: flat.nets, copperCount: job.cls.copperCount, instances: flat.instances,
-    vcutAuto, vcut: vcutAuto, vcutInset: 1 };
+  const out = { step, layers, profileAll: flat.profile, ownN: flat.ownProfile.length, boardIdx: flat.boardIdx, profOn: flat.profile.map(() => true),
+    profSrc: [...flat.profSrc], nets: flat.nets, copperCount: job.cls.copperCount, instances: flat.instances, vcutInset: 1 };
+  applyProfileSel(out);
+  out.vcutAuto = out.vcut = isVcutPanel(out.boards);
+  return out;
+}
+/* The profile loops chosen for Edge.Cuts (st.profOn, one flag per closed loop of the flattened profile)
+   -> st.profile, st.ownProfile (the panel's own loops) and st.boards (each board's loops). */
+function applyProfileSel(st) {
+  const on = i => st.profOn[i];
+  st.profile = st.profileAll.filter((_, i) => on(i));
+  st.ownProfile = st.profileAll.slice(0, st.ownN).filter((_, i) => on(i));
+  st.boards = st.boardIdx.map(ix => ix.filter(on).map(i => st.profileAll[i])).filter(b => b.length);
 }
 
 /* ---------------- mechanical: board outline, cutouts, V-cut lines */
@@ -1435,7 +1447,7 @@ function buildBoard(st, opts = {}) {
   return { text: out.join('\n'), stats, preview, holes, padCheck };
 }
 
-return { loadJob, loadStep, buildBoard, mechanical, cutoutGeom, fileSetFromArchive, findJobs, FileSet, graphicTargets, uncompressZ, parseTar,
+return { loadJob, loadStep, applyProfileSel, buildBoard, mechanical, cutoutGeom, fileSetFromArchive, findJobs, FileSet, graphicTargets, uncompressZ, parseTar,
   layerGeometry, layerGeom, ffOf, fracture, area, VCUT_LAYER, warnings: () => warnings, resetWarnings: () => { warnings = new Map(); }, SC };
 })();
 if (typeof module !== 'undefined') module.exports = Odb;
@@ -1527,9 +1539,9 @@ $('stepSel').addEventListener('change', e => openStep(e.target.value).catch(err 
 async function openStep(step) {
   Odb.resetWarnings();
   st = await Odb.loadStep(job, step, progress);
-  pv = new Map(); queue = []; hover = null; pinned = null; dirty = false;
+  pv = new Map(); queue = []; hover = null; pinned = null; dirty = false; hotLoop = -1;
   for (const l of st.layers) l.show = l.role === 'copper' || l.role === 'drill' || !!l.target;
-  edgeRow = st.profile.length ? { name: 'profile', role: 'edge', target: 'Edge.Cuts', count: 1, show: true, src: st.profSrc } : null;
+  edgeRow = st.profileAll.length ? { name: 'profile', role: 'edge', target: 'Edge.Cuts', count: 1, show: true, src: st.profSrc } : null;
   mech = null;
   renderLayerTable();
   renderVcut();
@@ -1603,7 +1615,8 @@ function renderLayerTable() {
       td2.textContent = '外形 (profile)';
       const c = document.createElement('span'); c.className = 'src';
       c.textContent = l.src.map(([s, n]) => `steps/${s}/profile` + (n > 1 ? ` ×${n}` : '')).join(', ');
-      td2.appendChild(c);
+      const sel = document.createElement('span'); sel.className = 'src'; sel.id = 'profSel';
+      td2.append(c, sel);
     }
     if (l.role === 'user' && CUTOUT_HINT.test(l.name)) { const c = document.createElement('span'); c.className = 'cand'; c.textContent = '切り抜きの候補'; td2.appendChild(c); }
     const td3 = document.createElement('td');
@@ -1629,7 +1642,13 @@ function renderLayerTable() {
       tr.addEventListener('click', e => { if (!e.target.closest('button, select')) pin(); });
       tr.addEventListener('keydown', e => { if (e.target === tr && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pin(); } });
     } else sw.classList.add('none');
-    if (l.role === 'copper' || l.role === 'edge') td3.textContent = l.target;
+    if (l.role === 'copper') td3.textContent = l.target;
+    else if (l.role === 'edge') {
+      td3.append('Edge.Cuts');
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'linkbtn'; b.id = 'profAll'; b.textContent = 'すべて使う';
+      b.addEventListener('click', e => { e.stopPropagation(); st.profOn.fill(true); profileChanged(); });
+      td3.appendChild(b);
+    }
     else if (l.role === 'drill') td3.textContent = '穴 (パッド / ビア)';
     else if (l.role === 'comp') td3.textContent = `部品 ${l.count} 個 (${l.side === 'B' ? '裏' : '表'})`;
     else {
@@ -1656,6 +1675,19 @@ function renderLayerTable() {
   }
   $('layersBox').style.display = '';
   $('layersEmpty').style.display = 'none';
+  renderProfSel();
+}
+function renderProfSel() {
+  if (!edgeRow || !$('profSel')) return;
+  const n = st.profOn.length, k = st.profOn.filter(Boolean).length;
+  $('profSel').textContent = `線 ${k} / ${n} 本を使用` + (n > 1 ? ' (プレビューの線をクリックで切り替え)' : '');
+  $('profAll').style.display = k < n ? '' : 'none';
+}
+// a profile loop was switched on / off in the preview
+function profileChanged() {
+  Odb.applyProfileSel(st);
+  mech = null;
+  renderProfSel(); renderVcut(); draw(); markDirty();
 }
 $('reconvert').addEventListener('click', async () => { await convert(); });
 const CUTOUT_HINT = /slit|cutout|milling|rout/i;
@@ -1762,9 +1794,9 @@ async function runQueue() {
 function computeBounds() {
   let b = null;
   const add = c => { if (!c) return; b = b ? [Math.min(b[0], c[0]), Math.min(b[1], c[1]), Math.max(b[2], c[2]), Math.max(b[3], c[3])] : c.slice(); };
-  if (st.profile.length) {
+  if (st.profileAll.length) {
     const S = Odb.SC;
-    for (const r of st.profile) for (const p of r) add([p.X / S, p.Y / S, p.X / S, p.Y / S]);
+    for (const r of st.profileAll) for (const p of r) add([p.X / S, p.Y / S, p.X / S, p.Y / S]);
   } else for (const v of pv.values()) add(v && v.bbox);
   bounds = b || [0, 0, 10, 10];
 }
@@ -1836,8 +1868,19 @@ function drawNow() {
     } else paint(focus, Math.max(baseAlpha(focus), 0.75), true);
   }
   ctx.globalAlpha = 1;
+  const edgeOn = !edgeRow || edgeRow.show || focus === edgeRow;
+  if (edgeOn) {
+    // profile loops not used for Edge.Cuts: dashed
+    ctx.lineWidth = px; ctx.strokeStyle = EXCLUDED_COLOR; ctx.setLineDash([4 * px, 3 * px]); ctx.stroke(m.off); ctx.setLineDash([]);
+  }
   if (edgeRow && focus === edgeRow) { ctx.lineWidth = 2.5 * px; ctx.strokeStyle = '#FFFFFF'; ctx.stroke(m.edge); }
-  else if (!edgeRow || edgeRow.show) { ctx.lineWidth = px; ctx.strokeStyle = EDGE_COLOR; ctx.stroke(m.edge); }
+  else if (edgeOn) { ctx.lineWidth = px; ctx.strokeStyle = EDGE_COLOR; ctx.stroke(m.edge); }
+  if (edgeOn && hotLoop >= 0) {
+    const used = st.profOn[hotLoop];
+    ctx.lineWidth = 3 * px; ctx.strokeStyle = used ? '#FFFFFF' : EXCLUDED_COLOR; ctx.globalAlpha = 0.9;
+    if (!used) ctx.setLineDash([4 * px, 3 * px]);
+    ctx.stroke(toPath2D([st.profileAll[hotLoop]])); ctx.setLineDash([]); ctx.globalAlpha = 1;
+  }
   ctx.lineWidth = 1.5 * px; ctx.strokeStyle = colorOf({ target: Odb.VCUT_LAYER }); ctx.setLineDash([8 * px, 4 * px, 2 * px, 4 * px]); ctx.stroke(m.vcut); ctx.setLineDash([]);
 }
 // Edge.Cuts outline, board fill and V-cut lines as the conversion would make them (rebuilt when settings change)
@@ -1848,7 +1891,9 @@ function mechPaths() {
   try { r = Odb.mechanical(st, true); } catch (err) { console.error(err); r = { edge: st.profile, fill: st.profile, vcut: [] }; }
   const vcut = new Path2D();
   for (const v of r.vcut) { vcut.moveTo(v[0], v[1]); vcut.lineTo(v[2], v[3]); }
-  mech = { edge: toPath2D(r.edge), fill: toPath2D(r.fill), vcut };
+  const off = new Path2D();
+  st.profileAll.forEach((g, i) => { if (!st.profOn[i]) off.addPath(toPath2D([g])); });
+  mech = { edge: toPath2D(r.edge), fill: toPath2D(r.fill), vcut, off };
   return mech;
 }
 new ResizeObserver(() => draw()).observe(cv);
@@ -1866,9 +1911,40 @@ function zoomAt(px, py, f) {
 cv.addEventListener('wheel', e => { e.preventDefault(); const r = cv.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
 const ptrs = new Map();
 let pinch = null;
-cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); });
+/* Profile loops: the loop nearest to the pointer (within a few pixels) can be clicked to use / not use it for Edge.Cuts */
+let hotLoop = -1, press = null;
+function loopAt(cx, cy) {
+  if (!st || !edgeRow || !(edgeRow.show || focusOf() === edgeRow)) return -1;
+  const r = cv.getBoundingClientRect(), S = Odb.SC;
+  const wx = cam.x + (cx - r.left - r.width / 2) / (cam.s * mxv()), wy = cam.y - (cy - r.top - r.height / 2) / cam.s;
+  let best = -1, bd = 6 / cam.s; // 6 CSS pixels
+  st.profileAll.forEach((g, i) => {
+    for (let j = 0; j < g.length; j++) {
+      const a = g[j], b = g[(j + 1) % g.length];
+      const ax = a.X / S, ay = a.Y / S, dx = b.X / S - ax, dy = b.Y / S - ay, L = dx * dx + dy * dy;
+      const t = L ? Math.max(0, Math.min(1, ((wx - ax) * dx + (wy - ay) * dy) / L)) : 0;
+      const d = Math.hypot(wx - ax - t * dx, wy - ay - t * dy);
+      if (d < bd) { bd = d; best = i; }
+    }
+  });
+  return best;
+}
+function setHot(i) { if (i !== hotLoop) { hotLoop = i; cv.style.cursor = i >= 0 ? 'pointer' : ''; draw(); } }
+cv.addEventListener('pointerleave', () => setHot(-1));
+cv.addEventListener('pointerdown', e => {
+  cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  press = ptrs.size === 1 ? { x: e.clientX, y: e.clientY, id: e.pointerId } : null;
+});
+cv.addEventListener('pointerup', e => {
+  const p = press; press = null;
+  if (!p || p.id !== e.pointerId || Math.hypot(e.clientX - p.x, e.clientY - p.y) > 4) return; // a drag, not a click
+  const i = loopAt(e.clientX, e.clientY);
+  if (i < 0) return;
+  st.profOn[i] = !st.profOn[i];
+  profileChanged();
+});
 cv.addEventListener('pointermove', e => {
-  if (!ptrs.has(e.pointerId)) return;
+  if (!ptrs.has(e.pointerId)) { if (e.pointerType === 'mouse') setHot(loopAt(e.clientX, e.clientY)); return; }
   const prev = ptrs.get(e.pointerId);
   ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (ptrs.size === 1) {
