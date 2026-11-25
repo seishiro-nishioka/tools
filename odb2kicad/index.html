@@ -96,7 +96,7 @@ label.check{display:flex; align-items:center; gap:6px; font-size:12.5px; flex-wr
 label.check input[type=number]{width:60px; font:inherit; font-size:12.5px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:4px; padding:1px 4px}
 .layer-table td.type .cand{display:block; color:var(--warn)}
 .layer-table td.type .src{display:block; word-break:break-all}
-.linkbtn{display:block; margin-top:2px; padding:0; border:0; background:none; color:var(--blue); font:inherit; font-size:11px; cursor:pointer; text-decoration:underline}
+.layer-table select.wide{display:block; margin-top:3px}
 .layer-table td.eye{width:26px; padding:1px 2px}
 .eye-btn{display:flex; align-items:center; justify-content:center; width:24px; height:24px; padding:0; border:0; border-radius:4px; background:none; color:var(--ink); cursor:pointer}
 .eye-btn[aria-pressed="false"]{color:var(--sub)}
@@ -124,7 +124,7 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
 <body>
 <header>
   <a class="back-link" href="../">← 一覧</a>
-  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.25.2</span></h1>
+  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.25.3</span></h1>
   <p>ODB++ の基板データを KiCad で閲覧できる .kicad_pcb (KiCad 9/10 用) に変換します。ファイルはサーバーに送信されず、処理はすべてブラウザ内で完結します。</p>
 </header>
 <main>
@@ -987,7 +987,7 @@ async function loadStep(job, step, progress) {
   // auxiliary layers (would go to User.n) are excluded by default; the user can assign them in the table
   if (!flat.profile.length) warn('外形 (profile) がない');
   if (!flat.nets.length) warn('ネットの情報 (eda/data) がないため、ネット名なしで変換');
-  const out = { step, layers, profileAll: flat.profile, ownN: flat.ownProfile.length, boardIdx: flat.boardIdx, profOn: flat.profile.map(() => true),
+  const out = { step, layers, profileAll: flat.profile, ownN: flat.ownProfile.length, boardIdx: flat.boardIdx, profOn: flat.profile.map(() => true), profMode: 'all',
     profSrc: [...flat.profSrc], nets: flat.nets, copperCount: job.cls.copperCount, instances: flat.instances, vcutInset: 1 };
   applyProfileSel(out);
   out.vcutAuto = out.vcut = isVcutPanel(out.boards);
@@ -995,6 +995,24 @@ async function loadStep(job, step, progress) {
 }
 /* The profile loops chosen for Edge.Cuts (st.profOn, one flag per closed loop of the flattened profile)
    -> st.profile, st.ownProfile (the panel's own loops) and st.boards (each board's loops). */
+/* Loops inside another loop (boards in a panel frame, holes of a board); computed on first use. */
+function profileInner(st) {
+  if (st.profInner) return st.profInner;
+  const P = st.profileAll, boxes = P.map(g => pathsBox([g]));
+  const areas = P.map(g => Math.abs(C.Clipper.Area(g)));
+  st.profInner = P.map((g, i) => {
+    const b = boxes[i];
+    return !!b && P.some((h, j) => {
+      const c = boxes[j];
+      if (j === i || !c || areas[j] <= areas[i] || b[0] < c[0] - EPS || b[1] < c[1] - EPS || b[2] > c[2] + EPS || b[3] > c[3] + EPS) return false;
+      // inside: no vertex outside h and at least one strictly inside (vertices on a shared edge do not decide)
+      let inside = false;
+      for (const pt of g) { const r = C.Clipper.PointInPolygon(pt, h); if (r === 0) return false; if (r === 1) inside = true; }
+      return inside;
+    });
+  });
+  return st.profInner;
+}
 function applyProfileSel(st) {
   const on = i => st.profOn[i];
   st.profile = st.profileAll.filter((_, i) => on(i));
@@ -1447,7 +1465,7 @@ function buildBoard(st, opts = {}) {
   return { text: out.join('\n'), stats, preview, holes, padCheck };
 }
 
-return { loadJob, loadStep, applyProfileSel, buildBoard, mechanical, cutoutGeom, fileSetFromArchive, findJobs, FileSet, graphicTargets, uncompressZ, parseTar,
+return { loadJob, loadStep, applyProfileSel, profileInner, buildBoard, mechanical, cutoutGeom, fileSetFromArchive, findJobs, FileSet, graphicTargets, uncompressZ, parseTar,
   layerGeometry, layerGeom, ffOf, fracture, area, VCUT_LAYER, warnings: () => warnings, resetWarnings: () => { warnings = new Map(); }, SC };
 })();
 if (typeof module !== 'undefined') module.exports = Odb;
@@ -1645,9 +1663,13 @@ function renderLayerTable() {
     if (l.role === 'copper') td3.textContent = l.target;
     else if (l.role === 'edge') {
       td3.append('Edge.Cuts');
-      const b = document.createElement('button'); b.type = 'button'; b.className = 'linkbtn'; b.id = 'profAll'; b.textContent = 'すべて使う';
-      b.addEventListener('click', e => { e.stopPropagation(); st.profOn.fill(true); profileChanged(); });
-      td3.appendChild(b);
+      const m = document.createElement('select'); m.className = 'wide'; m.id = 'profMode'; m.ariaLabel = 'Edge.Cuts にする profile の線';
+      for (const [v, t] of [['all', '元データのまま'], ['outer', '内側のループを全て外す'], ['pick', '個別に選択する']]) {
+        const o = document.createElement('option'); o.value = v; o.textContent = t; m.appendChild(o);
+      }
+      m.value = st.profMode;
+      m.addEventListener('change', () => setProfMode(m.value));
+      td3.appendChild(m);
     }
     else if (l.role === 'drill') td3.textContent = '穴 (パッド / ビア)';
     else if (l.role === 'comp') td3.textContent = `部品 ${l.count} 個 (${l.side === 'B' ? '裏' : '表'})`;
@@ -1680,8 +1702,24 @@ function renderLayerTable() {
 function renderProfSel() {
   if (!edgeRow || !$('profSel')) return;
   const n = st.profOn.length, k = st.profOn.filter(Boolean).length;
-  $('profSel').textContent = `線 ${k} / ${n} 本を使用` + (n > 1 ? ' (プレビューの線をクリックで切り替え)' : '');
-  $('profAll').style.display = k < n ? '' : 'none';
+  $('profSel').textContent = st.profMode === 'all' ? `線 ${n} 本をすべて使用` :
+    st.profMode === 'outer' ? `外側の線 ${k} 本を使用 (内側 ${n - k} 本は除外)` : `線 ${k} / ${n} 本を使用 (クリックで選択)`;
+}
+// all: every loop / outer: only loops not inside another / pick: start from the current choice and click loops
+async function setProfMode(mode) {
+  st.profMode = mode;
+  if (mode === 'all') st.profOn.fill(true);
+  else if (mode === 'outer') {
+    if (!st.profInner) { setStatus('外形の線の内外を判定中…'); await tick(); }
+    const inner = Odb.profileInner(st);
+    st.profOn = inner.map(v => !v);
+    setStatus('外側の線だけを Edge.Cuts に使います。');
+  } else {
+    if (!st.loopBoxes) { setStatus('外形の線を選べるように準備中…'); await tick(); loopIndex(); }
+    setStatus('プレビューの外形の線をクリック / タップすると、Edge.Cuts に使うかが切り替わります。');
+  }
+  setHot(-1);
+  profileChanged();
 }
 // a profile loop was switched on / off in the preview
 function profileChanged() {
@@ -1913,12 +1951,24 @@ const ptrs = new Map();
 let pinch = null;
 /* Profile loops: the loop nearest to the pointer (within a few pixels) can be clicked to use / not use it for Edge.Cuts */
 let hotLoop = -1, press = null;
+// bounding box of each loop (mm), built when individual picking is turned on
+function loopIndex() {
+  const S = Odb.SC;
+  st.loopBoxes = st.profileAll.map(g => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of g) { x0 = Math.min(x0, p.X); x1 = Math.max(x1, p.X); y0 = Math.min(y0, p.Y); y1 = Math.max(y1, p.Y); }
+    return [x0 / S, y0 / S, x1 / S, y1 / S];
+  });
+}
 function loopAt(cx, cy) {
-  if (!st || !edgeRow || !(edgeRow.show || focusOf() === edgeRow)) return -1;
+  if (!st || !edgeRow || st.profMode !== 'pick' || !(edgeRow.show || focusOf() === edgeRow)) return -1;
+  if (!st.loopBoxes) loopIndex();
   const r = cv.getBoundingClientRect(), S = Odb.SC;
   const wx = cam.x + (cx - r.left - r.width / 2) / (cam.s * mxv()), wy = cam.y - (cy - r.top - r.height / 2) / cam.s;
   let best = -1, bd = 6 / cam.s; // 6 CSS pixels
   st.profileAll.forEach((g, i) => {
+    const bx = st.loopBoxes[i];
+    if (wx < bx[0] - bd || wx > bx[2] + bd || wy < bx[1] - bd || wy > bx[3] + bd) return;
     for (let j = 0; j < g.length; j++) {
       const a = g[j], b = g[(j + 1) % g.length];
       const ax = a.X / S, ay = a.Y / S, dx = b.X / S - ax, dy = b.Y / S - ay, L = dx * dx + dy * dy;
