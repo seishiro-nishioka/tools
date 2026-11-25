@@ -95,6 +95,7 @@ button:disabled{opacity:.4; cursor:not-allowed}
 label.check{display:flex; align-items:center; gap:6px; font-size:12.5px; flex-wrap:wrap}
 label.check input[type=number]{width:60px; font:inherit; font-size:12.5px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:4px; padding:1px 4px}
 .layer-table td.type .cand{display:block; color:var(--warn)}
+.layer-table td.type .src{display:block; word-break:break-all}
 .layer-table td.eye{width:26px; padding:1px 2px}
 .eye-btn{display:flex; align-items:center; justify-content:center; width:24px; height:24px; padding:0; border:0; border-radius:4px; background:none; color:var(--ink); cursor:pointer}
 .eye-btn[aria-pressed="false"]{color:var(--sub)}
@@ -122,7 +123,7 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
 <body>
 <header>
   <a class="back-link" href="../">← 一覧</a>
-  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.19.2</span></h1>
+  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.25.1</span></h1>
   <p>ODB++ の基板データを KiCad で閲覧できる .kicad_pcb (KiCad 9/10 用) に変換します。ファイルはサーバーに送信されず、処理はすべてブラウザ内で完結します。</p>
 </header>
 <main>
@@ -900,7 +901,7 @@ async function ownStep(job, step, progress) {
   }
   const profText = await fs.text(sp + 'profile');
   const profile = profText ? layerGeometry(parseFeatures(profText, lib, 'profile')) : [];
-  return { step, layers, profile: profile.slice(), ownProfile: profile, boards: [], nets, hasEda: !!edaText, datum: hdr.datum, repeats: hdr.repeats, instances: 0 };
+  return { step, layers, profile: profile.slice(), ownProfile: profile, profSrc: new Map(profile.length ? [[step, 1]] : []), boards: [], nets, hasEda: !!edaText, datum: hdr.datum, repeats: hdr.repeats, instances: 0 };
 }
 
 /* Step-repeat: child coordinates -> parent. Mirror x first, then rotate clockwise, about the child datum. */
@@ -949,6 +950,7 @@ function mergeInstance(out, child, T, sfx, netOffset) {
     ol.count = (ol.count || 0) + cl.count;
   });
   out.profile.push(...T.paths(child.profile));
+  for (const [s, n] of child.profSrc) out.profSrc.set(s, (out.profSrc.get(s) || 0) + n);
   for (const b of child.boards) out.boards.push(T.paths(b));
 }
 async function flatStep(job, step, progress, stack, cache) {
@@ -984,7 +986,7 @@ async function loadStep(job, step, progress) {
   if (!flat.profile.length) warn('外形 (profile) がない');
   if (!flat.nets.length) warn('ネットの情報 (eda/data) がないため、ネット名なしで変換');
   const vcutAuto = isVcutPanel(flat.boards);
-  return { step, layers, profile: flat.profile, ownProfile: flat.ownProfile, boards: flat.boards, nets: flat.nets, copperCount: job.cls.copperCount, instances: flat.instances,
+  return { step, layers, profile: flat.profile, ownProfile: flat.ownProfile, profSrc: [...flat.profSrc], boards: flat.boards, nets: flat.nets, copperCount: job.cls.copperCount, instances: flat.instances,
     vcutAuto, vcut: vcutAuto, vcutInset: 1 };
 }
 
@@ -1527,6 +1529,7 @@ async function openStep(step) {
   st = await Odb.loadStep(job, step, progress);
   pv = new Map(); queue = []; hover = null; pinned = null; dirty = false;
   for (const l of st.layers) l.show = l.role === 'copper' || l.role === 'drill' || !!l.target;
+  edgeRow = st.profile.length ? { name: 'profile', role: 'edge', target: 'Edge.Cuts', count: 1, show: true, src: st.profSrc } : null;
   mech = null;
   renderLayerTable();
   renderVcut();
@@ -1549,6 +1552,7 @@ const USER_COLORS = ['#E8B84A', '#59D8C8', '#E08A5C', '#8AB4F8', '#D6E06A', '#F2
 const EXCLUDED_COLOR = '#9FB2C4', DRILL_COLOR = '#E3B72E', EDGE_COLOR = '#D0D2CD';
 function colorOf(l) {
   if (l.role === 'drill') return DRILL_COLOR;
+  if (l.role === 'edge') return EDGE_COLOR;
   const t = l.target;
   if (!t) return EXCLUDED_COLOR;
   if (KICAD_COLORS[t]) return KICAD_COLORS[t];
@@ -1580,14 +1584,14 @@ function setHover(l) {
   clearTimeout(hoverTimer);
   if (!l) { if (hover) { hover = null; draw(); } return; }
   // wait a moment so sweeping the pointer over many rows does not parse every layer
-  hoverTimer = setTimeout(() => { hover = l; want(l); draw(); }, pv.has(l) ? 0 : 150);
+  hoverTimer = setTimeout(() => { hover = l; want(l); draw(); }, pv.has(l) || l.role === 'edge' ? 0 : 150);
 }
 function renderLayerTable() {
   const tb = $('layerRows');
   tb.innerHTML = '';
   rowOf.clear();
   const targets = Odb.graphicTargets(st.copperCount);
-  for (const l of st.layers) {
+  for (const l of (edgeRow ? [edgeRow] : []).concat(st.layers)) {
     if (!l.count) continue;
     const tr = document.createElement('tr');
     const td0 = document.createElement('td'); td0.className = 'eye';
@@ -1595,6 +1599,12 @@ function renderLayerTable() {
     const sw = document.createElement('span'); sw.className = 'swatch';
     td1.append(sw, document.createTextNode(l.name));
     const td2 = document.createElement('td'); td2.className = 'type'; td2.textContent = l.type + (l.context === 'MISC' ? ' (MISC)' : '');
+    if (l.role === 'edge') {
+      td2.textContent = '外形 (profile)';
+      const c = document.createElement('span'); c.className = 'src';
+      c.textContent = l.src.map(([s, n]) => `steps/${s}/profile` + (n > 1 ? ` ×${n}` : '')).join(', ');
+      td2.appendChild(c);
+    }
     if (l.role === 'user' && CUTOUT_HINT.test(l.name)) { const c = document.createElement('span'); c.className = 'cand'; c.textContent = '切り抜きの候補'; td2.appendChild(c); }
     const td3 = document.createElement('td');
     let eye = null;
@@ -1619,7 +1629,7 @@ function renderLayerTable() {
       tr.addEventListener('click', e => { if (!e.target.closest('button, select')) pin(); });
       tr.addEventListener('keydown', e => { if (e.target === tr && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pin(); } });
     } else sw.classList.add('none');
-    if (l.role === 'copper') td3.textContent = l.target;
+    if (l.role === 'copper' || l.role === 'edge') td3.textContent = l.target;
     else if (l.role === 'drill') td3.textContent = '穴 (パッド / ビア)';
     else if (l.role === 'comp') td3.textContent = `部品 ${l.count} 個 (${l.side === 'B' ? '裏' : '表'})`;
     else {
@@ -1702,6 +1712,8 @@ $('download').addEventListener('click', async () => {
 /* ---------- preview: one Path2D per ODB++ layer, parsed only when it is shown or highlighted */
 const cv = $('view'), ctx = cv.getContext('2d');
 let pv = new Map(), queue = [], busy = false, hover = null, pinned = null, dirty = false;
+// pseudo row for the step profile (the source of Edge.Cuts); drawn from mechPaths, not parsed like a layer
+let edgeRow = null;
 let bounds = null, cam = { s: 1, x: 0, y: 0 };
 const focusOf = () => hover || pinned;
 function toPath2D(polys) {
@@ -1724,7 +1736,7 @@ function makePv(l) {
 }
 const needed = l => l.show || l === hover || l === pinned;
 function want(l) {
-  if (pv.has(l)) return;
+  if (l.role === 'edge' || pv.has(l)) return;
   pv.set(l, null); // queued
   queue.push(l);
   runQueue();
@@ -1824,7 +1836,8 @@ function drawNow() {
     } else paint(focus, Math.max(baseAlpha(focus), 0.75), true);
   }
   ctx.globalAlpha = 1;
-  ctx.lineWidth = px; ctx.strokeStyle = EDGE_COLOR; ctx.stroke(m.edge);
+  if (edgeRow && focus === edgeRow) { ctx.lineWidth = 2.5 * px; ctx.strokeStyle = '#FFFFFF'; ctx.stroke(m.edge); }
+  else if (!edgeRow || edgeRow.show) { ctx.lineWidth = px; ctx.strokeStyle = EDGE_COLOR; ctx.stroke(m.edge); }
   ctx.lineWidth = 1.5 * px; ctx.strokeStyle = colorOf({ target: Odb.VCUT_LAYER }); ctx.setLineDash([8 * px, 4 * px, 2 * px, 4 * px]); ctx.stroke(m.vcut); ctx.setLineDash([]);
 }
 // Edge.Cuts outline, board fill and V-cut lines as the conversion would make them (rebuilt when settings change)
