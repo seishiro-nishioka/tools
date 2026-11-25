@@ -97,6 +97,7 @@ label.check input[type=number]{width:60px; font:inherit; font-size:12.5px; backg
 .layer-table td.type .cand{display:block; color:var(--warn)}
 .layer-table td.type .src{display:block; word-break:break-all}
 .layer-table select.wide{display:block; margin-top:3px}
+.hintbtn{display:block; margin-top:2px; padding:0; border:0; background:none; color:var(--blue); font:inherit; font-size:11px; cursor:pointer; text-decoration:underline; text-align:left}
 .layer-table td.eye{width:26px; padding:1px 2px}
 .eye-btn{display:flex; align-items:center; justify-content:center; width:24px; height:24px; padding:0; border:0; border-radius:4px; background:none; color:var(--ink); cursor:pointer}
 .eye-btn[aria-pressed="false"]{color:var(--sub)}
@@ -124,7 +125,7 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
 <body>
 <header>
   <a class="back-link" href="../">← 一覧</a>
-  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.25.3</span></h1>
+  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.25.5</span></h1>
   <p>ODB++ の基板データを KiCad で閲覧できる .kicad_pcb (KiCad 9/10 用) に変換します。ファイルはサーバーに送信されず、処理はすべてブラウザ内で完結します。</p>
 </header>
 <main>
@@ -177,7 +178,7 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
     <div class="pad rowA">
       <div id="layersBox" style="display:none">
         <p class="label" style="margin-top:0">層の割り当て (空の層は省略)</p>
-        <p class="layer-hint">行にカーソルを乗せる / タップすると、その層をプレビューで強調します。目のアイコンはプレビューの表示だけを切り替え、変換に含めるかは「KiCad 層」で選びます。除外中の層は破線で表示します。</p>
+        <p class="layer-hint">行にカーソルを乗せる / タップすると、その層をプレビューで強調します。目のアイコンはプレビューの表示だけを切り替え、変換に含めるかは「KiCad 層」で選びます。表示用の解析は目のアイコンで表示したときに初めて行うので、一度も表示していない層は強調しても何も出ません。除外中の層は破線で表示します。</p>
         <div class="layer-scroll"><table class="layer-table"><thead><tr><th><span class="sr">表示</span></th><th>ODB++ 層</th><th>種類</th><th>KiCad 層</th></tr></thead><tbody id="layerRows"></tbody></table></div>
       </div>
       <p class="layer-hint" id="layersEmpty">ODB++ を読み込むと、ここに層の一覧を表示します。</p>
@@ -1058,7 +1059,9 @@ function isVcutPanel(boards) {
   }
   return touch;
 }
-const isVcutLayer = l => l.role === 'user' && /v-?cut/i.test(l.name);
+// V-cut layer names: vcut, v-cut, v_cut, v cut, v-score, score, scoring, Vカット
+const VCUT_NAME = /v[-_ ]?(cut|score)|scor(e|ing)|vカット/i;
+const isVcutLayer = l => l.role === 'user' && VCUT_NAME.test(l.name);
 const rectPath = (x0, y0, x1, y1) => [toI(x0, y0), toI(x1, y0), toI(x1, y1), toI(x0, y1)];
 /* Edge.Cuts loops and User.1 V-cut lines.
    V-cut panel: material = panel profile - (each board's bounding box - the boards) - cutouts,
@@ -1212,9 +1215,11 @@ function buildBoard(st, opts = {}) {
   };
 
   /* targets */
+  const mech = mechanical(st);
   const byTarget = new Map();
   for (const l of st.layers) {
     if (!l.count || !l.target || l.target === 'Edge.Cuts' || l.role === 'drill' || l.role === 'comp') continue;
+    if (mech.vcutFrom === 'layer' && l.target === VCUT_LAYER && isVcutLayer(l)) continue; // its lines already go to User.1 as V-cut lines
     if (!byTarget.has(l.target)) byTarget.set(l.target, []);
     byTarget.get(l.target).push(l);
   }
@@ -1446,7 +1451,6 @@ function buildBoard(st, opts = {}) {
     }
   }
   /* board outline (and cutouts), V-cut lines */
-  const mech = mechanical(st);
   for (const v of mech.vcut) {
     out.push(['\t(gr_line', `\t\t(start ${f6(v[0])} ${f6(-v[1])})`, `\t\t(end ${f6(v[2])} ${f6(-v[3])})`,
       '\t\t(stroke', '\t\t\t(width 0.1)', '\t\t\t(type solid)', '\t\t)', `\t\t(layer ${q(VCUT_LAYER)})`, `\t\t(uuid ${q(uuid())})`, '\t)'].join('\n'));
@@ -1465,7 +1469,7 @@ function buildBoard(st, opts = {}) {
   return { text: out.join('\n'), stats, preview, holes, padCheck };
 }
 
-return { loadJob, loadStep, applyProfileSel, profileInner, buildBoard, mechanical, cutoutGeom, fileSetFromArchive, findJobs, FileSet, graphicTargets, uncompressZ, parseTar,
+return { loadJob, loadStep, applyProfileSel, profileInner, VCUT_NAME, buildBoard, mechanical, cutoutGeom, fileSetFromArchive, findJobs, FileSet, graphicTargets, uncompressZ, parseTar,
   layerGeometry, layerGeom, ffOf, fracture, area, VCUT_LAYER, warnings: () => warnings, resetWarnings: () => { warnings = new Map(); }, SC };
 })();
 if (typeof module !== 'undefined') module.exports = Odb;
@@ -1609,12 +1613,10 @@ function updateRow(l) {
     r.eye.setAttribute('aria-pressed', l.show ? 'true' : 'false');
   }
 }
-let hoverTimer = 0;
 function setHover(l) {
-  clearTimeout(hoverTimer);
   if (!l) { if (hover) { hover = null; draw(); } return; }
-  // wait a moment so sweeping the pointer over many rows does not parse every layer
-  hoverTimer = setTimeout(() => { hover = l; want(l); draw(); }, pv.has(l) || l.role === 'edge' ? 0 : 150);
+  // highlighting never parses: a layer is parsed only once it is shown with the eye button
+  hover = l; draw();
 }
 function renderLayerTable() {
   const tb = $('layerRows');
@@ -1636,7 +1638,6 @@ function renderLayerTable() {
       const sel = document.createElement('span'); sel.className = 'src'; sel.id = 'profSel';
       td2.append(c, sel);
     }
-    if (l.role === 'user' && CUTOUT_HINT.test(l.name)) { const c = document.createElement('span'); c.className = 'cand'; c.textContent = '切り抜きの候補'; td2.appendChild(c); }
     const td3 = document.createElement('td');
     let eye = null;
     if (l.role !== 'comp') {
@@ -1653,7 +1654,6 @@ function renderLayerTable() {
       const pin = () => {
         const prev = pinned;
         pinned = pinned === l ? null : l;
-        if (pinned) want(pinned);
         if (prev) updateRow(prev);
         updateRow(l); draw();
       };
@@ -1680,15 +1680,27 @@ function renderLayerTable() {
       const cut = document.createElement('option'); cut.value = 'Edge.Cuts'; cut.textContent = 'Edge.Cuts (切り抜き)'; s.appendChild(cut);
       for (const t of targets) { const o = document.createElement('option'); o.value = t; o.textContent = t === Odb.VCUT_LAYER ? t + ' (Vカット用)' : t; s.appendChild(o); }
       s.value = l.target || '';
+      // name hints: a V-cut layer belongs on User.1, a slit / milling layer on Edge.Cuts (cutouts); one click assigns it
+      const hint = Odb.VCUT_NAME.test(l.name) ? ['V カットの候補', Odb.VCUT_LAYER] : CUTOUT_HINT.test(l.name) ? ['切り抜きの候補', 'Edge.Cuts'] : null;
+      let go = null;
+      if (hint) {
+        const c = document.createElement('span'); c.className = 'cand'; c.textContent = hint[0]; td2.appendChild(c);
+        go = document.createElement('button'); go.type = 'button'; go.className = 'hintbtn';
+        go.textContent = (hint[1] === 'Edge.Cuts' ? 'Edge.Cuts (切り抜き)' : hint[1]) + ' にする';
+        go.addEventListener('click', e => { e.stopPropagation(); s.value = hint[1]; s.dispatchEvent(new Event('change')); });
+      }
+      const syncHint = () => { if (go) go.style.display = l.target === hint[1] ? 'none' : ''; };
+      syncHint();
       s.addEventListener('change', () => {
         const was = l.target;
         l.target = s.value || null;
         if (l.target && !was && !l.show) { l.show = true; want(l); } // newly included layers become visible
         if ((l.target === 'Edge.Cuts') !== (was === 'Edge.Cuts')) { mech = null; pv.delete(l); if (needed(l)) want(l); }
-        updateRow(l); draw();
+        updateRow(l); draw(); syncHint();
         markDirty();
       });
       td3.appendChild(s);
+      if (go) td3.appendChild(go);
     }
     tr.append(td0, td1, td2, td3);
     tb.appendChild(tr);
@@ -1804,7 +1816,7 @@ function makePv(l) {
   const S = Odb.SC;
   return { path: toPath2D(g), bbox: isFinite(x0) ? [x0 / S, y0 / S, x1 / S, y1 / S] : null };
 }
-const needed = l => l.show || l === hover || l === pinned;
+const needed = l => l.show; // parse only layers switched on with the eye button
 function want(l) {
   if (l.role === 'edge' || pv.has(l)) return;
   pv.set(l, null); // queued
@@ -1818,7 +1830,7 @@ async function runQueue() {
   while (queue.length) {
     const l = queue.shift();
     if (owner !== st) break;
-    if (!needed(l)) { pv.delete(l); continue; } // no longer asked for (pointer moved on)
+    if (!needed(l)) { pv.delete(l); continue; } // switched off again before it was parsed
     setStatus('プレビュー用に解析中: ' + l.name + ' …');
     await tick();
     if (owner !== st) break;
@@ -1890,7 +1902,8 @@ function drawNow() {
       ctx.globalAlpha = alpha; ctx.fillStyle = c; ctx.fill(v.path, 'evenodd');
     }
   };
-  const fade = focus ? 0.22 : 1;
+  // a highlighted layer that is not parsed yet (never shown) draws nothing, so the others are not faded either
+  const fade = focus && (pv.get(focus) || focus === edgeRow) ? 0.22 : 1;
   for (const l of list) {
     const d = depth(l);
     paint(l, baseAlpha(l) * (d === 0 ? 0.28 : d === 1 ? 0.5 : 1) * fade, false);
