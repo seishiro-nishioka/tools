@@ -125,7 +125,7 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
 <body>
 <header>
   <a class="back-link" href="../">← 一覧</a>
-  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.25.5</span></h1>
+  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.26.1</span></h1>
   <p>ODB++ の基板データを KiCad で閲覧できる .kicad_pcb (KiCad 9/10 用) に変換します。ファイルはサーバーに送信されず、処理はすべてブラウザ内で完結します。</p>
 </header>
 <main>
@@ -413,8 +413,20 @@ function parseFeatures(text, lib, label) {
   const unit = unitsOf(lines.slice(0, 50), 'INCH');
   const ks = unit === 'MM' ? 1 : 25.4;        // coordinates -> mm
   const symK = unit === 'MM' ? 0.001 : 0.0254; // symbol dims (um or mil) -> mm
-  const syms = {};
+  const syms = {}, attrNames = {};
   const items = [], pads = [], lines_ = [];
+  // feature attributes after ';' ("0=1,2"): option values are indices into the attribute's option list
+  const attrsOf = raw => {
+    const i = raw.indexOf(';');
+    if (i < 0) return null;
+    const a = {};
+    for (const kv of raw.slice(i + 1).trim().split(',')) {
+      const [n, v] = kv.split('=');
+      const name = attrNames[n.trim()];
+      if (name) a[name] = v === undefined ? true : v.trim();
+    }
+    return a;
+  };
   const symShape = sym => {
     const s = stdSymbol(sym.name, sym.k);
     if (s) return s.paths;
@@ -435,7 +447,8 @@ function parseFeatures(text, lib, label) {
   const N = lines.length;
   while (i < N) {
     const raw = lines[i++];
-    if (!raw || raw[0] === '#' || raw[0] === '@' || raw[0] === '&') continue;
+    if (raw && raw[0] === '@') { const m = /^@(\d+)\s+(\S+)/.exec(raw); if (m) attrNames[m[1]] = m[2].toLowerCase(); continue; }
+    if (!raw || raw[0] === '#' || raw[0] === '&') continue;
     const t = stripAttr(raw).trim().split(/\s+/);
     const k = t[0];
     if (!k) continue;
@@ -446,7 +459,7 @@ function parseFeatures(text, lib, label) {
       const [x1, y1, x2, y2] = t.slice(1, 5).map(v => parseFloat(v) * ks);
       const sym = syms[t[5]], pol = t[6];
       if (!sym) { warn('シンボル番号が不明な線 (' + label + ')'); continue; }
-      lines_.push({ x1, y1, x2, y2, sym, pol });
+      lines_.push({ x1, y1, x2, y2, sym, pol, attrs: attrsOf(raw) });
       items.push({ pol, thin: zeroWidth(sym), paths: strokePath([[x1, y1], [x2, y2]], strokeOf(sym)) });
     } else if (k === 'A') {
       const [xs, ys, xe, ye, xc, yc] = t.slice(1, 7).map(v => parseFloat(v) * ks);
@@ -465,7 +478,7 @@ function parseFeatures(text, lib, label) {
       const mirror = (orient >= 4 && orient <= 7) || orient === 9;
       const sh = symShape(sym);
       const paths = sh ? xform(sh, mirror, angle, x, y) : null;
-      pads.push({ x, y, sym, pol, orient, angle, mirror, paths });
+      pads.push({ x, y, sym, pol, orient, angle, mirror, paths, attrs: attrsOf(raw) });
       if (paths) items.push({ pol, paths });
     } else if (k === 'S') {
       const pol = t[1];
@@ -1145,6 +1158,11 @@ class PadIndex {
     return best ? best.pad : null;
   }
 }
+// .drill attribute of a drill feature: 'plated' | 'npth' | 'via' | null (not given)
+function drillKind(f) {
+  const v = f.attrs && f.attrs['.drill'];
+  return v === '0' ? 'plated' : v === '1' ? 'npth' : v === '2' ? 'via' : null;
+}
 function holeList(st) {
   const holes = [];
   for (const l of st.layers) {
@@ -1153,10 +1171,11 @@ function holeList(st) {
     for (const p of padsOf(l)) {
       if (p.pol !== 'P') continue;
       let m;
-      if ((m = /^r([\d.]+)$/.exec(p.sym.name))) holes.push({ x: p.x, y: p.y, d: parseFloat(m[1]) * p.sym.k, slot: null, span, layer: l.name });
+      const kind = drillKind(p);
+      if ((m = /^r([\d.]+)$/.exec(p.sym.name))) holes.push({ x: p.x, y: p.y, d: parseFloat(m[1]) * p.sym.k, slot: null, span, layer: l.name, kind, npth: kind === 'npth' });
       else if ((m = /^oval([\d.]+)x([\d.]+)$/.exec(p.sym.name))) {
         const w = parseFloat(m[1]) * p.sym.k, h = parseFloat(m[2]) * p.sym.k;
-        holes.push({ x: p.x, y: p.y, d: Math.min(w, h), slot: { w, h, angle: p.angle }, span, layer: l.name });
+        holes.push({ x: p.x, y: p.y, d: Math.min(w, h), slot: { w, h, angle: p.angle }, span, layer: l.name, kind, npth: kind === 'npth' });
       } else warn('未対応の穴の形: ' + p.sym.name);
     }
     for (const ln of linesOf(l)) {
@@ -1165,7 +1184,8 @@ function holeList(st) {
       if (!m) { warn('未対応の穴の形 (線): ' + ln.sym.name); continue; }
       const d = parseFloat(m[1]) * ln.sym.k, len = Math.hypot(ln.x2 - ln.x1, ln.y2 - ln.y1);
       const ang = -Math.atan2(ln.y2 - ln.y1, ln.x2 - ln.x1) * 180 / Math.PI; // ODB++ CW angle
-      holes.push({ x: (ln.x1 + ln.x2) / 2, y: (ln.y1 + ln.y2) / 2, d, slot: { w: len + d, h: d, angle: ang }, span, layer: l.name });
+      const kind = drillKind(ln);
+      holes.push({ x: (ln.x1 + ln.x2) / 2, y: (ln.y1 + ln.y2) / 2, d, slot: { w: len + d, h: d, angle: ang }, span, layer: l.name, kind, npth: kind === 'npth' });
     }
   }
   return holes;
@@ -1327,7 +1347,8 @@ function buildBoard(st, opts = {}) {
       return { shape: 'custom', size: '0.05 0.05', custom: true, lines: P };
     };
     const keyOf = p => { const d = land(p, ''); return d.shape + '|' + d.size + '|' + d.lines.join('\n'); };
-    const front = land(sh.front, indent + '\t');
+    // a non-plated hole with a land on the back only: that land is the pad's shape (its layers are B.Cu only)
+    const front = land(!plated && hole && !sh.front && sh.back ? sh.back : sh.front, indent + '\t');
     let stack = null;
     if (plated && (sh.back !== undefined || sh.inner)) {
       // each copper layer of the hole keeps its own land: F.Cu (the pad itself), inner layers, B.Cu (padstack)
@@ -1380,6 +1401,13 @@ function buildBoard(st, opts = {}) {
     ...(mirror ? ['\t\t\t\t(justify mirror)'] : []), '\t\t\t)', '\t\t)'].join('\n');
 
   const allCu = ['*.Cu', '*.Mask'];
+  // a non-plated hole keeps copper only where the ODB++ has a land (e.g. a land on the top side only)
+  const holeLayers = (hole, cs) => {
+    if (!hole || !hole.npth || !cs) return allCu;
+    const cu = [cs.front ? 'F.Cu' : null, cs.back ? 'B.Cu' : null].filter(Boolean);
+    if (cs.inner && cs.inner.some(e => e.pad)) warn('ノンメッキ穴の内層のランドは出力しない');
+    return [...cu, '*.Mask'];
+  };
   for (const cl of st.layers.filter(l => l.role === 'comp')) {
     const side = cl.side;
     const sideCu = side === 'B' ? 'B.Cu' : 'F.Cu', fab = side === 'B' ? 'B.Fab' : 'F.Fab';
@@ -1392,7 +1420,8 @@ function buildBoard(st, opts = {}) {
         const net = netRef(pin.net);
         if (hi != null) {
           usedHoles.add(hi);
-          L.push(padBlock(pin.name, pin.x, pin.y, c.x, c.y, cuStack(pin.x, pin.y), allCu, net, holes[hi], '\t\t'));
+          const cs = cuStack(pin.x, pin.y);
+          L.push(padBlock(pin.name, pin.x, pin.y, c.x, c.y, cs, holeLayers(holes[hi], cs), net, holes[hi], '\t\t'));
         } else {
           const hit = idx[side === 'B' ? 'B' : 'F'].find(pin.x, pin.y);
           L.push(padBlock(pin.name, pin.x, pin.y, c.x, c.y, { front: hit }, [sideCu], net, null, '\t\t'));
@@ -1410,7 +1439,7 @@ function buildBoard(st, opts = {}) {
   holes.forEach((h, i) => {
     if (usedHoles.has(i)) return;
     const hit = findCu(h.x, h.y);
-    if (!h.slot && hit) {
+    if (!h.slot && hit && !h.npth) {
       // land diameter per layer (front / inner / back); layers without a land get the minimum ring
       const cs = cuStack(h.x, h.y);
       const wOf = p => { if (!p) return h.d + 0.05; const b = bbox(p.paths); return Math.max(b[2] - b[0], h.d + 0.05); };
@@ -1428,8 +1457,10 @@ function buildBoard(st, opts = {}) {
       viaLines.push(V.join('\n'));
       stats.vias++;
     } else {
-      const hh = hit ? h : Object.assign({}, h, { npth: true });
-      extraPads.push(padBlock('', h.x, h.y, 0, 0, hit ? cuStack(h.x, h.y) : null, allCu, null, hh, '\t\t'));
+      // plating: the .drill attribute when the ODB++ has it, otherwise plated only where there is copper
+      const hh = h.kind ? h : hit ? h : Object.assign({}, h, { npth: true });
+      const cs = hit ? cuStack(h.x, h.y) : null;
+      extraPads.push(padBlock('', h.x, h.y, 0, 0, cs, holeLayers(hh, cs), null, hh, '\t\t'));
       stats.holes++;
     }
   });
