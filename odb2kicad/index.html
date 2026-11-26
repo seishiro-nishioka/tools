@@ -125,7 +125,7 @@ canvas#view{position:absolute; inset:0; width:100%; height:100%; touch-action:no
 <body>
 <header>
   <a class="back-link" href="../">← 一覧</a>
-  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.26.1</span></h1>
+  <h1>ODB++ → KiCad 変換<span class="tool-version" title="ツールのバージョン(更新した日付.その日の何回目の更新か)">v2026.11.26.2</span></h1>
   <p>ODB++ の基板データを KiCad で閲覧できる .kicad_pcb (KiCad 9/10 用) に変換します。ファイルはサーバーに送信されず、処理はすべてブラウザ内で完結します。</p>
 </header>
 <main>
@@ -1058,6 +1058,49 @@ function layerSegments(l) {
   return out;
 }
 const pathsBox = ps => { const b = bbox(ps); return isFinite(b[0]) ? b : null; };
+// The centre line of a long thin shape: the minimum-area rectangle around it (rotating calipers on the convex
+// hull), then the segment joining the midpoints of its two short sides. null if the shape is not thin.
+function thinCentreLine(path) {
+  const pts = path.map(p => [p.X / SC, p.Y / SC]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (pts.length < 3) return null;
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const p of pts) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+  for (const p of pts.slice().reverse()) { while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+  const hull = lo.slice(0, -1).concat(up.slice(0, -1));
+  let best = null;
+  for (let i = 0; i < hull.length; i++) {
+    const a = hull[i], b = hull[(i + 1) % hull.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (L < 1e-9) continue;
+    const ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L;
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    for (const p of hull) { const u = p[0] * ux + p[1] * uy, v = -p[0] * uy + p[1] * ux; u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+    const area = (u1 - u0) * (v1 - v0);
+    if (!best || area < best.area) best = { area, ux, uy, u0, u1, v0, v1 };
+  }
+  if (!best) return null;
+  let { ux, uy, u0, u1, v0, v1 } = best;
+  if (v1 - v0 > u1 - u0) { [ux, uy] = [-uy, ux]; [u0, u1, v0, v1] = [v0, v1, -u1, -u0]; } // u along the long side
+  const len = u1 - u0, wid = v1 - v0;
+  if (!(len > 0) || wid > len * 0.2) return null;
+  const vm = (v0 + v1) / 2, P = (u, v) => [u * ux - v * uy, u * uy + v * ux];
+  const a = P(u0, vm), b = P(u1, vm);
+  return [a[0], a[1], b[0], b[1]];
+}
+// V-cut lines of a layer drawn on User.1: line records as they are (their centre lines); filled shapes
+// (surfaces, pads) as the centre line of each thin shape. Shapes that are not thin stay as polygons.
+function vcutSegmentsOf(l) {
+  const segs = layerSegments(l), keep = [];
+  const ff = ffOf(l);
+  if (ff) for (const it of ff.items) {
+    if (it.thin !== undefined || it.pol === 'N' || !it.paths) continue; // lines and arcs carry 'thin'; arcs are not V-cuts
+    for (const p of it.paths) { const c = thinCentreLine(p); if (c) segs.push(c); else keep.push(p); }
+  }
+  if (l.x && l.x.extra.some(e => (ffOf(e.cl) || { items: [] }).items.some(it => it.thin === undefined)))
+    warn('V カットの層 ' + l.name + ': 面付けした子の塗り図形は V カット線にしない');
+  if (keep.length) warn('V カットの層 ' + l.name + ' に細長くない図形が ' + keep.length + ' 個ある (そのまま図形で出力)');
+  return { segs, keep };
+}
 // A V-cut panel: two or more boards whose bounding boxes touch edge to edge (without overlapping).
 function isVcutPanel(boards) {
   const bx = boards.map(pathsBox).filter(Boolean);
@@ -1237,9 +1280,17 @@ function buildBoard(st, opts = {}) {
   /* targets */
   const mech = mechanical(st);
   const byTarget = new Map();
+  const extraVcut = [], vcutKeep = [];
   for (const l of st.layers) {
     if (!l.count || !l.target || l.target === 'Edge.Cuts' || l.role === 'drill' || l.role === 'comp') continue;
     if (mech.vcutFrom === 'layer' && l.target === VCUT_LAYER && isVcutLayer(l)) continue; // its lines already go to User.1 as V-cut lines
+    if (l.target === VCUT_LAYER) {
+      // User.1 is for V-cut lines (read as lines by the JLCPCB plugins): never filled shapes
+      const v = vcutSegmentsOf(l);
+      extraVcut.push(...v.segs);
+      if (v.keep.length) vcutKeep.push(...v.keep);
+      continue;
+    }
     if (!byTarget.has(l.target)) byTarget.set(l.target, []);
     byTarget.get(l.target).push(l);
   }
@@ -1482,11 +1533,16 @@ function buildBoard(st, opts = {}) {
     }
   }
   /* board outline (and cutouts), V-cut lines */
-  for (const v of mech.vcut) {
+  for (const p of vcutKeep) {
+    out.push(['\t(gr_poly', '\t\t(pts', ptsLines(p, (x, y) => [x, -y], '\t\t\t'), '\t\t)',
+      '\t\t(stroke', '\t\t\t(width 0)', '\t\t\t(type solid)', '\t\t)', '\t\t(fill yes)', `\t\t(layer ${q(VCUT_LAYER)})`, `\t\t(uuid ${q(uuid())})`, '\t)'].join('\n'));
+    stats.polygons++;
+  }
+  for (const v of mech.vcut.concat(extraVcut)) {
     out.push(['\t(gr_line', `\t\t(start ${f6(v[0])} ${f6(-v[1])})`, `\t\t(end ${f6(v[2])} ${f6(-v[3])})`,
       '\t\t(stroke', '\t\t\t(width 0.1)', '\t\t\t(type solid)', '\t\t)', `\t\t(layer ${q(VCUT_LAYER)})`, `\t\t(uuid ${q(uuid())})`, '\t)'].join('\n'));
   }
-  stats.vcuts = mech.vcut.length;
+  stats.vcuts = mech.vcut.length + extraVcut.length;
   for (const p of mech.edge) {
     for (let i = 0; i < p.length; i++) {
       const a = p[i], b = p[(i + 1) % p.length];
