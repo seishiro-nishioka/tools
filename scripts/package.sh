@@ -30,10 +30,22 @@ done
   echo "|---|---|---|"
 } > "$out/notes.md"
 
+# Stage a copy so links work when opened from file:// (a folder URL does not
+# resolve to index.html there). The sources for GitHub Pages stay untouched.
+stage="$(mktemp -d)"
+trap 'rm -rf "$stage"' EXIT
+cp index.html README.md "$stage/"
+for t in "${tools[@]}"; do
+  cp -r "$t" "$stage/"
+  sed -i 's#href="\.\./"#href="../index.html"#g' "$stage/$t/index.html"
+  sed -i "s#href=\"$t/\"#href=\"$t/index.html\"#g" "$stage/index.html"
+done
+cd "$stage"
+
 for t in "${tools[@]}"; do
   # Exclude nothing but OS junk; the folder is self-contained by rule.
   zip -qr -X "$out/$t.zip" "$t" -x '*.DS_Store' -x '*/.*'
-  ver="$(grep -oE 'v20[0-9]{2}\.[0-9]+\.[0-9]+\.[0-9]+' "$t/index.html" | head -n1 || true)"
+  ver="$(grep -oE 'v20[0-9]{2}\.[0-9]+\.[0-9]+\.[0-9]+' "$root/$t/index.html" | head -n1 || true)"
   echo "| [$t]($repo_url/tree/main/$t) | ${ver:--} | \`$t.zip\` |" >> "$out/notes.md"
 done
 
