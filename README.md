@@ -53,6 +53,24 @@ GitHub Pagesで公開(`main`ブランチのルートを配信)。
 
 **公開URL: https://seishiro-nishioka.github.io/tools/**
 
+## ダウンロード
+
+各ツールは [GitHub のリリース](https://github.com/seishiro-nishioka/tools/releases/latest) から zip でダウンロードできます。展開して `index.html` をブラウザで開くと使えます。外部ライブラリ (PDF.js、JSZip など) は公開版と同じく CDN から読み込むため、インターネット接続が必要です。
+
+- 最新版の固定リンク: `https://github.com/seishiro-nishioka/tools/releases/latest/download/<ツール名>.zip` (例: [odb2kicad.zip](https://github.com/seishiro-nishioka/tools/releases/latest/download/odb2kicad.zip))
+- 全ツールまとめ: [tools-all.zip](https://github.com/seishiro-nishioka/tools/releases/latest/download/tools-all.zip) (展開後の `index.html` が一覧ページ)
+
+### リリースの作り方
+
+`v<日付>.<その日の何回目>` のタグを push すると、GitHub Actions (`.github/workflows/release.yml`) が `scripts/package.sh` で各ツールを zip にしてリリースを作ります。新しいツールのフォルダは自動で対象になります。
+
+```
+git tag v2026.11.27.1
+git push origin v2026.11.27.1
+```
+
+手元で zip だけ作るときは `scripts/package.sh dist` (`dist/` に出力)。
+
 ## ツール一覧
 
 | ツール | 内容 |

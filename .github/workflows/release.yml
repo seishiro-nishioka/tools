@@ -1,0 +1,29 @@
+name: Release
+
+# Push a tag such as v2026.11.27.1 to publish every tool as a zip on GitHub Releases.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v2026.11.27.1). Created on the current commit if missing.'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package tools
+        run: scripts/package.sh dist
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/*.zip \
+            --title "$TAG" --notes-file dist/notes.md --target "$GITHUB_SHA" --latest
